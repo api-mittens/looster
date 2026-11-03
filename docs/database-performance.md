@@ -569,10 +569,11 @@ go vet ./...
 git diff --check
 ```
 
-The PostgreSQL package completed in 81.572 seconds. The required full suite also
-passed without the optional plan flag. Queue/event-cursor/namespace race tests
-passed three repetitions. SQLC query sources were not changed, so regeneration
-of `postgres/db` was not required.
+The independent final rerun completed the PostgreSQL package in 101.888 seconds
+and the web package in 32.495 seconds. The required full suite also passed without
+the optional plan flag. Queue/event-cursor/namespace race tests passed three
+repetitions. SQLC query sources were not changed, and explicit regeneration with
+v1.31.1 confirmed that `postgres/db` has no generated diff.
 
 The migration's Down section removes only these ten indexes concurrently. Older
 irreversible data migrations are untouched. Apply migration 016 independently to
