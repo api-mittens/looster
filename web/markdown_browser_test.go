@@ -132,7 +132,7 @@ func TestMarkdownBrowser(t *testing.T) {
 		t.Fatal(err)
 	}
 	evaluateTrue(t, `document.querySelectorAll('#task-comments article').length===2 && document.querySelector('#task-comments article:first-child h2').textContent==='Existing comment' && document.querySelector('#task-comments article:last-child code').textContent.includes('<not-html>')`)
-	if err := chromedp.Run(tab, chromedp.Click("#close"), chromedp.Click(`task-card[data-id="2"]`), chromedp.WaitVisible("#task-description"), chromedp.Poll(`document.querySelector('#task-description').textContent.trim()==='No description.' && document.querySelector('#task-comments').textContent.trim()==='No comments yet.'`, nil)); err != nil {
+	if err := chromedp.Run(tab, chromedp.Click("#close"), chromedp.Poll(`!document.querySelector('looster-board').dialog.open && document.querySelector('looster-board').detailID===null`, nil), chromedp.Click(`task-card[data-id="2"]`), chromedp.WaitVisible("#task-description"), chromedp.Poll(`document.querySelector('#task-description').textContent.trim()==='No description.' && document.querySelector('#task-comments').textContent.trim()==='No comments yet.'`, nil)); err != nil {
 		t.Fatal(err)
 	}
 }

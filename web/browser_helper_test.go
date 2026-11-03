@@ -3,6 +3,10 @@ package web
 import (
 	"context"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,7 +20,7 @@ import (
 func newTestBrowser(t *testing.T, parent context.Context, options ...chromedp.ExecAllocatorOption) (context.Context, func()) {
 	t.Helper()
 	opts := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
-	opts = append(opts, chromedp.ExecPath(chromiumPath(t)), chromedp.NoSandbox, chromedp.UserDataDir(t.TempDir()))
+	opts = append(opts, chromedp.ExecPath(chromiumPath(t)), chromedp.NoSandbox, chromedp.UserDataDir(t.TempDir()), chromedp.WSURLReadTimeout(60*time.Second))
 	opts = append(opts, options...)
 	alloc, stopAlloc := chromedp.NewExecAllocator(parent, opts...)
 	tab, stopTab := chromedp.NewContext(alloc)
@@ -42,7 +46,9 @@ func TestBrowserShutdown(t *testing.T) {
 	if os.Getenv("LOOSTER_BROWSER_TEST") != "1" {
 		t.Skip("set LOOSTER_BROWSER_TEST=1 to test Chromium shutdown")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	// Cold Chrome startup on shared CI runners can exceed 20 seconds. Leave
+	// room for the allocator's 60-second startup budget and graceful shutdown.
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	t.Run("unstarted", func(t *testing.T) {
 		_, shutdown := newTestBrowser(t, ctx)
@@ -63,5 +69,37 @@ func TestBrowserShutdown(t *testing.T) {
 	// No sleeps or retries: profile writers must have stopped before returning.
 	if err := os.RemoveAll(profile); err != nil {
 		t.Fatalf("remove stopped browser profile: %v", err)
+	}
+}
+
+func TestBrowserSlowStartup(t *testing.T) {
+	if os.Getenv("LOOSTER_BROWSER_TEST") != "1" {
+		t.Skip("set LOOSTER_BROWSER_TEST=1 to test slow Chromium startup")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("startup wrapper requires a POSIX shell")
+	}
+	shell, err := exec.LookPath("sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Delay a real browser past chromedp's default 20-second websocket timeout.
+	// exec replaces the shell so cancellation still reaps the browser process.
+	wrapper := filepath.Join(t.TempDir(), "slow-chrome")
+	browser := "'" + strings.ReplaceAll(chromiumPath(t), "'", "'\"'\"'") + "'"
+	script := "#!" + shell + "\nsleep 21\nexec " + browser + " \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	tab, shutdown := newTestBrowser(t, ctx, chromedp.ExecPath(wrapper))
+	defer shutdown()
+	var title string
+	if err := chromedp.Run(tab, chromedp.Navigate("data:text/html,<title>slow startup regression</title>"), chromedp.Title(&title)); err != nil {
+		t.Fatal(err)
+	}
+	if title != "slow startup regression" {
+		t.Fatalf("page title = %q", title)
 	}
 }
