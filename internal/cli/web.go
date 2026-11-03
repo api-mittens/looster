@@ -23,7 +23,15 @@ func (a *application) webCommand() *cobra.Command {
 		}
 		provider := &webNamespaces{url: a.v.GetString("database_url"), selected: a.v.GetString("namespace"), stores: map[string]*postgres.Store{}, repos: map[string]app.Repository{a.v.GetString("namespace"): a.repo}}
 		defer provider.Close()
-		server := &http.Server{Handler: web.Handler(a.repo, web.WithNamespaces(provider)), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
+		var objects app.Objects
+		if a.v.GetString("s3.bucket") != "" {
+			objects, err = a.objects(c.Context())
+			if err != nil {
+				_ = listener.Close()
+				return fmt.Errorf("dashboard attachment storage: %w", err)
+			}
+		}
+		server := &http.Server{Handler: web.HandlerWithStorage(a.repo, objects, web.WithNamespaces(provider)), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
 		stopped := make(chan struct{})
 		defer close(stopped)
 		go func() {

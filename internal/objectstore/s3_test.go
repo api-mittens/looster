@@ -106,7 +106,10 @@ func TestS3CompatibleRequests(t *testing.T) {
 	if e != nil || string(b) != "history" {
 		t.Fatalf("body=%s error=%v", b, e)
 	}
-	if strings.Join(methods, ",") != "PUT,GET" {
+	if e = store.Delete(ctx, "tasks/TSK-1/spec.txt"); e != nil {
+		t.Fatal(e)
+	}
+	if strings.Join(methods, ",") != "PUT,GET,DELETE" {
 		t.Fatalf("methods=%v", methods)
 	}
 }

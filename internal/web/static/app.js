@@ -3,6 +3,7 @@ import {serversHTML,behavioursHTML,ruleLabel} from './views.mjs';
 import {appendOutput} from './output.mjs';
 import {searchItems} from './search.mjs';
 import {sortTasksByStatusChanges,taskCardHTML} from './board.mjs';
+import {attachmentsHTML,attachmentUploadHTML} from './attachments.mjs';
 import './workflow.js';
 import './task-graph.js';
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -47,6 +48,7 @@ class LoosterBoard extends HTMLElement {
     this.querySelector('#page').addEventListener('click',e => { if(e.target.closest('#activate-manifest')) this.activateManifest(); });
     this.panel.onchange = e => { if(e.target.id === 'log-agent') { this.logAgent = e.target.value; this.paintOutput(); } else if(e.target.id === 'task-status') this.changeStatus(e.target); };
     this.panel.onsubmit = async e => {
+      if(e.target.matches('.attachment-upload')) { e.preventDefault(); await this.uploadAttachments(e.target); return; }
       if(e.target.id !== 'comment-form') return;
       e.preventDefault(); const generation=this.generation, form=e.target, button=form.querySelector('button'); button.disabled=true;
       try { await this.post(`/api/tasks/TSK-${this.detailID}/comments`,{body:form.elements.body.value}); form.reset(); form.querySelector('.form-error').textContent=''; await this.loadDetail(this.detailID); }
@@ -83,14 +85,14 @@ class LoosterBoard extends HTMLElement {
       this.querySelector('#namespace').innerHTML = `<option value="">${esc(selected || 'Default')} namespace</option>`+names.filter(n => n !== selected).map(n => `<option value="${esc(n)}">${esc(n)} namespace</option>`).join('');
     } catch(e) { this.querySelector('#notice').textContent = 'Namespace list unavailable'; }
   }
-  async api(path, data) {
+  async api(path, data, explicitErrors = false) {
     const generation = this.generation;
     const url = new URL(path, location.origin);
     if(this.namespace) url.searchParams.set('namespace',this.namespace);
     const options = {signal:this.controller.signal};
     if(data !== undefined) Object.assign(options,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
     const response = await fetch(url,options);
-    if(!response.ok) throw Error(data === undefined ? 'Could not load data. Retrying automatically.' : (await response.text()).trim() || 'Could not save');
+    if(!response.ok) throw Error(data === undefined && !explicitErrors ? 'Could not load data. Retrying automatically.' : (await response.text()).trim() || 'Could not save');
     const value = await response.json();
     if(generation !== this.generation) throw new DOMException('Namespace changed','AbortError');
     return value;
@@ -179,7 +181,7 @@ class LoosterBoard extends HTMLElement {
   focus() { const c = [...this.board.querySelectorAll('task-card')].find(c => c.dataset.key === this.selected); c?.querySelector('button').focus({preventScroll:true}); c?.scrollIntoView({block:'nearest',inline:'nearest'}); }
   highlight(id) { this.board.querySelectorAll('task-card').forEach(c => c.classList.toggle('linked',!!id && c.dataset.id === id)); }
   showHelp() { this.detailID = null; this.lastG = 0; this.querySelector('#dialog-title').textContent = 'Keyboard shortcuts'; this.panel.innerHTML = '<p><kbd>h</kbd> / <kbd>l</kbd> or left / right: list columns</p><p><kbd>j</kbd> / <kbd>k</kbd> or down / up: tasks; scroll pages and dialogs</p><p><kbd>gg</kbd>: Graph · <kbd>gl</kbd>: List · <kbd>gs</kbd>: Servers · <kbd>gb</kbd>: Behaviours</p><p><kbd>G</kbd>: last task / bottom of page; <kbd>gg</kbd> / <kbd>G</kbd> inside dialogs: top / bottom</p><p><kbd>Enter</kbd>: open task</p><p><kbd>n</kbd>: new task on List or Graph</p><p><kbd>:</kbd>: search everything · <kbd>/</kbd>: filter list or graph · <kbd>r</kbd>: refresh · <kbd>?</kbd>: help</p><p><kbd>Esc</kbd>: close details or clear search</p><p><kbd>Tab</kbd>: move through controls</p>'; this.dialog.showModal(); }
-  async open(id,agent = '') { this.returnFocus = document.activeElement; this.detailID = id; this.lastG = 0; this.cursor = 0; this.commentCursor = 0; this.comments = new Map(); this.outputs = new Map(); this.logAgent = agent; this.querySelector('#dialog-title').textContent = 'Loading…'; this.panel.textContent = ''; this.dialog.showModal(); await this.loadDetail(id); }
+  async open(id,agent = '') { this.returnFocus = document.activeElement; this.detailID = id; this.attachments = []; this.lastG = 0; this.cursor = 0; this.commentCursor = 0; this.comments = new Map(); this.outputs = new Map(); this.logAgent = agent; this.querySelector('#dialog-title').textContent = 'Loading…'; this.panel.textContent = ''; this.dialog.showModal(); await this.loadDetail(id); }
   async loadDetail(id) {
     const generation = this.outputs;
     if (this.detailBusy === generation) { this.detailQueued = true; return; }
@@ -188,9 +190,10 @@ class LoosterBoard extends HTMLElement {
       const d = await this.api(`/api/tasks/TSK-${id}`);
       if (this.outputs !== generation || this.detailID !== id || !this.dialog.open) return;
       this.querySelector('#dialog-title').textContent = `TSK-${id} · ${d.task.name}`;
-      if (!this.panel.querySelector('#session-output')) this.panel.innerHTML = '<div class="task-status-control"><label for="task-status">Status</label><select id="task-status" aria-label="Task status"><option value="planning">Planning</option><option value="todo">Todo</option><option value="validated">Validated</option><option value="closed">Closed</option></select><span id="status-error" class="form-error" role="alert"></span></div><div class="description markdown-body" id="task-description"></div><div id="tag-context"></div><h3>Comments</h3><div id="task-comments"></div><form id="comment-form"><label>Add comment <textarea name="body" rows="3" required></textarea></label><p class="form-error" role="alert"></p><button type="submit">Post comment</button></form><h3>Sessions</h3><div id="sessions"></div><div class="output-heading"><h3>Session output</h3><label>Agent <select id="log-agent" aria-label="Session output agent"></select></label></div><pre id="session-output" class="session-output" tabindex="0" aria-label="Session output"></pre><p id="output-note" class="muted" role="status"></p>';
+      if (!this.panel.querySelector('#session-output')) this.panel.innerHTML = '<div class="task-status-control"><label for="task-status">Status</label><select id="task-status" aria-label="Task status"><option value="planning">Planning</option><option value="todo">Todo</option><option value="validated">Validated</option><option value="closed">Closed</option></select><span id="status-error" class="form-error" role="alert"></span></div><div class="description markdown-body" id="task-description"></div><div id="description-attachments"></div><div id="description-upload"></div><p id="attachment-notice" class="form-error" role="status"></p><div id="tag-context"></div><h3>Comments</h3><div id="task-comments"></div><form id="comment-form"><label>Add comment <textarea name="body" rows="3" required></textarea></label><p class="form-error" role="alert"></p><button type="submit">Post comment</button></form><h3>Sessions</h3><div id="sessions"></div><div class="output-heading"><h3>Session output</h3><label>Agent <select id="log-agent" aria-label="Session output agent"></select></label></div><pre id="session-output" class="session-output" tabindex="0" aria-label="Session output"></pre><p id="output-note" class="muted" role="status"></p>';
       this.panel.querySelector('#task-status').value = d.task.status;
       this.panel.querySelector('#task-description').innerHTML = renderMarkdown(d.task.description || 'No description.');
+      if(!this.panel.querySelector('#description-upload').firstChild) this.panel.querySelector('#description-upload').innerHTML = attachmentUploadHTML();
       const contextHTML = (d.context?.tags || []).map(t => `<details class="context-card"><summary>Tag: ${esc(t.name)} · ${(t.memories || []).length} memories</summary><pre>${esc(t.description)}</pre>${this.memoryHTML(t.memories)}</details>`).join('');
       if(this.panel.querySelector('#tag-context').innerHTML !== contextHTML) this.panel.querySelector('#tag-context').innerHTML = contextHTML;
       this.panel.querySelector('#sessions').innerHTML = (d.sessions || []).map(s => `<div class="session"><strong>${esc(s.agent)}</strong><span class="badge ${s.status === 'running' ? 'running' : ''}">${esc(s.status)}</span><code>${esc(s.session_id || 'Not started')}</code></div>`).join('') || '<p>No sessions yet.</p>';
@@ -201,8 +204,23 @@ class LoosterBoard extends HTMLElement {
         for(const comment of comments) {this.comments.set(comment.id,comment);this.commentCursor=Math.max(this.commentCursor,comment.id);}
         if(comments.length<200) break;
       }
-      const commentHTML = [...this.comments.values()].map(c => `<article class="comment"><span class="muted">${esc(c.actor_agent || c.agent || 'human')} · ${esc(new Date(c.created_at).toLocaleString())}</span><div class="description markdown-body">${renderMarkdown(c.body)}</div></article>`).join('') || '<p class="muted">No comments yet.</p>';
-      if(this.panel.querySelector('#task-comments').innerHTML !== commentHTML) this.panel.querySelector('#task-comments').innerHTML = commentHTML;
+      await this.loadAttachments(id,generation);
+      if(this.outputs !== generation || this.detailID !== id || !this.dialog.open) return;
+      const commentBox = this.panel.querySelector('#task-comments');
+      if(this.comments.size) commentBox.querySelector('.no-comments')?.remove();
+      else if(!commentBox.firstChild) commentBox.innerHTML = '<p class="muted no-comments">No comments yet.</p>';
+      for(const c of this.comments.values()) {
+        let article = commentBox.querySelector(`[data-comment-id="${c.id}"]`);
+        if(!article) {
+          article = document.createElement('article'); article.className = 'comment'; article.dataset.commentId = c.id;
+          article.innerHTML = '<div class="comment-content"></div><div class="comment-attachments"></div>'+attachmentUploadHTML(c.id);
+          commentBox.append(article);
+        }
+        const content = `<span class="muted">${esc(c.actor_agent || c.agent || 'human')} · ${esc(new Date(c.created_at).toLocaleString())}</span><div class="description markdown-body">${renderMarkdown(c.body)}</div>`;
+        if(article.querySelector('.comment-content').innerHTML !== content) article.querySelector('.comment-content').innerHTML = content;
+        const files = attachmentsHTML(this.attachments,id,c.id,this.namespace);
+        if(article.querySelector('.comment-attachments').innerHTML !== files) article.querySelector('.comment-attachments').innerHTML = files;
+      }
       let pages = 0, more = true;
       while (more && pages++ < 10) {
         const events = await this.api(`/api/tasks/TSK-${id}/events?after=${this.cursor}`) || [];
@@ -221,6 +239,47 @@ class LoosterBoard extends HTMLElement {
       this.paintOutput(); this.panel.querySelector('#output-note').textContent = more ? 'Loading output in batches…' : 'Updates every 5 seconds. Scroll up to pause following output.';
     } catch(e) { if (this.outputs === generation && this.detailID === id) { const note = this.panel.querySelector('#output-note'); if(note) note.textContent = e.message; else this.panel.textContent = e.message; } }
     finally { if(this.detailBusy === generation) { this.detailBusy = null; if(this.detailQueued) { this.detailQueued=false; queueMicrotask(() => this.loadDetail(id)); } } }
+  }
+  async loadAttachments(id,generation) {
+    const current = () => this.outputs === generation && this.detailID === id && this.dialog.open;
+    try {
+      const result = await this.api(`/api/tasks/TSK-${id}/attachments`,undefined,true);
+      if(!current()) return;
+      this.attachments = result || [];
+      this.panel.querySelector('#attachment-notice').textContent = '';
+      const html = attachmentsHTML(this.attachments,id,null,this.namespace), box = this.panel.querySelector('#description-attachments');
+      if(box.innerHTML !== html) box.innerHTML = html;
+    } catch(error) {
+      if(current() && error.name !== 'AbortError') this.panel.querySelector('#attachment-notice').textContent = `Could not load attachments: ${error.message}`;
+    }
+  }
+  async uploadAttachments(form) {
+    const id = this.detailID, generation = this.generation, namespace = this.namespace;
+    const files = [...form.elements.files.files], button = form.querySelector('button'), input = form.elements.files, result = form.querySelector('.attachment-result');
+    if(!files.length || button.disabled) return;
+    const current = () => generation === this.generation && this.detailID === id && form.isConnected;
+    button.disabled = true; input.disabled = true; result.textContent = 'Uploading files…';
+    let uploaded = 0;
+    try {
+      for(const file of files) {
+        const body = new FormData(); body.append('file',file);
+        if(form.dataset.eventId) body.append('event_id',form.dataset.eventId);
+        const url = new URL(`/api/tasks/TSK-${id}/attachments`,location.origin);
+        if(namespace) url.searchParams.set('namespace',namespace);
+        const response = await fetch(url,{method:'POST',body,signal:this.controller.signal});
+        if(!response.ok) throw Error((await response.text()).trim() || 'Could not upload file');
+        uploaded++;
+        if(!current()) return;
+      }
+      if(current()) { form.reset(); result.textContent = `Uploaded ${uploaded} file${uploaded === 1 ? '' : 's'}.`; }
+    } catch(error) {
+      if(current() && error.name !== 'AbortError') result.textContent = `${uploaded ? `Partial upload: ${uploaded} of ${files.length} files uploaded. ` : 'Upload failed. '}${error.message}${uploaded ? ' Successful files are saved. Select only the remaining files before retrying.' : ''}`;
+    } finally {
+      if(current()) {
+        button.disabled = false; input.disabled = false;
+        if(uploaded) await this.loadDetail(id);
+      }
+    }
   }
   async changeStatus(select) {
     const id = this.detailID, previous = this.data?.tasks?.find(t => t.id === id)?.status || select.dataset.previous || 'planning';
