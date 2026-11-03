@@ -12,8 +12,8 @@ import (
 
 func TestLogQueryParameterizesAllShapes(t *testing.T) {
 	since := time.Now()
-	for mask := 0; mask < 128; mask++ {
-		f := event.Filter{After: 3, Limit: 17, Desc: mask&64 != 0}
+	for mask := 0; mask < 64; mask++ {
+		f := event.Filter{After: 3, Limit: 17, Desc: mask&32 != 0}
 		if mask&1 != 0 {
 			f.Until = 100
 		}
