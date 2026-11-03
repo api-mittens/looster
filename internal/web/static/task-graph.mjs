@@ -31,11 +31,13 @@ export function compactCount(value) {
   for(const [divisor,suffix] of [[1e9,'B'],[1e6,'M'],[1e3,'k']]) if(n>=divisor) return n/divisor>=1000?'999B+':`${Math.floor(n/divisor*10)/10}${suffix}`;
   return String(n);
 }
-export function buildGraph({tasks = [], agents = [], sessions = [], workers = [], heatmap = false, now=Date.now()} = {}) {
+export const TASK_STATUSES = ['planning','todo','validated','closed'];
+export const DEFAULT_TASK_STATUSES = ['planning','todo'];
+export function buildGraph({tasks = [], agents = [], sessions = [], workers = [], heatmap = false, selectedStatuses = DEFAULT_TASK_STATUSES, now=Date.now()} = {}) {
   const nodes = [], taskKeys = new Set(), agentNames = new Set();
   const running=new Set(sessions.filter(s=>s.status==='running').map(s=>String(s.task_id)));
   for (const task of tasks) {
-    if (!['planning','todo'].includes(task.status) || task.id == null || taskKeys.has(String(task.id))) continue;
+    if (!TASK_STATUSES.includes(task.status) || !selectedStatuses.includes(task.status) || task.id == null || taskKeys.has(String(task.id))) continue;
     taskKeys.add(String(task.id));
     nodes.push({key:`task:${task.id}`, kind:'task', id:task.id, label:String(task.name ?? `TSK-${task.id}`), status:task.status, working:running.has(String(task.id)), ...activity(task),...taskRecency(task,{now,active:running.has(String(task.id))})});
   }

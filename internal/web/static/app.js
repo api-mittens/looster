@@ -40,6 +40,7 @@ class LoosterBoard extends HTMLElement {
     this.route = () => { this.page = location.hash === '#library' ? 'system' : location.hash.slice(1) || 'graph'; this.goPrefix = 0; this.lastG = 0; this.render(); this.refresh(); };
     window.addEventListener('hashchange',this.route);
     this.querySelector('#page').addEventListener('agent-open',e => this.openAgent(e.detail.name));
+    this.querySelector('#page').addEventListener('status-filter',e => { this.graphStatuses = e.detail.statuses; this.renderPage(); });
     this.querySelector('#page').addEventListener('tag-filter',e => { this.graphTags = e.detail.tags; this.renderPage(); });
     this.querySelector('#page').addEventListener('task-open',e => this.open(e.detail.id));
     this.querySelector('#page').addEventListener('change',e => { if(e.target.id === 'manifest-version') { this.manifestID = Number(e.target.value); this.renderPage(); } });
@@ -103,6 +104,7 @@ class LoosterBoard extends HTMLElement {
     this.cursor = 0; this.commentCursor = 0; this.logAgent = ''; this.selected = null;
     this.data = null; this.status = null; this.system = null; this.library = null; this.manifests = null; this.manifestID = null;
     this.graphTags = [];
+    this.graphStatuses = undefined;
     this.pageHTML = null; this.paletteItems = []; this.panel.replaceChildren(); this.board.replaceChildren();
     this.querySelector('#page').replaceChildren(); this.search.value = ''; this.paletteInput.value = '';
     this.querySelector('#create-form').reset(); this.querySelector('#task-tags').replaceChildren();
@@ -151,7 +153,7 @@ class LoosterBoard extends HTMLElement {
     this.querySelector('.footer').hidden = this.page === 'graph';
     this.querySelector('#toggle-stages').hidden = other;
     this.querySelector('h1').textContent = this.page === 'graph' ? 'Task graph' : this.page === 'servers' ? 'Servers & agents' : this.page === 'system' ? 'Behaviours' : 'Task list';
-    this.querySelector('main > p').textContent = this.page === 'graph' ? 'Explore unfinished work: planning and todo tasks only. Animated links show active work, quiet links show past sessions.' : this.page === 'servers' ? 'Live workers, agent coverage, and interrupted sessions.' : this.page === 'system' ? 'How work moves through the factory.' : 'Follow tasks from planning through closure.';
+    this.querySelector('main > p').textContent = this.page === 'graph' ? 'Explore tasks by status, tags and search. Planning and todo are shown by default. Animated links show active work, quiet links show past sessions.' : this.page === 'servers' ? 'Live workers, agent coverage, and interrupted sessions.' : this.page === 'system' ? 'How work moves through the factory.' : 'Follow tasks from planning through closure.';
     if(other) { this.renderPage(); return; }
     const focused = this.board.contains(document.activeElement), q = this.search.value.toLowerCase().trim();
     const tasks = sortTasksByStatusChanges(this.data.tasks.filter(t => [t.name,t.description,t.status,`TSK-${t.id}`,...(t.tags || []),...this.data.sessions.filter(s => s.task_id === t.id).map(s => s.agent)].join(' ').toLowerCase().includes(q)));
@@ -241,12 +243,13 @@ class LoosterBoard extends HTMLElement {
       if(!graph) { panel.innerHTML = '<task-agent-graph></task-agent-graph>'; graph = panel.querySelector('task-agent-graph'); }
       this.pageHTML = null;
       const q = this.search.value.toLowerCase().trim();
+      const selectedStatuses = this.graphStatuses ?? ['planning','todo'];
       const selectedTags = this.graphTags || [];
-      const tagOptions = [...new Set([...(this.data?.tasks || []).filter(t => ['planning','todo'].includes(t.status)).flatMap(t => t.tags || []),...selectedTags])].sort();
-      const tasks = (this.data?.tasks || []).filter(t => ['planning','todo'].includes(t.status)).filter(t => !selectedTags.length || selectedTags.some(tag => (t.tags || []).includes(tag))).filter(t => [t.name,t.description,t.status,`TSK-${t.id}`,...(t.tags || []),...(this.data?.sessions || []).filter(s => s.task_id === t.id).map(s => s.agent)].join(' ').toLowerCase().includes(q));
+      const tagOptions = [...new Set([...(this.data?.tasks || []).filter(t => selectedStatuses.includes(t.status)).flatMap(t => t.tags || []),...selectedTags])].sort();
+      const tasks = (this.data?.tasks || []).filter(t => selectedStatuses.includes(t.status)).filter(t => !selectedTags.length || selectedTags.some(tag => (t.tags || []).includes(tag))).filter(t => [t.name,t.description,t.status,`TSK-${t.id}`,...(t.tags || []),...(this.data?.sessions || []).filter(s => s.task_id === t.id).map(s => s.agent)].join(' ').toLowerCase().includes(q));
       const taskIDs = new Set(tasks.map(t => t.id));
       const sessions = (this.data?.sessions || []).filter(s => taskIDs.has(s.task_id));
-      graph.data = {tasks,tagOptions,selectedTags,agents:this.data?.agents || [],sessions,workers:this.status?.workers || []};
+      graph.data = {tasks,tagOptions,selectedTags,selectedStatuses,agents:this.data?.agents || [],sessions,workers:this.status?.workers || []};
       this.querySelector('#summary').textContent = `${tasks.length} tasks · ${sessions.filter(s => s.status === 'running').length} running`;
       return;
     }

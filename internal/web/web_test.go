@@ -61,6 +61,36 @@ func (s *testRepo) Logs(_ context.Context, f event.Filter) ([]event.Event, error
 	}
 	return []event.Event{{ID: 3}, {ID: 2}}, nil
 }
+
+type allStatusRepo struct{ testRepo }
+
+func (*allStatusRepo) Tasks(context.Context) ([]task.Task, error) {
+	return []task.Task{{ID: 1, Status: task.Planning}, {ID: 2, Status: task.Todo}, {ID: 3, Status: task.Validated}, {ID: 4, Status: task.Closed}}, nil
+}
+
+func TestBoardIncludesCompletedTasks(t *testing.T) {
+	response := httptest.NewRecorder()
+	Handler(&allStatusRepo{}).ServeHTTP(response, httptest.NewRequest("GET", "/api/board", nil))
+	if response.Code != 200 {
+		t.Fatalf("board status: %d", response.Code)
+	}
+	var board struct {
+		Tasks []task.Task `json:"tasks"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &board); err != nil {
+		t.Fatal(err)
+	}
+	want := []task.Status{task.Planning, task.Todo, task.Validated, task.Closed}
+	if len(board.Tasks) != len(want) {
+		t.Fatalf("board dropped tasks: %+v", board.Tasks)
+	}
+	for i, status := range want {
+		if board.Tasks[i].Status != status {
+			t.Fatalf("task %d status = %s, want %s", i, board.Tasks[i].Status, status)
+		}
+	}
+}
+
 func TestDashboard(t *testing.T) {
 	repo := &testRepo{}
 	handler := Handler(repo)

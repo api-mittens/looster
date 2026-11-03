@@ -173,9 +173,12 @@ patch**. See [behaviour and sessions](docs/usage.md#behaviour-and-sessions).
 looster --config config.toml web
 ```
 
-Open `http://127.0.0.1:8080` locally. The graph connects unfinished tasks to agents
-with real sessions, with animated links for active work. Click nodes for details,
-filter by tags, and switch namespaces without losing track of the workflow.
+Open `http://127.0.0.1:8080` locally. The graph connects tasks to agents
+with real sessions, with animated links for active work. Planning and todo tasks
+are shown by default. Use the individual status checkboxes to include validated
+or closed tasks, or hide any status. Status choices combine with tag and search
+filters and survive refreshes and page navigation, resetting when you switch
+namespaces. Click nodes for details and filter by tags to explore the workflow.
 
 ![Looster graph dashboard showing example tasks and agent relationships](docs/images/graph.png)
 
