@@ -7613,7 +7613,7 @@ limitations under the License.
 
 Usage: **build**, embedded web asset. Source: https://github.com/d3/d3/tree/v7.9.0
 
-### `web/static/vendor/D3-LICENSE.txt`
+### `internal/web/static/vendor/D3-LICENSE.txt`
 
 Classification: ISC (content match, review scope)
 
@@ -7637,7 +7637,7 @@ THIS SOFTWARE.
 
 The following checked-in collection retains the pinned D3 runtime dependency inventory, package source locations and complete transitive license texts, including conservatively retained CLI-only dependencies.
 
-### `web/static/vendor/D3-THIRD-PARTY-LICENSES.txt`
+### `internal/web/static/vendor/D3-THIRD-PARTY-LICENSES.txt`
 
 Classification: Reviewed bundled collection: BSD-3-Clause (content match, review scope); ISC (content match, review scope); MIT (content match, review scope); Mixed text: Apache-2.0, ISC (REVIEW); Mixed text: MIT, ISC (REVIEW); Unlicense (content match, review scope)
 
@@ -8978,7 +8978,7 @@ Source: https://www.apache.org/licenses/LICENSE-2.0.txt
 
 Usage: **build**, embedded web asset. Source and provenance: https://github.com/markdown-it/markdown-it/tree/15.0.3
 
-### `web/static/vendor/MARKDOWN-IT-LICENSE.txt`
+### `internal/web/static/vendor/MARKDOWN-IT-LICENSE.txt`
 
 Classification: MIT (content match, review scope)
 
@@ -9009,9 +9009,9 @@ OTHER DEALINGS IN THE SOFTWARE.
 
 ## markdown-it browser dependency notices (bundled JavaScript)
 
-Usage: **build**, embedded web asset. Source and provenance: web/static/vendor/MARKDOWN-IT-README.md
+Usage: **build**, embedded web asset. Source and provenance: internal/web/static/vendor/MARKDOWN-IT-README.md
 
-### `web/static/vendor/MARKDOWN-IT-THIRD-PARTY-LICENSES.txt`
+### `internal/web/static/vendor/MARKDOWN-IT-THIRD-PARTY-LICENSES.txt`
 
 Classification: Reviewed bundled collection: BSD-2-Clause (reviewed entities license, exact SHA-256); MIT (content match, review scope)
 

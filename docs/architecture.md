@@ -2,14 +2,19 @@
 
 [Back to README](../readme.md)
 
-- Pure domain packages: `task`, `agent`, `tag`, `memory`, `event`, `behaviour`, and `namespace`.
-- `app` defines repository, manifest, queue, harness, and object-storage ports and orchestrates work.
-- `postgres`, `jcode`, and `objectstore` implement those ports.
-- `cli` is the composition root. `web` exposes the dashboard using application ports.
-- Goose migrations and sqlc query bindings live in `postgres`.
+All application packages are private under `internal/`. The executable entry point
+remains `cmd/looster`. Embedded migrations, dashboard assets, and the bundled
+agent skill live alongside their owning packages. `scripts/install.sh` remains
+at the repository root for release packaging and installation.
+
+- Pure domain packages: `internal/task`, `internal/agent`, `internal/tag`, `internal/memory`, `internal/event`, `internal/behaviour`, and `internal/namespace`.
+- `internal/app` defines repository, manifest, queue, harness, and object-storage ports and orchestrates work.
+- `internal/postgres`, `internal/jcode`, and `internal/objectstore` implement those ports.
+- `internal/cli` is the composition root. `internal/web` exposes the dashboard using application ports.
+- Goose migrations and sqlc query bindings live in `internal/postgres`.
 
 Dependencies point inward. Domain packages do not import application or
-infrastructure packages. `app/architecture_test.go` enforces this boundary.
+infrastructure packages. `internal/app/architecture_test.go` enforces this boundary.
 Use application interfaces for adapters and keep domain logic independent of I/O.
 
 Human and agent permissions are enforced in the application. Agents may work

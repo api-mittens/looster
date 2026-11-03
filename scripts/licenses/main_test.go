@@ -9,7 +9,7 @@ import (
 )
 
 func TestUnknownLicenseFailsClosed(t *testing.T) {
-	for _, name := range []string{"LICENSE", "nested/COPYING", "licenses/custom.txt", "web/static/vendor/D3-LICENSE.txt", "web/static/vendor/D3-THIRD-PARTY-LICENSES.txt"} {
+	for _, name := range []string{"LICENSE", "nested/COPYING", "licenses/custom.txt", "internal/web/static/vendor/D3-LICENSE.txt", "internal/web/static/vendor/D3-THIRD-PARTY-LICENSES.txt"} {
 		var out bytes.Buffer
 		text := "GNU GENERAL PUBLIC LICENSE Version 3"
 		if filepath.Base(name) == "D3-THIRD-PARTY-LICENSES.txt" {
@@ -58,7 +58,7 @@ func TestCheckedInD3Collection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := os.ReadFile(filepath.Join(root, "web/static/vendor/D3-THIRD-PARTY-LICENSES.txt"))
+	b, err := os.ReadFile(filepath.Join(root, "internal/web/static/vendor/D3-THIRD-PARTY-LICENSES.txt"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestCheckedInMarkdownCollection(t *testing.T) {
 		t.Fatal(err)
 	}
 	const name = "MARKDOWN-IT-THIRD-PARTY-LICENSES.txt"
-	b, err := os.ReadFile(filepath.Join(root, "web/static/vendor", name))
+	b, err := os.ReadFile(filepath.Join(root, "internal/web/static/vendor", name))
 	if err != nil {
 		t.Fatal(err)
 	}

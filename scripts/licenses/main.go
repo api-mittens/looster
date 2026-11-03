@@ -211,27 +211,27 @@ func run(check bool) error {
 			}
 		}
 	}
-	b, err = os.ReadFile(filepath.Join(root, "web/static/vendor/D3-LICENSE.txt"))
+	b, err = os.ReadFile(filepath.Join(root, "internal/web/static/vendor/D3-LICENSE.txt"))
 	if err != nil {
 		return err
 	}
 	out.WriteString("## D3 v7.9.0 (bundled JavaScript)\n\nUsage: **build**, embedded web asset. Source: https://github.com/d3/d3/tree/v7.9.0\n\n")
-	if err := emit(&out, notice{"web/static/vendor/D3-LICENSE.txt", string(b)}); err != nil {
+	if err := emit(&out, notice{"internal/web/static/vendor/D3-LICENSE.txt", string(b)}); err != nil {
 		return err
 	}
-	b, err = os.ReadFile(filepath.Join(root, "web/static/vendor/D3-THIRD-PARTY-LICENSES.txt"))
+	b, err = os.ReadFile(filepath.Join(root, "internal/web/static/vendor/D3-THIRD-PARTY-LICENSES.txt"))
 	if err != nil {
 		return err
 	}
 	out.WriteString("### D3 transitive dependency notices\n\nThe following checked-in collection retains the pinned D3 runtime dependency inventory, package source locations and complete transitive license texts, including conservatively retained CLI-only dependencies.\n\n")
-	if err := emit(&out, notice{"web/static/vendor/D3-THIRD-PARTY-LICENSES.txt", string(b)}); err != nil {
+	if err := emit(&out, notice{"internal/web/static/vendor/D3-THIRD-PARTY-LICENSES.txt", string(b)}); err != nil {
 		return err
 	}
 	for _, bundled := range []struct{ name, file, source string }{
 		{"markdown-it v15.0.3", "MARKDOWN-IT-LICENSE.txt", "https://github.com/markdown-it/markdown-it/tree/15.0.3"},
-		{"markdown-it browser dependency notices", "MARKDOWN-IT-THIRD-PARTY-LICENSES.txt", "web/static/vendor/MARKDOWN-IT-README.md"},
+		{"markdown-it browser dependency notices", "MARKDOWN-IT-THIRD-PARTY-LICENSES.txt", "internal/web/static/vendor/MARKDOWN-IT-README.md"},
 	} {
-		name := "web/static/vendor/" + bundled.file
+		name := "internal/web/static/vendor/" + bundled.file
 		b, err := os.ReadFile(filepath.Join(root, name))
 		if err != nil {
 			return err

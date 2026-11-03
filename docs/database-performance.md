@@ -14,14 +14,14 @@ measurements, not production latency promises or statistically sampled medians.
 ```sh
 LOOSTER_TEST_DATABASE_URL=postgresql://looster_test@127.0.0.1:55427/looster_disposable \
 LOOSTER_QUERY_PLANS=1 \
-go test ./postgres -run '^TestQueryIndexPlans$' -count=1 -v
+go test ./internal/postgres -run '^TestQueryIndexPlans$' -count=1 -v
 
 LOOSTER_TEST_DATABASE_URL=postgresql://looster_test@127.0.0.1:55427/looster_disposable \
 LOOSTER_QUERY_PLANS=1 \
-go test ./postgres -run '^TestQueryPlansTaskListAndGenericLogs$' -count=1 -v
+go test ./internal/postgres -run '^TestQueryPlansTaskListAndGenericLogs$' -count=1 -v
 
 LOOSTER_TEST_DATABASE_URL=postgresql://looster_test@127.0.0.1:55427/looster_disposable \
-go test ./postgres -run '^TestQueryIndexes' -count=1 -v
+go test ./internal/postgres -run '^TestQueryIndexes' -count=1 -v
 ```
 
 The supplied login needs `CREATEDB`. `queryPlanDatabase` uses
@@ -29,7 +29,7 @@ The supplied login needs `CREATEDB`. `queryPlanDatabase` uses
 The supplied database is only the administrative connection, never a fixture target.
 The namespace test uses the existing `manifestTestStore` disposable-schema helper.
 
-The fixture in `postgres/query_plans_test.go` contains:
+The fixture in `internal/postgres/query_plans_test.go` contains:
 
 | Relation | Rows | Distribution |
 | --- | ---: | --- |
@@ -550,11 +550,11 @@ The tests verify:
    plans use the real query builder and preserve exact returned rows/order.
 
 `sqlc generate` with the repository's installed v1.31.1 completed with no diff
-in `postgres/db`. Index-only schema changes and inline query changes do not
+in `internal/postgres/db`. Index-only schema changes and inline query changes do not
 alter the sqlc query sources or their returned row types.
 
-Validation after the complete-query additions: `go test ./postgres -count=1`
-passed with the disposable database, as did `go test -race ./postgres -run
+Validation after the complete-query additions: `go test ./internal/postgres -count=1`
+passed with the disposable database, as did `go test -race ./internal/postgres -run
 '^TestQueryIndexes' -count=3`. Both opt-in large-fixture evidence tests above
 passed individually. Timing values in this document come from the dated
 non-race runs, not from race-instrumented tests.
@@ -573,7 +573,7 @@ The independent final rerun completed the PostgreSQL package in 101.888 seconds
 and the web package in 32.495 seconds. The required full suite also passed without
 the optional plan flag. Queue/event-cursor/namespace race tests passed three
 repetitions. SQLC query sources were not changed, and explicit regeneration with
-v1.31.1 confirmed that `postgres/db` has no generated diff.
+v1.31.1 confirmed that `internal/postgres/db` has no generated diff.
 
 The migration's Down section removes only these ten indexes concurrently. Older
 irreversible data migrations are untouched. Apply migration 016 independently to

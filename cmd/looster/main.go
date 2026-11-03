@@ -8,7 +8,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/dominikbb/looster/cli"
+	"github.com/dominikbb/looster/internal/cli"
 )
 
 func main() {

@@ -72,7 +72,7 @@ license texts. The generator is a retention and drift check, not a substitute fo
 reviewing new licenses or checking upstream provenance. It cannot establish who
 owns newly contributed code or artwork. D3 is vendored as a pinned distribution:
 when replacing it, review and update its complete bundled dependency inventory
-and notices as described in `web/static/vendor/README.md`.
+and notices as described in `internal/web/static/vendor/README.md`.
 
 ## External services and development tools
 

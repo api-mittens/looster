@@ -5,7 +5,11 @@
 ## Development setup
 
 Use the Go version in [go.mod](../go.mod), currently **1.27.2**. The module path is
-`github.com/dominikbb/looster`. A normal build needs only Go:
+`github.com/dominikbb/looster`. Private Go packages live under `internal/`, including
+`internal/skills` and its bundled skill, and `internal/scripts` for installer tests.
+The installer itself stays at `scripts/install.sh`. Keep the executable entry point
+in `cmd/looster` and use `./internal/<package>` for focused package checks.
+A normal build needs only Go:
 
 ```sh
 go build -buildvcs=false -o bin/looster ./cmd/looster
@@ -60,11 +64,11 @@ database (upgrade tests also require `CREATEDB`), and build the CLI first:
 
 ```sh
 go build -buildvcs=false -o bin/looster ./cmd/looster
-LOOSTER_BROWSER_TEST=1 go test -count=1 ./web -run '^TestGraphBrowser$'
+LOOSTER_BROWSER_TEST=1 go test -count=1 ./internal/web -run '^TestGraphBrowser$'
 LOOSTER_PRODUCTION_TEST=1 \
   LOOSTER_TEST_BINARY="$PWD/bin/looster" \
   LOOSTER_TEST_DATABASE_URL='postgres://postgres:postgres@localhost:5432/looster_test?sslmode=disable' \
-  go test -count=1 -timeout=5m ./web -run '^TestGraphProduction$'
+  go test -count=1 -timeout=5m ./internal/web -run '^TestGraphProduction$'
 ```
 
 Set `CHROMIUM=/path/to/chromium` if automatic browser discovery is unsuitable.

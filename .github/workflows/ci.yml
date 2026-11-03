@@ -91,7 +91,7 @@ jobs:
             mkdir -p "dist/$name"
             binary=looster
             if [ "$os" = windows ]; then binary=looster.exe; fi
-            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags="-s -w -X github.com/dominikbb/looster/cli.Version=$RELEASE_TAG" -o "dist/$name/$binary" ./cmd/looster
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags="-s -w -X github.com/dominikbb/looster/internal/cli.Version=$RELEASE_TAG" -o "dist/$name/$binary" ./cmd/looster
             cp LICENSE THIRD_PARTY_NOTICES.md logo.svg readme.md config.example.toml behaviour.example behaviour_example.txt "dist/$name/"
             mkdir -p "dist/$name/third_party_sources"
             cp "$hcl_source" "dist/$name/third_party_sources/hashicorp-hcl-$hcl_version.zip"
