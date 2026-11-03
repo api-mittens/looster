@@ -3,27 +3,57 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/dominikbb/looster/event"
 )
+
+// Emit only selected predicates. Optional-parameter OR clauses conceal selective
+// task indexes once PostgreSQL switches a prepared statement to a generic plan.
+// Values remain parameters and the number of query shapes is bounded.
+func logQuery(f event.Filter) (string, []any) {
+	var q strings.Builder
+	q.WriteString(`SELECT id,task_id,kind,agent_name,body,created_at,actor_agent FROM events WHERE id>$1`)
+	args := []any{f.After}
+	add := func(predicate string, value any) {
+		args = append(args, value)
+		q.WriteString(" AND " + fmt.Sprintf(predicate, len(args)))
+	}
+	if f.Until != 0 {
+		add("id<=$%d", f.Until)
+	}
+	if f.TaskID != 0 {
+		add("task_id=$%d", f.TaskID)
+	}
+	if f.Agent != "" {
+		args = append(args, f.Agent)
+		n := len(args)
+		fmt.Fprintf(&q, " AND (agent_name=$%d OR actor_agent=$%d)", n, n)
+	}
+	if len(f.Kinds) != 0 {
+		add("kind=ANY($%d::text[])", f.Kinds)
+	}
+	if f.Since != nil {
+		add("created_at>=$%d", *f.Since)
+	}
+	q.WriteString(" ORDER BY id ")
+	if f.Desc {
+		q.WriteString("DESC")
+	} else {
+		q.WriteString("ASC")
+	}
+	args = append(args, f.Limit)
+	fmt.Fprintf(&q, " LIMIT $%d", len(args))
+	return q.String(), args
+}
 
 func (s *Store) Logs(ctx context.Context, f event.Filter) ([]event.Event, error) {
 	if f.Limit < 1 || f.Limit > 10000 || f.After < 0 || f.Until < 0 || f.TaskID < 0 {
 		return nil, errors.New("invalid log page bounds")
 	}
-	if f.Kinds == nil {
-		f.Kinds = []string{}
-	}
-	order := "ASC"
-	if f.Desc {
-		order = "DESC"
-	}
-	rows, err := s.Pool.Query(ctx, `SELECT id,task_id,kind,agent_name,body,created_at,actor_agent FROM events
- WHERE id>$1 AND ($2::bigint=0 OR id<=$2) AND ($3::bigint=0 OR task_id=$3)
- AND ($4::text='' OR agent_name=$4 OR actor_agent=$4)
- AND (cardinality($5::text[])=0 OR kind=ANY($5))
- AND ($6::timestamptz IS NULL OR created_at>=$6)
- ORDER BY id `+order+` LIMIT $7`, f.After, f.Until, f.TaskID, f.Agent, f.Kinds, f.Since, f.Limit)
+	query, args := logQuery(f)
+	rows, err := s.Pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

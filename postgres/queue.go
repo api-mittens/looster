@@ -61,14 +61,17 @@ func (s *Store) Claim(ctx context.Context, agents []string) (app.Lease, error) {
 			c.Release()
 		}
 	}()
-	rows, e := c.Query(ctx, `SELECT j.id,coalesce(j.task_id,0),j.agent_name,j.state,j.session_id,j.history,j.prompt,coalesce(j.context_task_id,0),j.notification FROM jobs j WHERE j.agent_name=ANY($1) AND j.available_at<=now() AND j.state IN ('pending','running','archiving') AND NOT EXISTS(SELECT FROM jobs earlier WHERE coalesce(earlier.task_id,earlier.context_task_id)=coalesce(j.task_id,j.context_task_id) AND earlier.agent_name=j.agent_name AND earlier.id<j.id AND earlier.state IN ('pending','running','archiving')) ORDER BY j.id LIMIT 100`, agents)
+	// Candidate scans must not fetch history: it can be large and only the
+	// job whose advisory lock we acquire needs it. Keep unavailable predecessors
+	// in the anti-join so delayed retries still preserve per-session FIFO.
+	rows, e := c.Query(ctx, `SELECT j.id,coalesce(j.task_id,0),j.agent_name,j.state,j.session_id,j.prompt,coalesce(j.context_task_id,0),j.notification FROM jobs j WHERE j.agent_name=ANY($1) AND j.available_at<=now() AND j.state IN ('pending','running','archiving') AND NOT EXISTS(SELECT FROM jobs earlier WHERE coalesce(earlier.task_id,earlier.context_task_id)=coalesce(j.task_id,j.context_task_id) AND earlier.agent_name=j.agent_name AND earlier.id<j.id AND earlier.state IN ('pending','running','archiving')) ORDER BY j.id LIMIT 100`, agents)
 	if e != nil {
 		return nil, e
 	}
 	jobs := []app.Job{}
 	for rows.Next() {
 		var j app.Job
-		if e = rows.Scan(&j.ID, &j.TaskID, &j.Agent, &j.State, &j.SessionID, &j.History, &j.Prompt, &j.ContextTaskID, &j.Notification); e != nil {
+		if e = rows.Scan(&j.ID, &j.TaskID, &j.Agent, &j.State, &j.SessionID, &j.Prompt, &j.ContextTaskID, &j.Notification); e != nil {
 			rows.Close()
 			return nil, e
 		}

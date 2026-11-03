@@ -7,8 +7,10 @@ import (
 	"io/fs"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
@@ -30,6 +32,10 @@ func namespaceSchema(name string) (string, error) {
 }
 
 func namespaceConfig(url, name string) (*pgxpool.Config, error) {
+	return namespaceConfigWithLockTimeout(url, name, "5s")
+}
+
+func namespaceConfigWithLockTimeout(url, name, fallback string) (*pgxpool.Config, error) {
 	schema, err := namespaceSchema(name)
 	if err != nil {
 		return nil, err
@@ -40,6 +46,22 @@ func namespaceConfig(url, name string) (*pgxpool.Config, error) {
 	}
 	// Never fall back to public: absent objects must fail rather than leak data.
 	cfg.ConnConfig.RuntimeParams["search_path"] = pgx.Identifier{schema}.Sanitize() + ",pg_temp"
+	// Apply the fallback after startup so role/database settings and PGOPTIONS
+	// remain authoritative. A nonzero lock_timeout (including an explicit DSN
+	// value) is preserved. Zero means unbounded, so receives our bounded default.
+	// The low-level hook also runs for pgx.ConnectConfig and stdlib.OpenDB:
+	// migration serialization and Goose DDL must not wait indefinitely either.
+	previous := cfg.ConnConfig.Config.AfterConnect
+	cfg.ConnConfig.Config.AfterConnect = func(ctx context.Context, conn *pgconn.PgConn) error {
+		if previous != nil {
+			if err := previous(ctx, conn); err != nil {
+				return err
+			}
+		}
+		result := conn.ExecParams(ctx, `SELECT set_config('lock_timeout',$1,false)
+ WHERE current_setting('lock_timeout') = '0'`, [][]byte{[]byte(fallback)}, nil, nil, nil).Read()
+		return result.Err
+	}
 	return cfg, nil
 }
 
@@ -78,7 +100,10 @@ func MigrateNamespace(ctx context.Context, url, name string) error {
 }
 
 func migrateNamespace(ctx context.Context, url, name string, ensure bool) error {
-	cfg, err := namespaceConfig(url, name)
+	// A concurrent initializer may be building several indexes before releasing
+	// the namespace lock. Give migrations a longer, still finite fallback than
+	// interactive mutations, while preserving explicit deployment settings.
+	cfg, err := namespaceConfigWithLockTimeout(url, name, "30s")
 	if err != nil {
 		return err
 	}
@@ -90,7 +115,7 @@ func migrateNamespace(ctx context.Context, url, name string, ensure bool) error 
 		return err
 	}
 	defer lock.Close(context.Background())
-	if _, err = lock.Exec(ctx, `SELECT pg_advisory_lock(hashtextextended($1,0))`, "looster:migrations:"+schema); err != nil {
+	if err = acquireMigrationLock(ctx, lock, schema); err != nil {
 		return err
 	}
 	if ensure {
@@ -118,6 +143,34 @@ func migrateNamespace(ctx context.Context, url, name string, ensure bool) error 
 	}
 	_, err = provider.Up(ctx)
 	return err
+}
+
+// Do not wait inside pg_advisory_lock: its statement snapshot can prevent the
+// owning runner's concurrent expression-index build from completing. Polling
+// releases each snapshot before waiting, while retaining the configured bound.
+func acquireMigrationLock(ctx context.Context, conn *pgx.Conn, schema string) error {
+	var milliseconds int64
+	if err := conn.QueryRow(ctx, `SELECT (extract(epoch FROM current_setting('lock_timeout')::interval)*1000)::bigint`).Scan(&milliseconds); err != nil {
+		return err
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, time.Duration(milliseconds)*time.Millisecond)
+	defer cancel()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var acquired bool
+		if err := conn.QueryRow(waitCtx, `SELECT pg_try_advisory_lock(hashtextextended($1,0))`, "looster:migrations:"+schema).Scan(&acquired); err != nil {
+			return err
+		}
+		if acquired {
+			return nil
+		}
+		select {
+		case <-waitCtx.Done():
+			return fmt.Errorf("namespace migration lock wait: %w", waitCtx.Err())
+		case <-ticker.C:
+		}
+	}
 }
 
 // namespaceMigrations rebinds fixed function search paths at migration load time.
