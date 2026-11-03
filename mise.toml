@@ -3,6 +3,7 @@ _.file = { path = ".env", redact = true }
 
 [tools]
 go = "1.27.2"
+golangci-lint = "2.15.0"
 sqlc = "1.31.1"
 "go:github.com/pressly/goose/v3/cmd/goose" = "3.27.3"
 
@@ -17,3 +18,15 @@ run = "go build -buildvcs=false -o bin/looster ./cmd/looster"
 [tasks.test]
 description = "Run unit tests"
 run = "go test ./..."
+
+[tasks.lint]
+description = "Lint new changes against HEAD (use golangci-lint run for a full audit)"
+run = "golangci-lint run --new-from-rev=HEAD ./..."
+
+[tasks."hooks:install"]
+description = "Install repository hooks (review existing core.hooksPath first)"
+run = "git config --local core.hooksPath scripts"
+
+[tasks."hooks:test"]
+description = "Run isolated pre-commit regression tests"
+run = "bash scripts/pre-commit_test.sh"

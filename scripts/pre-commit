@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Validate the index, never stash, overwrite the working tree, or stage fixes.
+set -euo pipefail
+
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+git_dir=$(git rev-parse --absolute-git-dir)
+
+relevant=false
+while IFS= read -r -d '' path; do
+  case "$path" in
+    *.go|go.mod|go.sum|go.work|go.work.sum|.golangci.yml|.golangci.yaml|mise.toml|scripts/pre-commit)
+      relevant=true ;;
+  esac
+done < <(git diff --cached --name-only --no-renames -z)
+if ! "$relevant"; then
+  exit 0
+fi
+
+# Resolve mise shims in the trusted original directory. Invoking a shim in the
+# temporary snapshot would try to trust its config and load a nonexistent .env.
+linter=$(command -v golangci-lint) || {
+  echo 'pre-commit: install pinned tools with mise install' >&2
+  exit 1
+}
+go_bin=$(command -v go)
+case "$linter" in */mise/shims/*) linter=$(mise which golangci-lint) ;; esac
+case "$go_bin" in */mise/shims/*) go_bin=$(mise which go) ;; esac
+
+scratch=$(mktemp -d "${JCODE_SCRATCH_DIR:-${TMPDIR:-/tmp}}/looster-pre-commit.XXXXXXXX")
+trap 'rm -rf -- "$scratch"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+mkdir "$scratch/tree"
+# checkout-index respects GIT_INDEX_FILE, including the alternate index Git
+# uses for path-limited commits. Unlike archive, it ignores export-ignore and
+# export-subst attributes: tests must see the exact staged bytes.
+git checkout-index --all --prefix="$scratch/tree/"
+base=$(git rev-parse --verify HEAD 2>/dev/null || git hash-object -t tree /dev/null)
+git diff --cached --no-ext-diff --no-renames --binary "$base" -- > "$scratch/staged.patch"
+
+(
+  # Git exports these when invoking hooks. Do not let the snapshot touch the
+  # real index, even for git commit --only or a linked worktree.
+  # Clear every repository-local Git variable, including alternate object dirs.
+  while IFS= read -r name; do unset "$name"; done < <(git rev-parse --local-env-vars)
+  # The linter invokes go internally, which must not fall back to a mise shim.
+  export PATH="$(dirname "$go_bin"):$(dirname "$linter"):$PATH"
+  cd "$scratch/tree"
+  git init -q
+  git add --force --all
+  lint_status=0
+  "$linter" run --fix --new-from-patch="$scratch/staged.patch" ./... || lint_status=$?
+
+  # Always test the fixed staged snapshot, even when lint has findings/errors.
+  test_status=0
+  "$go_bin" test ./... || test_status=$?
+
+  git diff --no-ext-diff --binary -- > "$scratch/fixes.patch"
+  fixes=false
+  if test -s "$scratch/fixes.patch"; then
+    fixes=true
+    patch=$(mktemp "$git_dir/looster-lint-fixes.XXXXXXXX.patch")
+    cp "$scratch/fixes.patch" "$patch"
+    printf 'pre-commit: autofixes need review. Patch saved to %s\n' "$patch" >&2
+    echo 'Apply manually (git apply --check then git apply), review, and stage only intended changes.' >&2
+  fi
+  if (( lint_status != 0 || test_status != 0 )) || "$fixes"; then
+    printf 'pre-commit: blocked (lint=%s, tests=%s, fixes=%s). Index and working tree unchanged.\n' "$lint_status" "$test_status" "$fixes" >&2
+    exit 1
+  fi
+)
