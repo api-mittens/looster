@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+# Validate the index, never stash, overwrite the working tree, or stage fixes.
+set -euo pipefail
+
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+git_dir=$(git rev-parse --absolute-git-dir)
+
+relevant=false
+while IFS= read -r -d '' path; do
+  case "$path" in
+    *.go|go.mod|go.sum|go.work|go.work.sum|.golangci.yml|.golangci.yaml|mise.toml|scripts/pre-commit|scripts/lint-audit/*)
+      relevant=true ;;
+  esac
+done < <(git diff --cached --name-only --no-renames -z)
+if ! "$relevant"; then
+  exit 0
+fi
+
+# Resolve mise shims in the trusted original directory. Invoking a shim in the
+# temporary snapshot would try to trust its config and load a nonexistent .env.
+linter=$(command -v golangci-lint) || {
+  echo 'pre-commit: install pinned tools with mise install' >&2
+  exit 1
+}
+go_bin=$(command -v go)
+case "$linter" in */mise/shims/*) linter=$(mise which golangci-lint) ;; esac
+case "$go_bin" in */mise/shims/*) go_bin=$(mise which go) ;; esac
+
+scratch=$(mktemp -d "${JCODE_SCRATCH_DIR:-${TMPDIR:-/tmp}}/looster-pre-commit.XXXXXXXX")
+trap 'rm -rf -- "$scratch"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+mkdir "$scratch/tree" "$scratch/baseline"
+# checkout-index respects GIT_INDEX_FILE, including the alternate index Git
+# uses for path-limited commits. Unlike archive, it ignores export-ignore and
+# export-subst attributes: tests must see the exact staged bytes.
+git checkout-index --all --prefix="$scratch/tree/"
+base=$(git rev-parse --verify HEAD 2>/dev/null || git hash-object -t tree /dev/null)
+git diff --cached --no-ext-diff --no-renames --binary "$base" -- > "$scratch/staged.patch"
+# Extract HEAD through a private index, not archive (which honors export-ignore
+# and export-subst). Never read unstaged source or change the caller's index.
+if git rev-parse --verify HEAD >/dev/null 2>&1; then
+  GIT_INDEX_FILE="$scratch/base.index" git read-tree "$base"
+  GIT_INDEX_FILE="$scratch/base.index" git checkout-index --all --prefix="$scratch/baseline/"
+fi
+
+(
+  # Git exports these when invoking hooks. Do not let the snapshot touch the
+  # real index, even for git commit --only or a linked worktree.
+  # Clear every repository-local Git variable, including alternate object dirs.
+  while IFS= read -r name; do unset "$name"; done < <(git rev-parse --local-env-vars)
+  # The linter invokes go internally, which must not fall back to a mise shim.
+  export PATH="$(dirname "$go_bin"):$(dirname "$linter"):$PATH"
+  cd "$scratch/tree"
+  git init -q
+  git add --force --all
+  lint_status=0
+  # These four linters are gated by the normalized audit below, not diff lines.
+  # Keeping them here would reject unchanged/improved legacy declarations when
+  # the declaration line itself is touched. None supplies autofixes.
+  "$linter" run --fix --new-from-patch="$scratch/staged.patch" \
+    --disable=gocyclo,paralleltest,musttag,gosec ./... > "$scratch/line-lint.log" 2>&1 || lint_status=$?
+  # A valid policy can enable only the audited linters. Disabling those leaves
+  # no line-based work. Recognize only the pinned tool's exact empty-set error,
+  # not other configuration failures, and still run both audits and tests.
+  if (( lint_status == 3 )) && \
+    [[ $(cat "$scratch/line-lint.log") == 'level=error msg="Running error: no linters enabled"' ]]; then
+    lint_status=0
+  else
+    cat "$scratch/line-lint.log"
+  fi
+
+  # Diff-line filtering misses findings reported on unchanged declarations.
+  # Audit only declaration-aware linters, comparing full reports rather than
+  # imposing every historical finding in an edited file on this commit.
+  audit_status=0
+  audit_config=(--no-config)
+  for config in .golangci.yml .golangci.yaml; do
+    if test -f "$config"; then
+      audit_config=(--config "$config")
+      # Same candidate policy in both trees, with paths relative to each root.
+      cp "$config" "$scratch/baseline/$config"
+      break
+    fi
+  done
+  audit_report() {
+    local tree=$1 report=$2 status=0
+    (
+      cd "$tree"
+      "$linter" run "${audit_config[@]}" \
+        --enable-only=gocyclo,paralleltest,musttag,gosec \
+        --issues-exit-code=0 --max-issues-per-linter=0 --max-same-issues=0 \
+        --uniq-by-line=false --show-stats=false \
+        --output.text.path=/dev/null --output.json.path="$report" ./...
+    ) || status=$?
+    return "$status"
+  }
+  # An unborn/Go-free baseline has no diagnostics and need not load a module.
+  if test -n "$(find "$scratch/baseline" -name '*.go' -type f -print -quit)"; then
+    audit_report "$scratch/baseline" "$scratch/baseline.json" || audit_status=$?
+  else
+    printf '{"Issues":[]}\n' > "$scratch/baseline.json"
+  fi
+  audit_report "$scratch/tree" "$scratch/candidate.json" || audit_status=$?
+  if (( audit_status == 0 )); then
+    if "$go_bin" build -o "$scratch/lint-audit" ./scripts/lint-audit/main.go; then
+      "$scratch/lint-audit" "$scratch/baseline" "$scratch/baseline.json" \
+        "$scratch/tree" "$scratch/candidate.json" || audit_status=$?
+    else
+      audit_status=1
+    fi
+  fi
+  if (( audit_status != 0 )); then
+    printf 'pre-commit: declaration audit failed (status=%s).\n' "$audit_status" >&2
+    if (( lint_status == 0 )); then lint_status=$audit_status; fi
+  fi
+
+  # Always test the fixed staged snapshot, even when lint has findings/errors.
+  test_status=0
+  "$go_bin" test ./... || test_status=$?
+
+  git diff --no-ext-diff --binary -- > "$scratch/fixes.patch"
+  fixes=false
+  if test -s "$scratch/fixes.patch"; then
+    fixes=true
+    patch=$(mktemp "$git_dir/looster-lint-fixes.XXXXXXXX.patch")
+    cp "$scratch/fixes.patch" "$patch"
+    printf 'pre-commit: autofixes need review. Patch saved to %s\n' "$patch" >&2
+    echo 'Apply manually (git apply --check then git apply), review, and stage only intended changes.' >&2
+  fi
+  if (( lint_status != 0 || test_status != 0 )) || "$fixes"; then
+    printf 'pre-commit: blocked (lint=%s, tests=%s, fixes=%s). Index and working tree unchanged.\n' "$lint_status" "$test_status" "$fixes" >&2
+    exit 1
+  fi
+)

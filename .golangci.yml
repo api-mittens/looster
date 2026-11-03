@@ -1,0 +1,33 @@
+version: "2"
+
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - gocyclo
+    - paralleltest
+    - musttag
+    - gosec
+    - modernize
+    - err113
+    - errorlint
+  settings:
+    gocyclo:
+      min-complexity: 30
+  exclusions:
+    generated: strict
+    presets:
+      - comments
+      - common-false-positives
+      - std-error-handling
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

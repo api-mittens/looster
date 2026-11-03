@@ -21,8 +21,13 @@ Docker Compose and an independently authenticated Jcode installation. Use
 
 ## Checks
 
-The test suite is Go-only. No Node.js test runner or frontend package install is
-required. Module behaviour runs in the test-only Goja interpreter against the
+See [Go linting and pre-commit checks](linting.md) for the pinned golangci-lint
+suite, opt-in hook installation, staged-only checking, and safe autofix review.
+The hook regression suite runs with `bash scripts/pre-commit_test.sh`; add
+`--real` to exercise the installed linter and Go toolchain as well.
+
+The application test suite is Go-only. No Node.js test runner or frontend package
+install is required. Module behaviour runs in the test-only Goja interpreter against the
 shipped JavaScript. Optional `-race` runs can be substantially slower for the
 force-simulation stress cases, so CI runs the complete suite without that flag.
 

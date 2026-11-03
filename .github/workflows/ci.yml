@@ -55,6 +55,9 @@ jobs:
           LOOSTER_BROWSER_TEST: '1'
           LOOSTER_PRODUCTION_TEST: '1'
         run: go test -count=1 -timeout=10m ./...
+      - name: Test incremental lint diagnostic comparison
+        working-directory: scripts/lint-audit
+        run: go test ./...
       - name: Vet
         run: go vet ./...
 
