@@ -1,4 +1,4 @@
-import {buildGraph,prepareGraph,renderGraph,createGraphSimulation,constrainGraph,topologySignature,escapeHTML,HEATMAP_LEGEND} from './task-graph.mjs';
+import {buildGraph,prepareGraph,renderGraph,createGraphSimulation,constrainGraph,topologySignature,escapeHTML,HEATMAP_LEGEND,TASK_STATUSES,DEFAULT_TASK_STATUSES} from './task-graph.mjs';
 
 const EVENTS=['click','keydown','pointerdown','pointermove','pointerup','pointercancel','lostpointercapture','wheel','pointerover','focusin','change'];
 export class TaskAgentGraph extends HTMLElement {
@@ -39,9 +39,12 @@ export class TaskAgentGraph extends HTMLElement {
     const tagMenuOpen=this.querySelector('.tg-tag-filter')?.open;
     const tagFocus=this.querySelector('[data-tag-filter]:focus')?.value;
     const tagSummaryFocus=Boolean(this.querySelector('[data-tag-summary]:focus'));
+    const statusFocus=this.querySelector('[data-status-filter]:focus')?.value;
+    const selectedStatuses=this._data.selectedStatuses ?? DEFAULT_TASK_STATUSES;
+    const statusMenu=`<div class="tg-status-filter" role="group" aria-label="Filter tasks by status">${TASK_STATUSES.map(status=>`<label><input type="checkbox" data-status-filter value="${status}"${selectedStatuses.includes(status)?' checked':''}> ${status}</label>`).join('')}</div>`;
     const selectedTags=this._data.selectedTags || [];
     const tags=this._data.tagOptions || [];
-    const tagMenu=`<details class="tg-tag-filter"${tagMenuOpen?' open':''}><summary data-tag-summary>Tags: ${selectedTags.length?`${selectedTags.length} selected`:'All'}</summary><div class="tg-tag-options" role="group" aria-label="Filter tasks by tags"><label><input type="checkbox" data-tag-all${selectedTags.length?'':' checked'}> All tags (no filter)</label>${tags.map(tag=>`<label><input type="checkbox" data-tag-filter value="${escapeHTML(tag)}"${selectedTags.includes(tag)?' checked':''}> ${escapeHTML(tag)}</label>`).join('')}${tags.length?'':'<span>No tags on unfinished tasks.</span>'}<small>Match any selected tag.</small></div></details>`;
+    const tagMenu=`<details class="tg-tag-filter"${tagMenuOpen?' open':''}><summary data-tag-summary>Tags: ${selectedTags.length?`${selectedTags.length} selected`:'All'}</summary><div class="tg-tag-options" role="group" aria-label="Filter tasks by tags"><label><input type="checkbox" data-tag-all${selectedTags.length?'':' checked'}> All tags (no filter)</label>${tags.map(tag=>`<label><input type="checkbox" data-tag-filter value="${escapeHTML(tag)}"${selectedTags.includes(tag)?' checked':''}> ${escapeHTML(tag)}</label>`).join('')}${tags.length?'':'<span>No tags for the selected statuses.</span>'}<small>Match any selected tag.</small></div></details>`;
     const model=buildGraph({...this._data,heatmap:this.heatmap});
     const signature=topologySignature(model,{showTitles:this.showTitles});
     const changed=!this.graph || signature!==this.graph.layoutSignature;
@@ -54,11 +57,12 @@ export class TaskAgentGraph extends HTMLElement {
     }
     // Never discard invisible positions or pins: search filtering is not deletion.
     for(const n of this.graph.nodes) this.positions.set(n.key,{x:n.x,y:n.y});
-    this.innerHTML=`<div class="tg-controls" role="group" aria-label="Graph controls"><button type="button" data-action="in" aria-label="Zoom in">+</button><button type="button" data-action="out" aria-label="Zoom out">−</button><button type="button" data-action="heatmap" aria-pressed="${this.heatmap}">Heatmap</button>${tagMenu}<span>Circle counts: comments / status changes. Drag nodes or background. Scroll to zoom.</span></div>${this.graph.nodes.length?renderGraph(this.graph):'<p class="tg-empty">No tasks or agents yet.</p>'}<div class="tg-detail" data-graph-detail role="status">Hover or focus a node to read its full title. Select to open details.</div><p class="tg-legend">Only unfinished planning/todo tasks are shown. Progress ring: one segment = planning, two = todo. Smaller nodes and weaker links mean longer inactivity (daily decay based on last activity, created date fallback). Active work stays full size. Blue marks online agents and tasks being worked on. Solid animated links: running sessions. Faint links: historical idle sessions. Related nodes attract, with stronger running and repeated-session links. Dragged nodes stay anchored in this browser session.${this.heatmap?`<br><span class="tg-gradient" aria-hidden="true"></span>${HEATMAP_LEGEND}`:''}</p>`;
+    this.innerHTML=`<div class="tg-controls" role="group" aria-label="Graph controls"><button type="button" data-action="in" aria-label="Zoom in">+</button><button type="button" data-action="out" aria-label="Zoom out">−</button><button type="button" data-action="heatmap" aria-pressed="${this.heatmap}">Heatmap</button>${statusMenu}${tagMenu}<span>Circle counts: comments / status changes. Drag nodes or background. Scroll to zoom.</span></div>${this.graph.nodes.length?renderGraph(this.graph):'<p class="tg-empty">No tasks match the current filters.</p>'}<div class="tg-detail" data-graph-detail role="status">Hover or focus a node to read its full title. Select to open details.</div><p class="tg-legend">Tasks match the selected status, tag and search filters. Progress ring: one segment = planning, two = todo, three = validated, empty = closed. Smaller nodes and weaker links mean longer inactivity (daily decay based on last activity, created date fallback). Active work stays full size. Blue marks online agents and tasks being worked on. Solid animated links: running sessions. Faint links: historical idle sessions. Related nodes attract, with stronger running and repeated-session links. Dragged nodes stay anchored in this browser session.${this.heatmap?`<br><span class="tg-gradient" aria-hidden="true"></span>${HEATMAP_LEGEND}`:''}</p>`;
     this.nodeElements=new Map([...this.querySelectorAll('[data-key]')].map(n=>[n.dataset.key,n]));
     this.edgeElements=[...this.querySelectorAll('.tg-edge')];
     this.updateView(); this.updatePositions(); this.showDetail(this.selectedKey);
-    if(tagFocus!==undefined) [...this.querySelectorAll('[data-tag-filter]')].find(n=>n.value===tagFocus)?.focus();
+    if(statusFocus!==undefined) [...this.querySelectorAll('[data-status-filter]')].find(n=>n.value===statusFocus)?.focus();
+    else if(tagFocus!==undefined) [...this.querySelectorAll('[data-tag-filter]')].find(n=>n.value===tagFocus)?.focus();
     else if(tagSummaryFocus) this.querySelector('[data-tag-summary]')?.focus();
     else if(focused) this.nodeElements.get(focused)?.focus();
     else if(actionFocus) [...this.querySelectorAll('[data-action]')].find(n=>n.dataset.action===actionFocus)?.focus();
@@ -121,7 +125,13 @@ export class TaskAgentGraph extends HTMLElement {
   handleEvent(event) {
     const node=event.target.closest?.('[data-key]'),action=event.target.closest?.('[data-action]')?.dataset.action;
     if(event.type==='change') {
-      if(event.target.hasAttribute?.('data-tag-all')) this.dispatchEvent(new CustomEvent('tag-filter',{bubbles:true,detail:{tags:[]}}));
+      if(event.target.hasAttribute?.('data-status-filter')) {
+        const statuses=new Set(this._data.selectedStatuses ?? DEFAULT_TASK_STATUSES);
+        if(event.target.checked) statuses.add(event.target.value);else statuses.delete(event.target.value);
+        this._data={...this._data,selectedStatuses:TASK_STATUSES.filter(status=>statuses.has(status))};
+        this.render();
+        this.dispatchEvent(new CustomEvent('status-filter',{bubbles:true,detail:{statuses:this._data.selectedStatuses}}));
+      } else if(event.target.hasAttribute?.('data-tag-all')) this.dispatchEvent(new CustomEvent('tag-filter',{bubbles:true,detail:{tags:[]}}));
       else if(event.target.hasAttribute?.('data-tag-filter')) {
         const tags=new Set(this._data.selectedTags || []);
         if(event.target.checked) tags.add(event.target.value);else tags.delete(event.target.value);

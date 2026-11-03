@@ -82,7 +82,35 @@ test('captured pointer click opens once and wheel zoom prevents page scroll',()=
  const enter=event(el,'keydown',n,{key:'Enter'});assert.equal(enter.defaultPrevented,true);assert.equal(opened.length,2);
 });
 test('empty data and reduced motion have explicit support',async()=>{
- const el=connected();el.data={};assert.match(el.innerHTML,/No tasks or agents yet/);const css=await readFile(new URL('./static/task-graph.css','file:./probe'),'utf8');assert.match(css,/prefers-reduced-motion:reduce/);assert.match(css,/animation:none/);assert.match(css,/prefers-color-scheme:dark/);
+ const el=connected();el.data={};assert.match(el.innerHTML,/No tasks match the current filters/);const css=await readFile(new URL('./static/task-graph.css','file:./probe'),'utf8');assert.match(css,/prefers-reduced-motion:reduce/);assert.match(css,/animation:none/);assert.match(css,/prefers-color-scheme:dark/);
+});
+test('each status and every combination filters tasks and their relations',()=>{
+ const statuses=['planning','todo','validated','closed'];
+ const tasks=[...statuses,'unknown'].map((status,i)=>({id:i+1,status}));
+ const sessions=tasks.map(t=>({task_id:t.id,agent:'agent-'+t.id,status:'idle'}));
+ for(let mask=0;mask<16;mask++) {
+  const selectedStatuses=statuses.filter((_,i)=>mask&(1<<i));
+  const graph=buildGraph({tasks,sessions,selectedStatuses});
+  const ids=tasks.filter(t=>selectedStatuses.includes(t.status)).map(t=>t.id);
+  assert.deepEqual(graph.nodes.filter(n=>n.kind==='task').map(n=>n.id),ids);
+  assert.equal(graph.edges.length,ids.length);assert.equal(graph.nodes.filter(n=>n.kind==='agent').length,ids.length);
+ }
+ assert.equal(buildGraph({tasks,sessions,selectedStatuses:['unknown']}).nodes.length,0);
+});
+test('status checkboxes default to planning/todo and emit explicit empty selection',()=>{
+ const el=connected();el.data={tasks:['planning','todo','validated','closed'].map((status,i)=>({id:i+1,status}))};
+ for(const status of ['planning','todo']) assert.ok(el.innerHTML.includes('data-status-filter value="'+status+'" checked'));
+ for(const status of ['validated','closed']) assert.ok(el.innerHTML.includes('data-status-filter value="'+status+'">'));
+ const changes=[];el.addEventListener('status-filter',e=>changes.push({statuses:e.detail.statuses,bubbles:e.bubbles}));
+ const toggle=(value,checked)=>event(el,'change',{value,checked,hasAttribute:k=>k==='data-status-filter'});
+ toggle('validated',true);toggle('closed',true);assert.equal(el.graph.nodes.length,4);
+ for(const status of ['planning','todo','validated','closed']) toggle(status,false);
+ assert.equal(el.graph.nodes.length,0);assert.deepEqual(changes.at(-1),{statuses:[],bubbles:true});
+ assert.match(el.innerHTML,/No tasks match the current filters/);
+ toggle('closed',true);assert.deepEqual(el.graph.nodes.map(n=>n.id),[4]);
+ el.data={...el.data,tasks:el.data.tasks.map(t=>({...t,comment_count:2}))};
+ assert.deepEqual(el.graph.nodes.map(n=>n.id),[4]);
+ el.disconnectedCallback();
 });
 test('continuous heatmap colors have stable anchors and intermediate colors',()=>{
  assert.equal(activityColor(0),'rgb(34,197,94)');assert.equal(activityColor(10),'rgb(234,179,8)');assert.equal(activityColor(25),'rgb(239,68,68)');assert.equal(activityColor(10000),activityColor(25));

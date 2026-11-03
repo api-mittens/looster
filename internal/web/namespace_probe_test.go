@@ -79,7 +79,7 @@ test('namespace switch clears all cached data, dialogs, cursors, search and form
   board.querySelector=control; board.palette={querySelector:control};
   let closed=false;
   board.querySelectorAll=()=>[{open:true,close(){closed=true;}}];
-  Object.assign(board,{data:{},status:{},system:{},library:{},manifests:[{}],manifestID:1,detailID:1,cursor:10,commentCursor:20,selected:'todo/1',pageHTML:'old',paletteItems:[{}],panel:control('panel'),board:control('board'),search:control('search'),paletteInput:control('paletteInput')});
+  Object.assign(board,{graphStatuses:['closed'],data:{},status:{},system:{},library:{},manifests:[{}],manifestID:1,detailID:1,cursor:10,commentCursor:20,selected:'todo/1',pageHTML:'old',paletteItems:[{}],panel:control('panel'),board:control('board'),search:control('search'),paletteInput:control('paletteInput')});
   let refreshed=false;board.refresh=()=>{refreshed=true;};
   const signal=board.controller.signal;
   board.switchNamespace('beta');
@@ -89,6 +89,7 @@ test('namespace switch clears all cached data, dialogs, cursors, search and form
   assert.equal(board.outputs.size,0); assert.equal(board.comments.size,0);
   assert.equal(board.search.value,''); assert.equal(board.paletteInput.value,'');
   assert.ok(control('#page').cleared); assert.ok(control('#create-form').resetCalled);
+  assert.equal(board.graphStatuses,undefined);
 });
 
 test('graph page reuses its element across refreshes and filters task relations',() => {
@@ -138,6 +139,25 @@ test('graph tag selection supports any-match, none, search and unavailable tags 
   board.graphTags=['removed'];board.renderPage();assert.equal(graph.data.tasks.length,0);assert.ok(graph.data.tagOptions.includes('removed'));
 });
 
+test('graph statuses combine with tags/search and persist on refresh including none selected',()=>{
+  const board=boardHarness(async()=>{}),graph={},summary={};
+  board.querySelector=s=>s==='#page'?{querySelector:()=>graph}:summary;
+  const statuses=['planning','todo','validated','closed'];
+  Object.assign(board,{page:'graph',search:{value:''},data:{tasks:statuses.map((status,i)=>({id:i+1,name:'Task '+status,status,tags:[i<2?'open':'done']})),sessions:statuses.map((_,i)=>({task_id:i+1,agent:'agent-'+(i+1),status:'running'}))}});
+  board.renderPage();assert.deepEqual(Array.from(graph.data.tasks,t=>t.id),[1,2]);
+  for(let mask=0;mask<16;mask++) {
+    board.graphStatuses=statuses.filter((_,i)=>mask&(1<<i));board.renderPage();
+    const ids=board.data.tasks.filter(t=>board.graphStatuses.includes(t.status)).map(t=>t.id);
+    assert.deepEqual(Array.from(graph.data.tasks,t=>t.id),ids);assert.equal(graph.data.sessions.length,ids.length);
+    assert.deepEqual(Array.from(graph.data.selectedStatuses),board.graphStatuses);
+    board.renderPage();assert.equal(graph.data.tasks.length,ids.length);
+  }
+  board.graphStatuses=['validated','closed'];board.graphTags=['done'];board.search.value='agent-4';board.renderPage();
+  assert.deepEqual(Array.from(graph.data.tasks,t=>t.id),[4]);assert.deepEqual(Array.from(graph.data.sessions,s=>s.task_id),[4]);
+  assert.ok(graph.data.tagOptions.includes('done'));assert.equal(summary.textContent,'1 tasks · 1 running');
+  board.data.tasks[3].status='todo';board.renderPage();assert.equal(graph.data.tasks.length,0);
+  board.graphStatuses=[];board.renderPage();assert.equal(graph.data.tasks.length,0);assert.equal(graph.data.sessions.length,0);
+});
 test('graph route is a separate navigation tab and wires node detail events',() => {
   const source=readFileSync(new URL('./static/app.js','file:./probe'),'utf8');
   assert.ok(source.includes('href="#graph">Graph <kbd>gg</kbd></a>'));
