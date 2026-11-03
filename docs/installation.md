@@ -58,6 +58,66 @@ Run `looster licenses` offline to read them, including the exact source location
 for the MPL-2.0 HCL dependency. Release archives include the license documents and
 HCL source ZIP separately. See [licensing](licensing.md) before redistributing.
 
+## Install with mise (alternative)
+
+If you already use [mise](https://mise.jdx.dev/), its
+[Go backend](https://mise.jdx.dev/dev-tools/backends/go.html) can build and manage
+Looster instead of the release installer. Install mise first. Unlike release
+binaries, this method requires the Go toolchain declared in [go.mod](../go.mod)
+(currently **Go 1.27.2 or newer**) and access to the Go module and its dependencies.
+The tool identifier includes `/cmd/looster`, the executable package, not just the
+module root.
+
+For a user-wide installation:
+
+```sh
+mise use --global go@1.27.2
+mise use --global go:github.com/api-mittens/looster/cmd/looster@latest
+mise exec -- looster --help
+```
+
+For a repository-local installation, run these commands from the repository where
+you want to use Looster (it need not be Looster's own source checkout):
+
+```sh
+mise use go@1.27.2
+mise use go:github.com/api-mittens/looster/cmd/looster@latest
+mise exec -- looster --help
+```
+
+Without `--global`, `mise use` writes the tools to the project's mise config and
+installs them. Alternatively, add these entries to your repository's `mise.toml`
+(merge them into an existing `[tools]` table rather than duplicating it):
+
+```toml
+[tools]
+go = "1.27.2"
+"go:github.com/api-mittens/looster/cmd/looster" = "latest"
+```
+
+After reviewing a checked-out config, install its tools and run Looster:
+
+```sh
+mise trust
+mise install
+mise exec -- looster --help
+mise exec -- looster --config config.toml task ls
+```
+
+Commit `mise.toml` to share the setup with collaborators. `latest` is convenient
+for getting started. For reproducible team installs, replace it with a published
+Looster release version (for example, `v0.1.0` if that tag exists). Keep the Go
+version compatible with the selected release's `go.mod`. To keep the setup only
+on your machine, put the same entries in a gitignored `mise.local.toml` instead.
+
+`mise exec --` works without shell activation. With
+[mise shell activation](https://mise.jdx.dev/cli/activate.html), you can run
+`looster` directly while in the configured repository. Continue with the
+[quick start](../readme.md#quick-start), prefixing its Looster commands with
+`mise exec --` when not using activation. Mise manages the executable only:
+PostgreSQL, S3 configuration, and a separately authenticated Jcode installation
+are still required to run workers.
+
 ## Build from source
 
 The module is `github.com/api-mittens/looster`. Use **Go 1.27.2 or newer**, as declared
