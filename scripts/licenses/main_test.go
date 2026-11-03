@@ -73,6 +73,31 @@ func TestCheckedInD3Collection(t *testing.T) {
 	}
 }
 
+func TestCheckedInMarkdownCollection(t *testing.T) {
+	root, err := rootDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const name = "MARKDOWN-IT-THIRD-PARTY-LICENSES.txt"
+	b, err := os.ReadFile(filepath.Join(root, "web/static/vendor", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	kind, err := noticeClassification(notice{name, string(b)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"MIT", "BSD-2-Clause"} {
+		if !strings.Contains(kind, want) {
+			t.Errorf("missing %s from %q", want, kind)
+		}
+	}
+	malicious := string(b) + "\n===================================================================\n--- LICENSE (verbatim from tarball) ---\nunknown custom terms"
+	if _, err := noticeClassification(notice{name, malicious}); err == nil {
+		t.Fatal("known licenses masked an unrecognized appended document")
+	}
+}
+
 func TestUnlicenseContentMatch(t *testing.T) {
 	text := "This is free and unencumbered software released into the public domain. Anyone is free to copy, modify, publish, use, compile, sell, or distribute. http://unlicense.org"
 	kind, err := noticeClassification(notice{"LICENSE", text})

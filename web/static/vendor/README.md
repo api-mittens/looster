@@ -1,4 +1,10 @@
-# Vendored D3
+# Vendored browser dependencies
+
+Markdown rendering uses the pinned local markdown-it UMD distribution. See
+`MARKDOWN-IT-README.md` for its version, integrity checks, safety configuration,
+and complete required license notices.
+
+## Vendored D3
 
 - Upstream: https://github.com/d3/d3
 - Distribution: `d3` version **7.9.0**, `dist/d3.min.js` from the published npm tarball.

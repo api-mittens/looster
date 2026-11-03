@@ -1,3 +1,4 @@
+import {renderMarkdown} from './markdown.mjs';
 import {serversHTML,behavioursHTML,ruleLabel} from './views.mjs';
 import {appendOutput} from './output.mjs';
 import {searchItems} from './search.mjs';
@@ -185,9 +186,9 @@ class LoosterBoard extends HTMLElement {
       const d = await this.api(`/api/tasks/TSK-${id}`);
       if (this.outputs !== generation || this.detailID !== id || !this.dialog.open) return;
       this.querySelector('#dialog-title').textContent = `TSK-${id} · ${d.task.name}`;
-      if (!this.panel.querySelector('#session-output')) this.panel.innerHTML = '<div class="task-status-control"><label for="task-status">Status</label><select id="task-status" aria-label="Task status"><option value="planning">Planning</option><option value="todo">Todo</option><option value="validated">Validated</option><option value="closed">Closed</option></select><span id="status-error" class="form-error" role="alert"></span></div><p class="description"></p><div id="tag-context"></div><h3>Comments</h3><div id="task-comments"></div><form id="comment-form"><label>Add comment <textarea name="body" rows="3" required></textarea></label><p class="form-error" role="alert"></p><button type="submit">Post comment</button></form><h3>Sessions</h3><div id="sessions"></div><div class="output-heading"><h3>Session output</h3><label>Agent <select id="log-agent" aria-label="Session output agent"></select></label></div><pre id="session-output" class="session-output" tabindex="0" aria-label="Session output"></pre><p id="output-note" class="muted" role="status"></p>';
+      if (!this.panel.querySelector('#session-output')) this.panel.innerHTML = '<div class="task-status-control"><label for="task-status">Status</label><select id="task-status" aria-label="Task status"><option value="planning">Planning</option><option value="todo">Todo</option><option value="validated">Validated</option><option value="closed">Closed</option></select><span id="status-error" class="form-error" role="alert"></span></div><div class="description markdown-body" id="task-description"></div><div id="tag-context"></div><h3>Comments</h3><div id="task-comments"></div><form id="comment-form"><label>Add comment <textarea name="body" rows="3" required></textarea></label><p class="form-error" role="alert"></p><button type="submit">Post comment</button></form><h3>Sessions</h3><div id="sessions"></div><div class="output-heading"><h3>Session output</h3><label>Agent <select id="log-agent" aria-label="Session output agent"></select></label></div><pre id="session-output" class="session-output" tabindex="0" aria-label="Session output"></pre><p id="output-note" class="muted" role="status"></p>';
       this.panel.querySelector('#task-status').value = d.task.status;
-      this.panel.querySelector('.description').textContent = d.task.description || 'No description.';
+      this.panel.querySelector('#task-description').innerHTML = renderMarkdown(d.task.description || 'No description.');
       const contextHTML = (d.context?.tags || []).map(t => `<details class="context-card"><summary>Tag: ${esc(t.name)} · ${(t.memories || []).length} memories</summary><pre>${esc(t.description)}</pre>${this.memoryHTML(t.memories)}</details>`).join('');
       if(this.panel.querySelector('#tag-context').innerHTML !== contextHTML) this.panel.querySelector('#tag-context').innerHTML = contextHTML;
       this.panel.querySelector('#sessions').innerHTML = (d.sessions || []).map(s => `<div class="session"><strong>${esc(s.agent)}</strong><span class="badge ${s.status === 'running' ? 'running' : ''}">${esc(s.status)}</span><code>${esc(s.session_id || 'Not started')}</code></div>`).join('') || '<p>No sessions yet.</p>';
@@ -198,7 +199,7 @@ class LoosterBoard extends HTMLElement {
         for(const comment of comments) {this.comments.set(comment.id,comment);this.commentCursor=Math.max(this.commentCursor,comment.id);}
         if(comments.length<200) break;
       }
-      const commentHTML = [...this.comments.values()].map(c => `<article class="comment"><span class="muted">${esc(c.actor_agent || c.agent || 'human')} · ${esc(new Date(c.created_at).toLocaleString())}</span><div class="description">${esc(c.body)}</div></article>`).join('') || '<p class="muted">No comments yet.</p>';
+      const commentHTML = [...this.comments.values()].map(c => `<article class="comment"><span class="muted">${esc(c.actor_agent || c.agent || 'human')} · ${esc(new Date(c.created_at).toLocaleString())}</span><div class="description markdown-body">${renderMarkdown(c.body)}</div></article>`).join('') || '<p class="muted">No comments yet.</p>';
       if(this.panel.querySelector('#task-comments').innerHTML !== commentHTML) this.panel.querySelector('#task-comments').innerHTML = commentHTML;
       let pages = 0, more = true;
       while (more && pages++ < 10) {
