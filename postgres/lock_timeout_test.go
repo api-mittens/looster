@@ -226,5 +226,7 @@ func TestMigrationLockTimeout(t *testing.T) {
 	t.Setenv("PGOPTIONS", "-c lock_timeout=100ms")
 	start := time.Now()
 	err = MigrateNamespace(ctx, os.Getenv("LOOSTER_TEST_DATABASE_URL"), schema[len(namespaceSchemaPrefix):])
-	requireLockTimeout(t, start, err)
+	if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > 3*time.Second {
+		t.Fatalf("migration lock wait was not bounded: elapsed=%s error=%v", time.Since(start), err)
+	}
 }
