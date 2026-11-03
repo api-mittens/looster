@@ -43,7 +43,7 @@ creation and migrations require the appropriate schema-owner privileges.
 
 ## Integration tests
 
-`go test ./namespace ./postgres ./cli` runs validation and configuration tests.
+`go test ./internal/namespace ./internal/postgres ./internal/cli` runs validation and configuration tests.
 Set `LOOSTER_TEST_DATABASE_URL` to an accessible PostgreSQL database to include
 `TestNamespaceIsolation`. That test creates two unique temporary application
 schemas, verifies dispatch, events, schedules, worker visibility, function paths
