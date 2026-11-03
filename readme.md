@@ -82,6 +82,18 @@ release tag such as `v0.1.0`, `LOOSTER_INSTALL_DIR` to change the destination, o
 release. See [installation](docs/installation.md) for manual downloads and source
 builds using the Go version declared in `go.mod`.
 
+Alternatively, use [mise](docs/installation.md#install-with-mise-alternative) to
+install the Go-based tool globally or declare it in your repository's `mise.toml`:
+
+```sh
+mise use go@1.27.2
+mise use go:github.com/api-mittens/looster/cmd/looster@latest
+mise exec -- looster --help
+```
+
+This alternative builds from source and requires Go. The installation guide covers
+shared config, private `mise.local.toml` overrides, version pinning, and shell setup.
+
 ## Quick start
 
 Install and authenticate [Jcode](https://github.com/1jehuang/jcode) separately. Install Docker with Compose for local
