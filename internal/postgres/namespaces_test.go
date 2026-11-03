@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dominikbb/looster/internal/app"
-	"github.com/dominikbb/looster/internal/task"
+	"github.com/api-mittens/looster/internal/app"
+	"github.com/api-mittens/looster/internal/task"
 	"github.com/jackc/pgx/v5"
 )
 

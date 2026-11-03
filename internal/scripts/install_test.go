@@ -19,13 +19,15 @@ func TestInstaller(t *testing.T) {
 		t.Skip("POSIX installer")
 	}
 	for _, tc := range []struct {
-		name, version, checksum string
-		fail                    bool
+		name, version, checksum, repo string
+		fail                          bool
 	}{
-		{"pinned", "v1.2.3", "", false},
-		{"latest", "", "", false},
-		{"bad checksum", "v1.2.3", strings.Repeat("0", 64), true},
-		{"invalid version", "v1/../../bad", "", true},
+		{"pinned", "v1.2.3", "", "", false},
+		{"latest", "", "", "", false},
+		{"override pinned", "v1.2.3", "", "example/looster-fork", false},
+		{"override latest", "", "", "example/looster-fork", false},
+		{"bad checksum", "v1.2.3", strings.Repeat("0", 64), "", true},
+		{"invalid version", "v1/../../bad", "", "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -86,17 +88,49 @@ while [ "$#" -gt 0 ]; do
   *) shift;;
  esac
 done
+printf '%s\n' "$url" >> "$REQUEST_LOG"
 case "$url" in
- */releases/latest) printf 'https://github.com/dominikbb/looster/releases/tag/v1.2.3';;
+ */releases/latest) printf '%s/tag/v1.2.3' "${url%/latest}";;
  *) cp "$FIXTURE/${url##*/}" "$out";;
 esac
 `), 0755)
 			write(filepath.Join(dest, "looster"), []byte("previous binary"), 0755)
 			cmd := exec.Command("sh", "../../scripts/install.sh")
-			cmd.Env = append(os.Environ(), "PATH="+tools+string(os.PathListSeparator)+os.Getenv("PATH"), "FIXTURE="+fixture, "LOOSTER_INSTALL_DIR="+dest, "LOOSTER_VERSION="+tc.version, "LOOSTER_REPO=dominikbb/looster")
+			// Do not inherit a developer's override: default cases must exercise
+			// the installer's own canonical repository, not one supplied by tests.
+			for _, env := range os.Environ() {
+				if !strings.HasPrefix(env, "LOOSTER_REPO=") {
+					cmd.Env = append(cmd.Env, env)
+				}
+			}
+			requestLog := filepath.Join(dir, "requests")
+			write(requestLog, nil, 0644)
+			cmd.Env = append(cmd.Env, "PATH="+tools+string(os.PathListSeparator)+os.Getenv("PATH"), "FIXTURE="+fixture, "REQUEST_LOG="+requestLog, "LOOSTER_INSTALL_DIR="+dest, "LOOSTER_VERSION="+tc.version)
+			if tc.repo != "" {
+				cmd.Env = append(cmd.Env, "LOOSTER_REPO="+tc.repo)
+			}
 			output, err := cmd.CombinedOutput()
 			if (err != nil) != tc.fail {
 				t.Fatalf("error=%v, output=%s", err, output)
+			}
+			requests, err := os.ReadFile(requestLog)
+			if err != nil {
+				t.Fatal(err)
+			}
+			repo := "api-mittens/looster"
+			if tc.repo != "" {
+				repo = tc.repo
+			}
+			base := "https://github.com/" + repo + "/releases/"
+			wantRequests := ""
+			if tc.version == "" {
+				wantRequests = base + "latest\n"
+			}
+			if tc.name != "invalid version" {
+				wantRequests += base + "download/v1.2.3/" + name + "\n" + base + "download/v1.2.3/checksums.txt\n"
+			}
+			if string(requests) != wantRequests {
+				t.Fatalf("requested URLs = %q, want %q", requests, wantRequests)
 			}
 			got, err := os.ReadFile(filepath.Join(dest, "looster"))
 			if err != nil {
@@ -136,5 +170,18 @@ esac
 				}
 			}
 		})
+	}
+}
+
+func TestDocumentedInstallerURL(t *testing.T) {
+	const canonical = "https://raw.githubusercontent.com/api-mittens/looster/master/scripts/install.sh"
+	for _, path := range []string{"../../readme.md", "../../docs/installation.md"} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(data), "curl -fsSL "+canonical+" -o install-looster.sh") {
+			t.Errorf("%s must document the canonical master installer URL", path)
+		}
 	}
 }

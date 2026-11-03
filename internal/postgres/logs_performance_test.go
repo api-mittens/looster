@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dominikbb/looster/internal/event"
+	"github.com/api-mittens/looster/internal/event"
 )
 
 func TestLogQueryParameterizesAllShapes(t *testing.T) {

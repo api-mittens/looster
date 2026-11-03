@@ -5,10 +5,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/dominikbb/looster/internal/behaviour"
-	"github.com/dominikbb/looster/internal/memory"
-	"github.com/dominikbb/looster/internal/tag"
-	"github.com/dominikbb/looster/internal/task"
+	"github.com/api-mittens/looster/internal/behaviour"
+	"github.com/api-mittens/looster/internal/memory"
+	"github.com/api-mittens/looster/internal/tag"
+	"github.com/api-mittens/looster/internal/task"
 )
 
 type manifestPermissionRepo struct {

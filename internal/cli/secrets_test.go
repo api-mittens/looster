@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dominikbb/looster/internal/app"
-	"github.com/dominikbb/looster/internal/jcode"
+	"github.com/api-mittens/looster/internal/app"
+	"github.com/api-mittens/looster/internal/jcode"
 	"github.com/spf13/viper"
 )
 

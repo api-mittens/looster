@@ -14,7 +14,7 @@ import (
 // delivery mechanisms or storage adapters. Keep this boundary explicit as the
 // factory grows rather than relying only on package naming conventions.
 func TestDomainDependencyBoundary(t *testing.T) {
-	const module = "github.com/dominikbb/looster/internal/"
+	const module = "github.com/api-mittens/looster/internal/"
 	domain := map[string]bool{"agent": true, "behaviour": true, "event": true, "memory": true, "namespace": true, "tag": true, "task": true}
 	for pkg := range domain {
 		entries, err := os.ReadDir(filepath.Join("..", pkg))
@@ -64,7 +64,7 @@ func TestApplicationDoesNotDependOnAdapters(t *testing.T) {
 		for _, imp := range parsed.Imports {
 			name, _ := strconv.Unquote(imp.Path.Value)
 			for _, adapter := range []string{"postgres", "cli", "web", "jcode", "objectstore"} {
-				if strings.HasPrefix(name, "github.com/dominikbb/looster/internal/"+adapter) {
+				if strings.HasPrefix(name, "github.com/api-mittens/looster/internal/"+adapter) {
 					t.Errorf("application %s imports adapter %s", entry.Name(), name)
 				}
 			}

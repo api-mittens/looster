@@ -6,11 +6,11 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/dominikbb/looster/internal/agent"
-	"github.com/dominikbb/looster/internal/app"
-	"github.com/dominikbb/looster/internal/memory"
-	"github.com/dominikbb/looster/internal/tag"
-	"github.com/dominikbb/looster/internal/task"
+	"github.com/api-mittens/looster/internal/agent"
+	"github.com/api-mittens/looster/internal/app"
+	"github.com/api-mittens/looster/internal/memory"
+	"github.com/api-mittens/looster/internal/tag"
+	"github.com/api-mittens/looster/internal/task"
 	"github.com/spf13/viper"
 )
 

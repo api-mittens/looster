@@ -7,7 +7,7 @@
 Linux and macOS users can download and inspect the installer before executing it:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/dominikbb/looster/main/scripts/install.sh -o install-looster.sh
+curl -fsSL https://raw.githubusercontent.com/api-mittens/looster/master/scripts/install.sh -o install-looster.sh
 # Inspect the downloaded file first.
 sh install-looster.sh
 export PATH="$HOME/.local/bin:$PATH"
@@ -18,7 +18,7 @@ looster --help
 | --- | --- | --- |
 | `LOOSTER_VERSION` | Select a release using its required `v` prefix | Latest release |
 | `LOOSTER_INSTALL_DIR` | Binary destination | `~/.local/bin` |
-| `LOOSTER_REPO` | GitHub owner/repository to download from | `dominikbb/looster` |
+| `LOOSTER_REPO` | GitHub owner/repository to download from | `api-mittens/looster` |
 
 For example, pin a version and change the destination (replace the illustrative
 version with a published release):
@@ -33,7 +33,7 @@ The installer is for Unix systems. On Windows, use a release ZIP instead.
 ## Manual downloads
 
 Open the repository's GitHub **Releases** page at
-`https://github.com/dominikbb/looster/releases` and choose an archive matching
+`https://github.com/api-mittens/looster/releases` and choose an archive matching
 your operating system and CPU:
 
 | Operating system | Architectures | Archive |
@@ -60,7 +60,7 @@ HCL source ZIP separately. See [licensing](licensing.md) before redistributing.
 
 ## Build from source
 
-The module is `github.com/dominikbb/looster`. Use **Go 1.27.2 or newer**, as declared
+The module is `github.com/api-mittens/looster`. Use **Go 1.27.2 or newer**, as declared
 in [go.mod](../go.mod). From the source checkout:
 
 ```sh

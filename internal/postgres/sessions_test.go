@@ -2,7 +2,7 @@ package postgres
 
 import (
 	"context"
-	"github.com/dominikbb/looster/internal/app"
+	"github.com/api-mittens/looster/internal/app"
 	"os"
 	"testing"
 

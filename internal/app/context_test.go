@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/dominikbb/looster/internal/tag"
-	"github.com/dominikbb/looster/internal/task"
+	"github.com/api-mittens/looster/internal/tag"
+	"github.com/api-mittens/looster/internal/task"
 )
 
 func TestExpandedTaskContext(t *testing.T) {

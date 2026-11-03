@@ -3,7 +3,7 @@
 set -eu
 
 fail() { printf 'looster: %s\n' "$*" >&2; exit 1; }
-repo=${LOOSTER_REPO:-dominikbb/looster}
+repo=${LOOSTER_REPO:-api-mittens/looster}
 install_dir=${LOOSTER_INSTALL_DIR:-"$HOME/.local/bin"}
 version=${LOOSTER_VERSION:-}
 case "$repo" in *[!A-Za-z0-9_./-]*|*..*|/*|*/|*/*/*) fail 'Invalid LOOSTER_REPO (expected owner/repository)' ;; esac

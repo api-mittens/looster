@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dominikbb/looster"
+	"github.com/api-mittens/looster"
 )
 
 func TestLicensesOffline(t *testing.T) {

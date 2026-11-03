@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dominikbb/looster/internal/app"
+	"github.com/api-mittens/looster/internal/app"
 )
 
 func TestAgentAdministrativeCommandsDeniedBeforeDatabase(t *testing.T) {

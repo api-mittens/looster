@@ -5,7 +5,7 @@
 ## Development setup
 
 Use the Go version in [go.mod](../go.mod), currently **1.27.2**. The module path is
-`github.com/dominikbb/looster`. Private Go packages live under `internal/`, including
+`github.com/api-mittens/looster`. Private Go packages live under `internal/`, including
 `internal/skills` and its bundled skill, and `internal/scripts` for installer tests.
 The installer itself stays at `scripts/install.sh`. Keep the executable entry point
 in `cmd/looster` and use `./internal/<package>` for focused package checks.

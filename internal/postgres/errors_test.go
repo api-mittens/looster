@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/dominikbb/looster/internal/app"
+	"github.com/api-mittens/looster/internal/app"
 	"github.com/jackc/pgx/v5"
 )
 

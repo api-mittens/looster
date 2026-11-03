@@ -3,7 +3,7 @@ package cli
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/dominikbb/looster/internal/skills"
+	"github.com/api-mittens/looster/internal/skills"
 )
 
 func skillsCommand() *cobra.Command {

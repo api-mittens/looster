@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dominikbb/looster/internal/app"
-	"github.com/dominikbb/looster/internal/namespace"
+	"github.com/api-mittens/looster/internal/app"
+	"github.com/api-mittens/looster/internal/namespace"
 )
 
 type Harness struct {

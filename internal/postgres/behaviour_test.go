@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/dominikbb/looster/internal/behaviour"
+	"github.com/api-mittens/looster/internal/behaviour"
 )
 
 func TestInvalidAgentDefinitionBatchesNeverReachDatabase(t *testing.T) {

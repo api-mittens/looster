@@ -8,7 +8,7 @@
    changes, and update documentation for user-visible changes. Regenerate and review
    third-party notices with `go run ./scripts/licenses`, then run
    `go run ./scripts/licenses -check`. See [licensing](licensing.md).
-2. Confirm source imports use `github.com/dominikbb/looster` and the CI toolchain
+2. Confirm source imports use `github.com/api-mittens/looster` and the CI toolchain
    follows [go.mod](../go.mod).
 3. Check the installer, example config, behaviour manifest, and fresh-install and
    upgrade workflows. Never test upgrades against production data.
@@ -56,7 +56,7 @@ with `looster licenses`, including after the installer extracts only the executa
   `looster licenses`. Check the MIT/dependency notices and the HCL source archive.
 - Check the installer with the published `v`-prefixed tag in `LOOSTER_VERSION`.
   Versions without the required `v` prefix are rejected. Verify a custom `LOOSTER_INSTALL_DIR` and the default
-  `LOOSTER_REPO=dominikbb/looster` source.
+  `LOOSTER_REPO=api-mittens/looster` source.
 - Verify a clean Compose setup with [config.example.toml](../config.example.toml)
   and [behaviour_example.txt](../behaviour_example.txt), then review the migration notes.
 - Do not silently replace a published version's artifacts. Correct a broken

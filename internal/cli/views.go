@@ -3,7 +3,7 @@ package cli
 import (
 	"fmt"
 
-	"github.com/dominikbb/looster/internal/memory"
+	"github.com/api-mittens/looster/internal/memory"
 )
 
 func memoryViews(memories []memory.Memory) []any {

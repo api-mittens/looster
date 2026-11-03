@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/dominikbb/looster/internal/agent"
-	"github.com/dominikbb/looster/internal/behaviour"
-	"github.com/dominikbb/looster/internal/event"
-	"github.com/dominikbb/looster/internal/task"
+	"github.com/api-mittens/looster/internal/agent"
+	"github.com/api-mittens/looster/internal/behaviour"
+	"github.com/api-mittens/looster/internal/event"
+	"github.com/api-mittens/looster/internal/task"
 )
 
 type Role string
