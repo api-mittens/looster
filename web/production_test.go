@@ -62,7 +62,8 @@ func TestGraphProduction(t *testing.T) {
 		}
 	}()
 	cli := func(args []string, input, namespace string) string {
-		command := exec.CommandContext(ctx, binary, append([]string{"--database-url", db, "--namespace", namespace}, args...)...)
+		command := exec.CommandContext(ctx, binary, append([]string{"--namespace", namespace}, args...)...)
+		command.Env = append(os.Environ(), "LOOSTER_DATABASE_URL="+db)
 		command.Stdin = strings.NewReader(input)
 		output, err := command.CombinedOutput()
 		if err != nil {
@@ -113,7 +114,8 @@ func TestGraphProduction(t *testing.T) {
 	if _, err := lease.Exec(ctx, `SET search_path TO "`+schemas[0]+`"; SELECT pg_advisory_lock(hashtextextended(current_schema()||':looster:session:1:coder',0));`); err != nil {
 		t.Fatal(err)
 	}
-	server := exec.CommandContext(ctx, binary, "--database-url", db, "--namespace", ns, "web", "--listen", "127.0.0.1:0")
+	server := exec.CommandContext(ctx, binary, "--namespace", ns, "web", "--listen", "127.0.0.1:0")
+	server.Env = append(os.Environ(), "LOOSTER_DATABASE_URL="+db)
 	log := &testLog{}
 	server.Stdout = log
 	server.Stderr = log

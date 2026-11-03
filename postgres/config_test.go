@@ -1,8 +1,15 @@
 package postgres
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/pem"
+	"math/big"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -76,12 +83,9 @@ func TestPostgresPasswordFile(t *testing.T) {
 	for k, v := range map[string]string{"PGHOST": "pg.example", "PGPORT": "5544", "PGUSER": "worker", "PGDATABASE": "work", "PGPASSFILE": file, "PGSSLMODE": "disable"} {
 		t.Setenv(k, v)
 	}
-	cfg, err := parsePoolConfig("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.ConnConfig.Password != "file-secret" {
-		t.Fatal("password file not honored")
+	_, err := parsePoolConfig("")
+	if err == nil || !strings.Contains(err.Error(), "PGPASSFILE") || strings.Contains(err.Error(), file) || strings.Contains(err.Error(), "file-secret") {
+		t.Fatal("password file setting must be rejected without its value")
 	}
 }
 
@@ -103,5 +107,116 @@ func clearPGEnvironment(t *testing.T) {
 		for _, alias := range entry.aliases {
 			t.Setenv(alias, "")
 		}
+	}
+}
+
+func TestPostgresRejectsCredentialFiles(t *testing.T) {
+	for _, key := range []string{"service", "servicefile", "passfile"} {
+		for _, raw := range []string{key + "='do-not-print'", "password='quoted service=inside password' " + key + " = 'do-not-print'", "postgres:///?" + key + "=do-not-print"} {
+			t.Run(key+raw[:2], func(t *testing.T) {
+				clearPGEnvironment(t)
+				_, err := parsePoolConfig(raw)
+				if err == nil || !strings.Contains(err.Error(), "connection key "+key+" is not supported") || strings.Contains(err.Error(), "do-not-print") {
+					t.Fatal("credential file key not safely rejected")
+				}
+			})
+		}
+	}
+	for _, key := range []string{"PGSERVICE", "PGSERVICEFILE", "PGPASSFILE", "PG_PASSFILE"} {
+		t.Run(key, func(t *testing.T) {
+			clearPGEnvironment(t)
+			t.Setenv(key, "do-not-print")
+			_, err := parsePoolConfig("")
+			if err == nil || !strings.Contains(err.Error(), key) || strings.Contains(err.Error(), "do-not-print") {
+				t.Fatal("file environment key not safely rejected")
+			}
+		})
+	}
+}
+
+func TestPostgresImplicitFilesDisabledAndTLSPathsPreserved(t *testing.T) {
+	clearPGEnvironment(t)
+	for _, raw := range []string{"", "postgres:///?sslmode=disable"} {
+		conn, err := connectionString(raw, func(string) string { return "" })
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(conn, "passfile=") || !strings.Contains(conn, os.DevNull) && !strings.Contains(conn, url.QueryEscape(os.DevNull)) {
+			t.Fatal("implicit password file not disabled")
+		}
+	}
+	for _, prefix := range []string{"PGSSL", "PG_SSL"} {
+		t.Run(prefix, func(t *testing.T) {
+			env := map[string]string{prefix + "CERT": "client-cert.pem", prefix + "KEY": "client-key.pem", prefix + "ROOTCERT": "root-cert.pem"}
+			conn, err := connectionString("postgres:///?sslmode=require", func(key string) string { return env[key] })
+			if err != nil {
+				t.Fatal(err)
+			}
+			u, err := url.Parse(conn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for key, want := range map[string]string{"sslcert": "client-cert.pem", "sslkey": "client-key.pem", "sslrootcert": "root-cert.pem"} {
+				if u.Query().Get(key) != want {
+					t.Fatalf("TLS env path lost: %s", key)
+				}
+			}
+		})
+	}
+	// Literal parameter-looking text in a quoted password must remain data.
+	t.Setenv("PGSSLMODE", "disable")
+	cfg, err := parsePoolConfig(`host=localhost user=worker dbname=test password='service=literal passfile=literal'`)
+	if err != nil || cfg.ConnConfig.Password != "service=literal passfile=literal" {
+		t.Fatal("quoted password treated as settings")
+	}
+}
+
+func TestPostgresParseErrorsDoNotLeakSecrets(t *testing.T) {
+	clearPGEnvironment(t)
+	for _, raw := range []string{"postgres://user:do-not-print@localhost:invalid/db", "password='do-not-print' port=invalid"} {
+		_, err := parsePoolConfig(raw)
+		if err == nil || strings.Contains(err.Error(), "do-not-print") {
+			t.Fatal("connection parse error leaked secret")
+		}
+	}
+}
+
+func TestPostgresEnvironmentTLSFiles(t *testing.T) {
+	clearPGEnvironment(t)
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := x509.Certificate{SerialNumber: big.NewInt(1), DNSNames: []string{"localhost"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature}
+	der, err := x509.CreateCertificate(rand.Reader, &template, &template, key.Public(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	private, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	certFile, keyFile := filepath.Join(dir, "client cert.pem"), filepath.Join(dir, "client key.pem")
+	if err := os.WriteFile(certFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: private}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, prefix := range []string{"PGSSL", "PG_SSL"} {
+		t.Run(prefix, func(t *testing.T) {
+			t.Setenv(prefix+"CERT", certFile)
+			t.Setenv(prefix+"KEY", keyFile)
+			t.Setenv(prefix+"ROOTCERT", certFile)
+			t.Setenv("PGSSLMODE", "require")
+			cfg, err := parsePoolConfig("host=localhost user=test dbname=test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.ConnConfig.TLSConfig == nil || len(cfg.ConnConfig.TLSConfig.Certificates) != 1 || cfg.ConnConfig.TLSConfig.RootCAs == nil {
+				t.Fatal("environment TLS files ignored")
+			}
+		})
 	}
 }
