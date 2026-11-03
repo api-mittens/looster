@@ -1,0 +1,26 @@
+# Environment variables override all values. All processes share one database login.
+# Remove database_url to use PGHOST/PGPORT/PGUSER/PGPASSWORD (or PG_PASS)/PGDATABASE.
+# Explicit fields in a connection string override the corresponding PG variables.
+database_url = "postgres://postgres:postgres@localhost:5432/looster?sslmode=disable&pool_max_conns=16"
+namespace = "default" # Override with --namespace/-N or LOOSTER_NAMESPACE.
+harness = "jcode"
+agents = ["designer", "coder", "reviewer"]
+concurrency = 4
+workdir = "./workdirs"
+poll_interval = "1s"
+run_timeout = "1h"
+
+# Human is the default application role. Managed harnesses receive agent mode.
+# role = "agent"
+# agent = "coder"
+
+[s3]
+endpoint = "http://localhost:4566"
+region = "us-east-1"
+bucket = "looster"
+access_key = "test"
+secret_key = "test"
+
+[jcode]
+binary = "jcode"
+# sessions_dir = "/home/you/.jcode/sessions"

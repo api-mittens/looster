@@ -1,0 +1,101 @@
+package web
+
+// Behavioral probes execute only through their Go test entrypoints.
+const graphbrowserProbe = `
+const checks=[];
+const check=(ok,label)=>{if(!ok)throw Error(label);checks.push(label);};
+const report=text=>{const result=document.createElement('pre');result.id='browser-result';result.textContent=text;document.body.append(result);};
+const wait=async fn=>{for(let i=0;i<600;i++){if(fn())return;await new Promise(r=>setTimeout(r,20));}throw Error('Timed out waiting for UI: '+String(fn));};
+try {
+  await import('/app.js');
+  const board=document.querySelector('looster-board');
+  await wait(()=>board.querySelector('task-agent-graph svg'));
+  clearInterval(board.timer);
+  const graph=board.querySelector('task-agent-graph');
+  await wait(()=>graph.simulation);
+  // This dump-DOM fixture runs under Chromium's virtual clock, which does not
+  // guarantee animation frames. Autonomous motion is checked separately by the
+  // real production CDP workflow, without virtual time or mocked API responses.
+  check(!!graph.simulation,'D3 simulation initializes');
+  graph.settle();
+  check(graph.querySelectorAll('.tg-task').length===4,'unfinished tasks render');
+  check(!graph.querySelector('[data-key="task:3"]')&&!graph.querySelector('[data-key="task:4"]'),'validated and closed tasks are filtered out');
+  check(graph.textContent.includes('3/10'),'comment/status count inside task');
+  check([...graph.querySelectorAll('.tg-task')].every(g=>g.querySelectorAll('.tg-progress-segment').length===3),'every task has three status-ring segments');
+  check(graph.querySelectorAll('[data-key="task:1"] .tg-progress-segment[data-filled="true"]').length===1,'planning fills one status segment');
+  check(graph.querySelectorAll('[data-key="task:2"] .tg-progress-segment[data-filled="true"]').length===2,'todo fills two status segments');
+  check([...graph.querySelectorAll('.tg-progress-segment')].every(p=>getComputedStyle(p).fill==='none' && parseFloat(getComputedStyle(p).strokeWidth)>0),'status segments are stroked arcs, not filled pie shapes');
+  check(!graph.querySelector('.tg-task .tg-state'),'task status ring replaces status text');
+  check(graph.querySelectorAll('.tg-active').length===1,'only running relation animates');
+  check(getComputedStyle(graph.querySelector('.tg-active')).animationName!=='none','active link has CSS animation');
+  check(graph.querySelectorAll('.tg-edge').length===4,'historical relations retained');
+  check(graph.querySelector('[data-key="agent:coder"]').getAttribute('aria-label').includes('online'),'worker coverage marks agent online');
+  check(graph.querySelector('[data-key="agent:reviewer"]').getAttribute('aria-label').includes('offline'),'idle uncovered agent offline');
+  const distance=(a,b)=>{const x=graph.graph.nodes.find(n=>n.key===a),y=graph.graph.nodes.find(n=>n.key===b);return Math.hypot(x.x-y.x,x.y-y.y);};
+  check(distance('task:1','agent:coder')<distance('task:5','agent:coder'),'active relationship attracts more strongly than idle');
+  check(distance('task:1','task:5')<distance('task:1','task:2'),'shared-agent tasks cluster closer than unrelated tasks');
+  const toggle=graph.querySelector('[data-action="heatmap"]');
+  check(!!toggle,'heatmap control exists');toggle.click();
+  check(graph.querySelectorAll('[class*="tg-heat-"]').length===4,'heatmap colors all tasks');
+  graph.querySelector('[data-action="in"]').click();const scale=graph.view.scale;
+  check(scale>1,'zoom control changes camera');
+  await board.refresh();
+  check(board.querySelector('task-agent-graph')===graph,'poll retains graph element');
+  check(graph.view.scale===scale,'poll retains camera');
+  check(graph.querySelectorAll('[class*="tg-heat-"]').length===4,'poll retains heatmap');
+  graph.querySelector('[data-key="task:1"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
+  await wait(()=>board.dialog.open && board.querySelector('#dialog-title').textContent.includes('TSK-1'));
+  check(board.dialog.open,'keyboard node opens task details');board.dialog.close();
+  graph.querySelector('[data-key="agent:coder"]').dispatchEvent(new MouseEvent('click',{bubbles:true}));
+  check(board.dialog.open && board.querySelector('#dialog-title').textContent==='@ coder','agent node opens context');board.dialog.close();
+  // Exercise the real drag handler with browser geometry. Synthetic PointerEvents
+  // cannot acquire native capture, so replace only that browser primitive.
+  const node=graph.querySelector('[data-key="task:1"]'),rect=node.getBoundingClientRect(),capture=graph.setPointerCapture;
+  graph.setPointerCapture=()=>{};
+  const pointer={target:node,pointerId:99,button:0,clientX:rect.x,clientY:rect.y,preventDefault(){}};
+  graph.handleEvent({...pointer,type:'pointerdown'});
+  graph.handleEvent({...pointer,type:'pointermove',clientX:rect.x+40,clientY:rect.y+20});
+  graph.handleEvent({...pointer,type:'pointerup',clientX:rect.x+40,clientY:rect.y+20});
+  graph.setPointerCapture=capture;
+  const anchor={...graph.pinned.get('task:1')};
+  check(Number.isFinite(anchor.x),'drag creates client-memory anchor');
+  board.search.value='No such task';board.search.dispatchEvent(new Event('input',{bubbles:true}));
+  check(!graph.querySelector('.tg-task'),'search filters tasks');
+  board.search.value='';board.search.dispatchEvent(new Event('input',{bubbles:true}));
+  const active=board.data.sessions.find(s=>s.status==='running');active.status='idle';board.render();
+  check(!graph.querySelector('.tg-active'),'finished session loses active animation');
+  check(graph.positions.get('task:1').x===anchor.x && graph.positions.get('task:1').y===anchor.y,'drag anchor survives weighted reflow');
+  board.data.tasks.find(t=>t.id===5).status='validated';board.render();
+  check(!graph.querySelector('[data-key="task:5"]') && !graph.graph.edges.some(e=>e.source==='task:5'),'completed task and links disappear on refresh');
+  board.switchNamespace('beta');await wait(()=>board.data?.tasks?.[0]?.name==='Beta only');
+  const next=board.querySelector('task-agent-graph');
+  check(next!==graph && !graph.isConnected,'namespace destroys prior graph');
+  check(next.pinned.size===0,'client anchors do not leak across namespaces');
+  check(next.querySelectorAll('.tg-task').length===1 && !next.textContent.includes('Alpha task'),'namespace data isolated');
+  board.switchNamespace('');await wait(()=>board.data?.tasks?.length===6);
+  const crowded=board.querySelector('task-agent-graph');
+  const agents=['coder','planner','reviewer','analyst'].map(name=>({name}));
+  const tasks=Array.from({length:30},(_,i)=>({id:i+1,name:'A deliberately long task title about project implementation '+i,status:i%2?'todo':'planning',comment_count:i%14,status_changes:i%15,created_at:'2020-01-01T00:00:00Z',last_activity_at:new Date(Date.now()-(i%6)*14*86400000).toISOString()}));
+  tasks.push({id:31,name:'Already validated',status:'validated'},{id:32,name:'Already closed',status:'closed'});
+  const sessions=tasks.map((task,i)=>({task_id:task.id,agent:agents[i%4].name,status:i===0?'running':'idle'}));
+  crowded.data={tasks,agents,sessions,workers:[{agents:['coder','planner']}]};
+  board.querySelector('#summary').textContent='30 tasks · crowded graph acceptance fixture';
+  crowded.settle();
+  check(crowded.querySelectorAll('.tg-task').length===30,'crowded thirty-task graph renders');
+  check([...crowded.querySelectorAll('.tg-task text')].every(n=>!n.textContent.includes('deliberately long')),'compact default labels omit long task titles');
+  check(crowded.querySelector('[data-key="task:1"]').getAttribute('aria-label').includes('deliberately long'),'full title remains accessible');
+  check(crowded.querySelector('[data-key="task:6"] circle').getBoundingClientRect().width<crowded.querySelector('[data-key="task:1"] circle').getBoundingClientRect().width,'inactive tasks have smaller circles despite identical creation date');
+  check([...crowded.querySelectorAll('.tg-task')].every(g=>g.querySelector('.tg-count').getBBox().width<=Number(g.querySelector('circle').getAttribute('r'))*2-2),'counters fit inside aged task circles');
+  const oldRadius=crowded.graph.nodes.find(n=>n.key==='task:6').radius;
+  const oldWeight=crowded.graph.edges.find(e=>e.source==='task:6').recencyScale;
+  const oldActivity=tasks[5].last_activity_at;
+  tasks[5].last_activity_at=new Date().toISOString();crowded.data={tasks,agents,sessions,workers:[{agents:['coder','planner']}]};crowded.settle();
+  check(crowded.graph.nodes.find(n=>n.key==='task:6').radius>oldRadius && crowded.graph.edges.find(e=>e.source==='task:6').recencyScale>oldWeight,'new activity restores task size and attraction without changing creation date');
+  tasks[5].last_activity_at=oldActivity;crowded.data={tasks,agents,sessions,workers:[{agents:['coder','planner']}]};crowded.settle();
+  const groups=[...crowded.querySelectorAll('.tg-node')];let overlaps=0;
+  const labels=groups.map(g=>[...g.querySelectorAll('text')].filter(t=>getComputedStyle(t).display!=='none' && getComputedStyle(t).visibility!=='hidden').map(t=>t.getBoundingClientRect()).filter(r=>r.width&&r.height));
+  for(let i=0;i<labels.length;i++)for(let j=0;j<i;j++)for(const a of labels[i])for(const b of labels[j])if(a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top)overlaps++;
+  check(overlaps===0,'crowded graph visible labels do not overlap across nodes');
+  crowded.querySelector('[data-action="heatmap"]').click();
+  report('PASS '+checks.join(' | '));
+} catch(error) {report('FAIL '+String(error.message));}`

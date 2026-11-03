@@ -1,0 +1,19 @@
+[env]
+_.file = { path = ".env", redact = true }
+
+[tools]
+go = "1.27.2"
+sqlc = "1.31.1"
+"go:github.com/pressly/goose/v3/cmd/goose" = "3.27.3"
+
+[tasks.generate]
+description = "Generate PostgreSQL query bindings"
+run = "sqlc generate"
+
+[tasks.build]
+description = "Build Looster (works before git is initialized)"
+run = "go build -buildvcs=false -o bin/looster ./cmd/looster"
+
+[tasks.test]
+description = "Run unit tests"
+run = "go test ./..."

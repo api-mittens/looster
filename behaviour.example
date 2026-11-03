@@ -1,0 +1,18 @@
+-- This entire file is the configuration, not a patch to the previous version.
+AGENT designer WITH "Plan task implementations and report missing information.";
+AGENT coder WITH "Implement concrete tasks and report test evidence.";
+AGENT reviewer WITH "Independently review implementation and test evidence. Mark tasks validated only when their requirements are met.";
+TAG design/frontend WITH "Frontend work. Verify keyboard navigation and accessibility.";
+TAG src/linear WITH "Use Linear only if the current server has access to it.";
+
+ON PLANNING WHEN TAGGED src/linear PING designer;
+ON TODO WHEN TAGGED design/* PING coder;
+AFTER designer WHEN NOT TAGGED src/* PING coder;
+AFTER coder PING reviewer;
+AFTER VALIDATED STOP PINGING designer;
+AFTER VALIDATED STOP PINGING coder;
+AFTER VALIDATED STOP PINGING reviewer;
+
+-- A standalone triage session, with no task (namespace-isolated when selected).
+EVERY 10 MINUTES
+    PING designer WITH "Inspect open tasks; identify blockers and create follow-up work if needed.";

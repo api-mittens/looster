@@ -1,0 +1,27 @@
+-- Looster behaviour manifest: this complete file replaces the active configuration.
+-- Start workers for designer, coder and reviewer, on one machine or several.
+-- Instructions should refer only to tools and repositories those workers can access.
+
+AGENT designer WITH "Clarify the goal, inspect the project, and write a concrete implementation plan on the task. Move a planned task to todo when it is ready for implementation.";
+AGENT coder WITH "Implement the task in the available project. Run the relevant tests and record changes, results, and remaining risks in a task comment. Leave work in todo for independent review.";
+AGENT reviewer WITH "Review the implementation and test evidence independently. Mark the task validated only when its requirements are met. Otherwise explain the changes needed in a task comment.";
+
+TAG project/example WITH "Example project. Replace these instructions with your project context, repository location and conventions.";
+TAG area/backend WITH "Backend work. Check correctness, failure handling and tests.";
+TAG area/frontend WITH "Frontend work. Check usability, accessibility and responsive layout.";
+
+-- Planning and implementation start when tasks enter these states.
+ON PLANNING PING designer;
+ON TODO PING coder;
+
+-- Completed coding sessions hand the same task to an independent reviewer.
+AFTER coder PING reviewer;
+
+-- Stop implementation notifications after approval.
+AFTER VALIDATED STOP PINGING designer;
+AFTER VALIDATED STOP PINGING coder;
+AFTER VALIDATED STOP PINGING reviewer;
+
+-- Optional: conditional routing and periodic housekeeping.
+-- ON TODO WHEN TAGGED area/backend PING coder;
+-- EVERY 1 HOURS PING designer WITH "Inspect open tasks and comment on blockers. Do not start unrelated work.";

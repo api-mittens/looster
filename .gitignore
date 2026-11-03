@@ -1,0 +1,11 @@
+/bin/
+/dist/
+/workdirs/
+/config.toml
+/.env
+/.env.*
+!/.env.example
+/behaviour.txt
+*.test
+coverage.out
+.DS_Store

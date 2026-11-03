@@ -1,0 +1,109 @@
+name: Test and release
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Go tests and Cobra CLI build
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: looster_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d looster_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      LOOSTER_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/looster_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify modules
+        run: go mod verify
+      - name: Build Cobra CLI
+        run: |
+          go build -trimpath -o bin/looster ./cmd/looster
+          bin/looster --help
+      - name: Configure browser acceptance tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          browser=$(command -v google-chrome)
+          echo "CHROMIUM=$browser" >> "$GITHUB_ENV"
+          echo "LOOSTER_TEST_BINARY=$GITHUB_WORKSPACE/bin/looster" >> "$GITHUB_ENV"
+      - name: Run all Go tests, including PostgreSQL and browser integration tests
+        env:
+          LOOSTER_BROWSER_TEST: '1'
+          LOOSTER_PRODUCTION_TEST: '1'
+        run: go test -count=1 -timeout=10m ./...
+      - name: Vet
+        run: go vet ./...
+
+  release:
+    name: Publish tagged binaries
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build release archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]] || { echo 'Expected a v-prefixed semantic version tag'; exit 1; }
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            os=${target%/*}
+            arch=${target#*/}
+            name="looster_${RELEASE_TAG}_${os}_${arch}"
+            mkdir -p "dist/$name"
+            binary=looster
+            if [ "$os" = windows ]; then binary=looster.exe; fi
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags="-s -w -X github.com/dominikbb/looster/cli.Version=$RELEASE_TAG" -o "dist/$name/$binary" ./cmd/looster
+            cp readme.md config.example.toml behaviour.example behaviour_example.txt "dist/$name/"
+            cp -R docs "dist/$name/"
+            mkdir -p "dist/$name/scripts"
+            cp scripts/install.sh "dist/$name/scripts/"
+            if [ "$os" = windows ]; then
+              (cd "dist/$name" && zip -qr "../$name.zip" .)
+            else
+              tar -czf "dist/$name.tar.gz" -C "dist/$name" .
+            fi
+            rm -r "dist/$name"
+          done
+          (cd dist && sha256sum *.tar.gz *.zip > checksums.txt)
+      - name: Publish GitHub Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          prerelease=()
+          version=${RELEASE_TAG%%+*}
+          if [[ "$version" == *-* ]]; then prerelease=(--prerelease); fi
+          gh release create "$RELEASE_TAG" dist/* --verify-tag --generate-notes "${prerelease[@]}"
