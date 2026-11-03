@@ -58,7 +58,12 @@ func WithNamespaces(provider app.NamespaceProvider) NamespaceProvider {
 }
 
 func Handler(repo Repository, providers ...NamespaceProvider) http.Handler {
-	base := dashboardHandler(repo)
+	return HandlerWithStorage(repo, nil, providers...)
+}
+
+// HandlerWithStorage enables dashboard attachments using the application's object port.
+func HandlerWithStorage(repo Repository, objects app.Objects, providers ...NamespaceProvider) http.Handler {
+	base := dashboardHandler(repo, objects)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/namespaces" && r.Method == http.MethodGet {
 			names := []string{}
@@ -90,15 +95,20 @@ func Handler(repo Repository, providers ...NamespaceProvider) http.Handler {
 				http.Error(w, "Namespace not found", 404)
 				return
 			}
-			dashboardHandler(scoped).ServeHTTP(w, r)
+			dashboardHandler(scoped, objects).ServeHTTP(w, r)
 			return
 		}
 		base.ServeHTTP(w, r)
 	})
 }
 
-func dashboardHandler(repo Repository) http.Handler {
+func dashboardHandler(repo Repository, storage ...app.Objects) http.Handler {
 	mux := http.NewServeMux()
+	var objects app.Objects
+	if len(storage) > 0 {
+		objects = storage[0]
+	}
+	registerAttachments(mux, repo, objects)
 	decode := func(w http.ResponseWriter, r *http.Request, dst any) bool {
 		mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
 		if mediaType != "application/json" {
