@@ -37,7 +37,7 @@ func (r *browserAttachmentRepo) AddAttachment(_ context.Context, a task.Attachme
 	return a, nil
 }
 func (r *browserAttachmentRepo) Logs(_ context.Context, f event.Filter) ([]event.Event, error) {
-	if len(f.Kinds) == 1 && f.Kinds[0] == "comment" && f.After == 0 {
+	if len(f.Kinds) == 1 && f.Kinds[0] == "comment" && f.After < 42 {
 		return []event.Event{{ID: 42, TaskID: &f.TaskID, Kind: "comment", Body: "Attachment comment", CreatedAt: time.Now()}}, nil
 	}
 	return []event.Event{}, nil
