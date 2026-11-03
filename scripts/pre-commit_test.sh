@@ -3,6 +3,7 @@
 set -euo pipefail
 hook=$(cd "$(dirname "$0")" && pwd)/pre-commit
 config=$(dirname "$hook")/../.golangci.yml
+audit_source=$(dirname "$hook")/lint-audit
 real_path=$PATH
 if [[ ${1:-} == --real ]]; then
   real_linter=$(command -v golangci-lint)
@@ -22,8 +23,17 @@ mkdir "$HOOK_TEST_STATE"
 cat > "$scratch/bin/golangci-lint" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "$*" != 'run --fix --new-from-patch='* ]]; then
+  [[ "$*" == *'--enable-only=gocyclo,paralleltest,musttag,gosec'* ]]
+  printf 'audit\n' >> "$HOOK_TEST_STATE/audit-calls"
+  if test -f "$HOOK_TEST_STATE/audit-fail"; then exit 9; fi
+  for arg in "$@"; do
+    case "$arg" in --output.json.path=*) printf '{"Issues":[]}\n' > "${arg#--output.json.path=}" ;; esac
+  done
+  exit 0
+fi
 printf 'lint\n' >> "$HOOK_TEST_STATE/calls"
-[[ "$*" == 'run --fix --new-from-patch='*' ./...' ]]
+[[ "$*" == 'run --fix --new-from-patch='*' --disable=gocyclo,paralleltest,musttag,gosec ./...' ]]
 patch=${3#--new-from-patch=}
 test -f "$patch"
 cp "$patch" "$HOOK_TEST_STATE/staged.patch"
@@ -38,6 +48,17 @@ MOCK
 cat > "$scratch/bin/go" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ ${1:-} == build ]]; then
+  [[ "$*" == 'build -o '*' ./scripts/lint-audit/main.go' ]]
+  test -f ./scripts/lint-audit/main.go
+  cat > "$3" <<'COMPARE'
+#!/usr/bin/env bash
+if test -f "$HOOK_TEST_STATE/compare-fail"; then exit 2; fi
+exit 0
+COMPARE
+  chmod +x "$3"
+  exit 0
+fi
 [[ "$*" == 'test ./...' ]]
 printf 'test\n' >> "$HOOK_TEST_STATE/calls"
 cp 'a file.go' "$HOOK_TEST_STATE/tested.go"
@@ -56,6 +77,8 @@ fixture() {
   git config user.email hook-test@example.invalid
   printf 'package fixture\n// baseline\n' > 'a file.go'
   printf 'module example.invalid/fixture\n\ngo 1.27.2\n' > go.mod
+  mkdir scripts
+  cp -R "$audit_source" scripts/lint-audit
   git add .
   git -c core.hooksPath=/dev/null commit -qm baseline
 }
@@ -131,6 +154,21 @@ test "$result" -ne 0
 cmp "$HOOK_TEST_STATE/calls" "$scratch/expected-calls"
 grep -q 'lint=7, tests=0, fixes=false' "$HOOK_TEST_STATE/output"
 pass 'lint failure blocks but never skips tests'
+
+for failure in audit-fail compare-fail; do
+  fixture
+  printf '// staged\n' >> 'a file.go'
+  git add 'a file.go'
+  before_tree=$(git write-tree)
+  cp 'a file.go' "$scratch/worktree-before"
+  touch "$HOOK_TEST_STATE/$failure"
+  run_hook
+  test "$result" -ne 0
+  assert_preserved
+  cmp "$HOOK_TEST_STATE/calls" "$scratch/expected-calls"
+  grep -q 'declaration audit failed' "$HOOK_TEST_STATE/output"
+  pass "$failure blocks without skipping tests or changing staged files"
+done
 
 fixture
 printf '// staged\n' >> 'a file.go'

@@ -28,5 +28,9 @@ description = "Install repository hooks (review existing core.hooksPath first)"
 run = "git config --local core.hooksPath scripts"
 
 [tasks."hooks:test"]
-description = "Run isolated pre-commit regression tests"
-run = "bash scripts/pre-commit_test.sh"
+description = "Run isolated pre-commit regression tests and audit helper unit tests"
+run = "bash scripts/pre-commit_test.sh && (cd scripts/lint-audit && go test ./...)"
+
+[tasks."hooks:test-real"]
+description = "Run real-linter autofix and declaration-boundary regressions"
+run = "bash scripts/pre-commit_test.sh --real && bash scripts/pre-commit_declarations_test.sh && (cd scripts/lint-audit && go test ./... -args -real-linter=golangci-lint)"
