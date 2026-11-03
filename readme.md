@@ -177,6 +177,7 @@ look, but does not establish which agent or workflow is inefficient. See the
 | [Dashboard](docs/dashboard.md) | Graph, filters, navigation, activity and layout |
 | [Namespaces](docs/namespaces.md) | Project isolation and database boundaries |
 | [Architecture](docs/architecture.md) | Package boundaries and application permissions |
+| [Database performance](docs/database-performance.md) | Query-plan evidence, indexes, bounded locks and online migration retries |
 | [Contributing](docs/contributing.md) | Go tests, CI browser integration, generated code |
 | [Releasing](docs/releasing.md) | Version tags, CI, release assets and checksums |
 
