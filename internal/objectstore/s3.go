@@ -59,3 +59,9 @@ func (s *S3) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 	}
 	return r.Body, nil
 }
+
+// Delete removes a partially uploaded attachment when metadata persistence fails.
+func (s *S3) Delete(ctx context.Context, key string) error {
+	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: &s.bucket, Key: &key})
+	return err
+}

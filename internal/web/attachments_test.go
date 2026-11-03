@@ -13,13 +13,20 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/api-mittens/looster/internal/event"
 	"github.com/api-mittens/looster/internal/task"
 )
 
 type attachmentTestRepo struct {
 	testRepo
-	files  []task.Attachment
-	addErr error
+	files    []task.Attachment
+	addErr   error
+	comments []event.Event
+}
+
+func (r *attachmentTestRepo) Logs(_ context.Context, f event.Filter) ([]event.Event, error) {
+	r.filter = f
+	return r.comments, nil
 }
 
 func (r *attachmentTestRepo) Attachments(context.Context, int64) ([]task.Attachment, error) {
@@ -39,6 +46,7 @@ type attachmentTestObjects struct {
 	deleted int
 	gets    int
 	putErr  error
+	getErr  error
 }
 
 func (s *attachmentTestObjects) Put(_ context.Context, key string, r io.Reader, _ int64) error {
@@ -48,6 +56,9 @@ func (s *attachmentTestObjects) Put(_ context.Context, key string, r io.Reader, 
 }
 func (s *attachmentTestObjects) Get(_ context.Context, key string) (io.ReadCloser, error) {
 	s.gets++
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
 	return io.NopCloser(bytes.NewReader(s.data[key])), nil
 }
 func (s *attachmentTestObjects) Delete(_ context.Context, key string) error {
@@ -106,8 +117,8 @@ func TestAttachmentPreviews(t *testing.T) {
 		{"png", pngData.Bytes(), 200}, {"truncated", pngData.Bytes()[:40], 415}, {"svg", []byte(`<svg xmlns="http://www.w3.org/2000/svg"/>`), 415}, {"html", []byte("<html/>"), 415}, {"dimensions", huge.Bytes(), 415},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			repo := &attachmentTestRepo{files: []task.Attachment{{ID: 7, TaskID: 1, Key: "key", Name: "test.png"}}}
-			objects := &attachmentTestObjects{data: map[string][]byte{"key": tc.data}}
+			repo := &attachmentTestRepo{files: []task.Attachment{{ID: 7, TaskID: 1, Key: "tasks/TSK-1/key", Name: "test.png"}}}
+			objects := &attachmentTestObjects{data: map[string][]byte{"tasks/TSK-1/key": tc.data}}
 			w := attachmentRequest(HandlerWithStorage(repo, objects), "GET", "/api/tasks/TSK-1/attachments/7/preview")
 			if w.Code != tc.code {
 				t.Fatalf("%d %s", w.Code, w.Body)
@@ -186,9 +197,9 @@ func TestAttachmentPartialFailureCleanup(t *testing.T) {
 
 func TestAttachmentNamespaceIsolation(t *testing.T) {
 	base := &attachmentTestRepo{}
-	alpha := &attachmentTestRepo{files: []task.Attachment{{ID: 7, TaskID: 1, Key: "alpha", Name: "alpha.txt"}}}
-	beta := &attachmentTestRepo{files: []task.Attachment{{ID: 7, TaskID: 1, Key: "beta", Name: "beta.txt"}}}
-	objects := &attachmentTestObjects{data: map[string][]byte{"alpha": []byte("alpha secret"), "beta": []byte("beta secret")}}
+	alpha := &attachmentTestRepo{files: []task.Attachment{{ID: 7, TaskID: 1, Key: "namespaces/alpha/tasks/TSK-1/file", Name: "alpha.txt"}}}
+	beta := &attachmentTestRepo{files: []task.Attachment{{ID: 7, TaskID: 1, Key: "namespaces/beta/tasks/TSK-1/file", Name: "beta.txt"}}}
+	objects := &attachmentTestObjects{data: map[string][]byte{"namespaces/alpha/tasks/TSK-1/file": []byte("alpha secret"), "namespaces/beta/tasks/TSK-1/file": []byte("beta secret")}}
 	h := HandlerWithStorage(base, objects, testNamespaces{map[string]Repository{"alpha": alpha, "beta": beta}})
 	for _, namespace := range []string{"alpha", "beta"} {
 		w := attachmentRequest(h, "GET", "/api/tasks/TSK-1/attachments/7/download?namespace="+namespace)
@@ -208,5 +219,75 @@ func TestAttachmentNamespaceIsolation(t *testing.T) {
 		if w.Code != 404 {
 			t.Fatalf("namespace fallback exposed attachment: %d", w.Code)
 		}
+	}
+}
+
+func TestAttachmentCommentTargets(t *testing.T) {
+	for _, valid := range []bool{true, false} {
+		id := int64(1)
+		if !valid {
+			id = 2
+		}
+		repo := &attachmentTestRepo{comments: []event.Event{{ID: 9, TaskID: &id, Kind: "comment"}}}
+		objects := &attachmentTestObjects{data: map[string][]byte{}}
+		var body bytes.Buffer
+		m := multipart.NewWriter(&body)
+		_ = m.WriteField("event_id", "9")
+		f, _ := m.CreateFormFile("file", "comment.png")
+		_, _ = f.Write([]byte("data"))
+		_ = m.Close()
+		r := httptest.NewRequest("POST", "/api/tasks/TSK-1/attachments", &body)
+		r.Header.Set("Content-Type", m.FormDataContentType())
+		w := httptest.NewRecorder()
+		HandlerWithStorage(repo, objects).ServeHTTP(w, r)
+		if valid {
+			if w.Code != 201 || len(repo.files) != 1 || repo.files[0].EventID == nil || *repo.files[0].EventID != 9 || !strings.Contains(w.Body.String(), `"event_id":9`) || !strings.Contains(w.Body.String(), `"previewable":true`) {
+				t.Fatalf("comment upload: %d %s", w.Code, w.Body)
+			}
+			if repo.filter.TaskID != 1 || repo.filter.Until != 9 || repo.filter.After != 8 {
+				t.Fatalf("unbounded comment lookup: %+v", repo.filter)
+			}
+		} else if w.Code != 400 || len(objects.data) != 0 {
+			t.Fatalf("wrong-task comment wrote object: %d", w.Code)
+		}
+	}
+}
+
+func TestAttachmentObjectKeyScope(t *testing.T) {
+	for _, key := range []string{"tasks/TSK-2/file", "namespaces/other/tasks/TSK-1/file", "tasks/TSK-1/../secret", "tasks/TSK-1/a/../../secret", "tasks/TSK-1/", "tasks/TSK-1/a\\secret"} {
+		repo := &attachmentTestRepo{files: []task.Attachment{{ID: 7, TaskID: 1, Key: key}}}
+		objects := &attachmentTestObjects{data: map[string][]byte{key: []byte("secret")}}
+		w := attachmentRequest(HandlerWithStorage(repo, objects), "GET", "/api/tasks/TSK-1/attachments/7/download")
+		if w.Code != 404 || objects.gets != 0 {
+			t.Fatalf("unsafe key %q: %d", key, w.Code)
+		}
+	}
+}
+
+type selectedAttachmentNamespaces struct{ testNamespaces }
+
+func (selectedAttachmentNamespaces) DefaultNamespace() string { return "alpha" }
+
+func TestAttachmentImplicitNamespace(t *testing.T) {
+	repo := &attachmentTestRepo{}
+	objects := &attachmentTestObjects{data: map[string][]byte{}}
+	h := HandlerWithStorage(repo, objects, selectedAttachmentNamespaces{})
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, attachmentUpload([]byte("data")))
+	if w.Code != 201 || len(repo.files) != 1 || !strings.HasPrefix(repo.files[0].Key, "namespaces/alpha/tasks/TSK-1/") {
+		t.Fatalf("implicit namespace upload: %d %+v", w.Code, repo.files)
+	}
+	w = attachmentRequest(h, "GET", "/api/tasks/TSK-1/attachments/7/download")
+	if w.Code != 200 || w.Body.String() != "data" {
+		t.Fatalf("implicit namespace read: %d", w.Code)
+	}
+}
+
+func TestAttachmentStorageReadFailure(t *testing.T) {
+	repo := &attachmentTestRepo{files: []task.Attachment{{ID: 7, TaskID: 1, Key: "tasks/TSK-1/file"}}}
+	objects := &attachmentTestObjects{getErr: errors.New("private bucket credentials")}
+	w := attachmentRequest(HandlerWithStorage(repo, objects), "GET", "/api/tasks/TSK-1/attachments/7/download")
+	if w.Code != 500 || strings.Contains(w.Body.String(), "private") {
+		t.Fatalf("storage failure: %d %s", w.Code, w.Body)
 	}
 }

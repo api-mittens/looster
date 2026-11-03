@@ -17,6 +17,7 @@ import (
 	"github.com/api-mittens/looster/internal/app"
 	"github.com/api-mittens/looster/internal/behaviour"
 	"github.com/api-mittens/looster/internal/event"
+	"github.com/api-mittens/looster/internal/namespace"
 	"github.com/api-mittens/looster/internal/tag"
 	"github.com/api-mittens/looster/internal/task"
 )
@@ -47,6 +48,8 @@ type NamespaceProvider interface {
 
 type namespaceAdapter struct{ app.NamespaceProvider }
 
+func (p namespaceAdapter) DefaultNamespace() string { return p.NamespaceProvider.DefaultNamespace() }
+
 func (p namespaceAdapter) Repository(ctx context.Context, name string) (Repository, error) {
 	return p.NamespaceProvider.Repository(ctx, name)
 }
@@ -63,7 +66,13 @@ func Handler(repo Repository, providers ...NamespaceProvider) http.Handler {
 
 // HandlerWithStorage enables dashboard attachments using the application's object port.
 func HandlerWithStorage(repo Repository, objects app.Objects, providers ...NamespaceProvider) http.Handler {
-	base := dashboardHandler(repo, objects)
+	selected := namespace.Default
+	if len(providers) > 0 {
+		if defaults, ok := providers[0].(interface{ DefaultNamespace() string }); ok {
+			selected = defaults.DefaultNamespace()
+		}
+	}
+	base := dashboardHandler(repo, objects, selected)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/namespaces" && r.Method == http.MethodGet {
 			names := []string{}
@@ -95,20 +104,16 @@ func HandlerWithStorage(repo Repository, objects app.Objects, providers ...Names
 				http.Error(w, "Namespace not found", 404)
 				return
 			}
-			dashboardHandler(scoped, objects).ServeHTTP(w, r)
+			dashboardHandler(scoped, objects, namespace).ServeHTTP(w, r)
 			return
 		}
 		base.ServeHTTP(w, r)
 	})
 }
 
-func dashboardHandler(repo Repository, storage ...app.Objects) http.Handler {
+func dashboardHandler(repo Repository, objects app.Objects, selected string) http.Handler {
 	mux := http.NewServeMux()
-	var objects app.Objects
-	if len(storage) > 0 {
-		objects = storage[0]
-	}
-	registerAttachments(mux, repo, objects)
+	registerAttachments(mux, repo, objects, selected)
 	decode := func(w http.ResponseWriter, r *http.Request, dst any) bool {
 		mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
 		if mediaType != "application/json" {
