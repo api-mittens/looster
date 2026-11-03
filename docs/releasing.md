@@ -5,7 +5,9 @@
 ## Prepare
 
 1. Run the [Go checks](contributing.md#checks), review generated code and migration
-   changes, and update documentation for user-visible changes.
+   changes, and update documentation for user-visible changes. Regenerate and review
+   third-party notices with `go run ./scripts/licenses`, then run
+   `go run ./scripts/licenses -check`. See [licensing](licensing.md).
 2. Confirm source imports use `github.com/dominikbb/looster` and the CI toolchain
    follows [go.mod](../go.mod).
 3. Check the installer, example config, behaviour manifest, and fresh-install and
@@ -41,13 +43,17 @@ The release matrix is:
 Archives contain the platform's executable (`looster` or `looster.exe`). The
 release also includes checksums for the archives so downloads can be verified.
 The dashboard and migrations are embedded, so users need no Go toolchain to run
-the release binary.
+the release binary. Each archive also includes Looster's `LICENSE`, the complete
+`THIRD_PARTY_NOTICES.md`, and `third_party_sources/hashicorp-hcl-<version>.zip`
+for the MPL-2.0 HCL dependency. The binary embeds all notices, accessible offline
+with `looster licenses`, including after the installer extracts only the executable.
 
 ## Verify the published release
 
 - Confirm CI tests passed before the release builds, all six archives exist, and
   every archive has a matching checksum entry.
-- Download and verify an archive, extract it, and run `looster --help`.
+- Download and verify an archive, extract it, and run `looster --help` and
+  `looster licenses`. Check the MIT/dependency notices and the HCL source archive.
 - Check the installer with the published `v`-prefixed tag in `LOOSTER_VERSION`.
   Versions without the required `v` prefix are rejected. Verify a custom `LOOSTER_INSTALL_DIR` and the default
   `LOOSTER_REPO=dominikbb/looster` source.

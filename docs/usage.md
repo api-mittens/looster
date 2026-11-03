@@ -146,13 +146,18 @@ mise exec -- bin/looster task ls
 ```
 
 The same values are available in a shell with mise activated. A missing `.env`
-is fine. Remove `database_url` from a Looster TOML config if you want the PG
-variables to supply the entire connection. The CLI, server and migrations use
-the same database login; migrations require
+is fine when your process environment is already configured. Looster itself does
+not parse `.env` files. Database URLs and S3 credential keys are environment-only;
+`database_url`, `s3.access_key`, `s3.secret_key`, and `s3.session_token` in TOML
+are rejected, even when an environment value would override them. Move existing
+values into the environment and remove those keys from old TOML files.
+The CLI, server and migrations use the same database login; migrations require
 ownership of the Looster schema.
 
-Precedence is command flags, environment variables, TOML, then defaults.
-PostgreSQL and S3 are fully configurable without a file:
+For non-secret settings, precedence is command flags, environment variables,
+TOML, then defaults. Credentials have no TOML or command-line source. Set
+`LOOSTER_DATABASE_URL` or the native PG variables in the environment instead of
+passing a `--database-url` flag. PostgreSQL and S3 are configurable without a file:
 
 | Variable | Meaning |
 | --- | --- |
@@ -161,7 +166,8 @@ PostgreSQL and S3 are fully configurable without a file:
 | `LOOSTER_S3_REGION` | Signing region, default `us-east-1` |
 | `LOOSTER_S3_BUCKET` | Existing bucket name |
 | `LOOSTER_S3_ACCESS_KEY` | Optional explicit access key |
-| `LOOSTER_S3_SECRET_KEY` | Optional explicit secret key; supply both keys together |
+| `LOOSTER_S3_SECRET_KEY` | Explicit environment secret key; supply both keys together |
+| `LOOSTER_S3_SESSION_TOKEN` | Optional session token for temporary credentials |
 | `LOOSTER_AGENTS` | Comma-separated agent names, e.g. `designer,coder` |
 | `LOOSTER_ROLE` | Application role: `human` (default) or `agent` |
 | `LOOSTER_AGENT` | Agent identity, required in agent mode |
@@ -172,9 +178,11 @@ PostgreSQL and S3 are fully configurable without a file:
 | `LOOSTER_JCODE_BINARY` | Jcode executable, default `jcode` |
 | `LOOSTER_JCODE_SESSIONS_DIR` | Saved history directory, default `~/.jcode/sessions` |
 
-Without explicit S3 keys, the standard AWS SDK credential chain is used, including
-`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, profiles and
-workload roles. Looster uses path-style S3 requests for compatibility.
+Use a complete `LOOSTER_S3_ACCESS_KEY` / `LOOSTER_S3_SECRET_KEY` pair, optionally
+with `LOOSTER_S3_SESSION_TOKEN`. Alternatively supply `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY`, and optional `AWS_SESSION_TOKEN` in the environment.
+Shared AWS credential files and profiles are not credential sources. Partial key
+pairs fail with a key-only error. Looster uses path-style S3 requests for compatibility.
 
 Example using only environment variables:
 
@@ -218,7 +226,6 @@ Looster additionally accepts these underscore aliases:
 | `PGSSLKEY` | `PG_SSLKEY` |
 | `PGSSLROOTCERT` | `PG_SSLROOTCERT` |
 | `PGSSLPASSWORD` | `PG_SSLPASSWORD` |
-| `PGPASSFILE` | `PG_PASSFILE` |
 | `PGCONNECT_TIMEOUT` | `PG_CONNECT_TIMEOUT` |
 | `PGAPPNAME` | `PG_APPNAME` |
 
@@ -230,12 +237,12 @@ This applies to URL and PostgreSQL keyword/value connection strings. For example
 `PGPASSWORD` or `PG_PASS`. Password values are escaped without treating their
 contents as connection parameters.
 
-Remove `database_url` from the example TOML to configure the entire connection
-through PG variables. `--database-url` and `LOOSTER_DATABASE_URL` continue to
-override the TOML connection string. `PGPASSFILE` and the default `.pgpass` file
-are supported by pgx, along with service files (`PGSERVICE`, `PGSERVICEFILE`),
-`PGOPTIONS`, and pgx's other supported native PG variables. For migrations, use
-the owner login, for example `PGUSER=postgres PGPASSWORD=postgres bin/looster db migrate`.
+Set `LOOSTER_DATABASE_URL` or PG variables to configure the connection. Secret
+TOML keys and the former `--database-url` flag are not supported. Passwords must
+come from environment values, not `.pgpass` or service files. TLS certificate
+and key paths may be supplied through environment variables. For migrations,
+use the owner login, for example
+`PGUSER=postgres PGPASSWORD=postgres bin/looster db migrate`.
 
 The server forwards the shared database settings to harnesses and sets
 `LOOSTER_ROLE=agent` with the correct `LOOSTER_AGENT` identity. Separate database
@@ -494,7 +501,9 @@ for standalone history; a rollback requires a database backup restore.
 
 Use one database login for all Looster processes. Run `looster db migrate` as the
 schema owner; it does not need `CREATEROLE` and does not create logins or passwords.
-Configure that login once in `.env` or `database_url`. Compose's `postgres` login
+Configure that login through the process environment, optionally loaded from a
+trusted local `.env` file by your shell or mise. Never put it in Looster's TOML.
+Compose's `postgres` login
 and password are local development defaults.
 
 `human` is the default application role and can use all commands. Agent mode is

@@ -1,7 +1,5 @@
-# Environment variables override all values. All processes share one database login.
-# Remove database_url to use PGHOST/PGPORT/PGUSER/PGPASSWORD (or PG_PASS)/PGDATABASE.
-# Explicit fields in a connection string override the corresponding PG variables.
-database_url = "postgres://postgres:postgres@localhost:5432/looster?sslmode=disable&pool_max_conns=16"
+# Non-secret runtime settings only. Database credentials and S3 keys must be
+# environment variables. See .env.example. Secret-bearing TOML keys are rejected.
 namespace = "default" # Override with --namespace/-N or LOOSTER_NAMESPACE.
 harness = "jcode"
 agents = ["designer", "coder", "reviewer"]
@@ -18,8 +16,7 @@ run_timeout = "1h"
 endpoint = "http://localhost:4566"
 region = "us-east-1"
 bucket = "looster"
-access_key = "test"
-secret_key = "test"
+# Set LOOSTER_S3_ACCESS_KEY and LOOSTER_S3_SECRET_KEY in the environment.
 
 [jcode]
 binary = "jcode"

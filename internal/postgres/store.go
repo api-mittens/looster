@@ -317,7 +317,7 @@ func (s *Store) RemoveMemory(ctx context.Context, kind, name string, id int64) e
 func (s *Store) Sessions(ctx context.Context, name string) ([]agent.Session, error) {
 	// Stored session state survives process crashes. A running session is active
 	// only while a live worker covers its agent and the task/agent lease is held.
-	rows, e := s.Pool.Query(ctx, `SELECT s.task_id,s.agent_name,s.session_id,
+	query := `SELECT s.task_id,s.agent_name,s.session_id,
  CASE WHEN s.status <> 'running' THEN s.status
  WHEN NOT EXISTS (SELECT FROM workers w WHERE w.last_seen>now()-interval '30 seconds' AND s.agent_name=ANY(w.agents)) THEN 'orphaned'
  WHEN NOT EXISTS (SELECT FROM pg_locks l WHERE l.locktype='advisory' AND l.granted
@@ -326,7 +326,14 @@ func (s *Store) Sessions(ctx context.Context, name string) ([]agent.Session, err
  AND l.objid=(hashtextextended((CASE WHEN current_schema()='public' THEN '' ELSE current_schema()||':' END)||'looster:session:'||s.task_id||':'||s.agent_name,0)&4294967295)::oid
  AND l.objsubid=1) THEN 'interrupted'
  ELSE 'running' END
- FROM sessions s WHERE ($1='' OR s.agent_name=$1) ORDER BY s.task_id,s.agent_name`, name)
+ FROM sessions s`
+	var args []any
+	if name != "" {
+		query += ` WHERE s.agent_name=$1`
+		args = append(args, name)
+	}
+	query += ` ORDER BY s.task_id,s.agent_name`
+	rows, e := s.Pool.Query(ctx, query, args...)
 	if e != nil {
 		return nil, e
 	}

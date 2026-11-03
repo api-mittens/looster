@@ -1,0 +1,3 @@
+# These files reproduce upstream license texts verbatim, including whitespace.
+THIRD_PARTY_NOTICES.md -whitespace
+web/static/vendor/D3-THIRD-PARTY-LICENSES.txt -whitespace

@@ -38,6 +38,14 @@ func TestInstaller(t *testing.T) {
 				}
 			}
 			payload := []byte("#!/bin/sh\nprintf 'fixture binary\\n'\n")
+			realBinary := tc.name == "pinned" && os.Getenv("LOOSTER_TEST_BINARY") != ""
+			if realBinary {
+				var err error
+				payload, err = os.ReadFile(os.Getenv("LOOSTER_TEST_BINARY"))
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
 			var buf bytes.Buffer
 			gz := gzip.NewWriter(&buf)
 			tw := tar.NewWriter(gz)
@@ -107,6 +115,25 @@ esac
 			}
 			if info.Mode()&0111 == 0 {
 				t.Fatal("binary is not executable")
+			}
+			if realBinary {
+				installed := exec.Command(filepath.Join(dest, "looster"), "--config", "/missing/config.toml", "licenses")
+				installed.Env = append(os.Environ(), "LOOSTER_DATABASE_URL=invalid")
+				output, err := installed.Output()
+				if err != nil {
+					t.Fatal(err)
+				}
+				license, err := os.ReadFile("../LICENSE")
+				if err != nil {
+					t.Fatal(err)
+				}
+				notices, err := os.ReadFile("../THIRD_PARTY_NOTICES.md")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if want := string(license) + "\n" + string(notices); string(output) != want {
+					t.Fatal("installed real binary did not retain complete license notices")
+				}
 			}
 		})
 	}

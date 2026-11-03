@@ -29,6 +29,12 @@ func TestPrivatePackageLayout(t *testing.T) {
 		if err != nil {
 			return err
 		}
+		if entry.IsDir() && path != root {
+			// Ignore nested modules and linked worktrees, which are separate projects.
+			if _, err := os.Stat(filepath.Join(path, "go.mod")); err == nil {
+				return filepath.SkipDir
+			}
+		}
 		if entry.IsDir() && (strings.HasPrefix(entry.Name(), ".") || entry.Name() == "vendor") {
 			return filepath.SkipDir
 		}
@@ -40,6 +46,11 @@ func TestPrivatePackageLayout(t *testing.T) {
 			return err
 		}
 		rel = filepath.ToSlash(rel)
+		// Redistribution notices must be embedded beside their root-level files.
+		// The license inventory generator is a development command, not a private library.
+		if rel == "licenses.go" || strings.HasPrefix(rel, "scripts/licenses/") {
+			return nil
+		}
 		if !strings.HasPrefix(rel, "internal/") && filepath.ToSlash(filepath.Dir(rel)) != "cmd/looster" {
 			t.Errorf("private Go source must live under internal/: %s", rel)
 		}
