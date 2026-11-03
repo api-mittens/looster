@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
@@ -40,6 +41,22 @@ func namespaceConfig(url, name string) (*pgxpool.Config, error) {
 	}
 	// Never fall back to public: absent objects must fail rather than leak data.
 	cfg.ConnConfig.RuntimeParams["search_path"] = pgx.Identifier{schema}.Sanitize() + ",pg_temp"
+	// Apply the fallback after startup so role/database settings and PGOPTIONS
+	// remain authoritative. A nonzero lock_timeout (including an explicit DSN
+	// value) is preserved. Zero means unbounded, so receives our 5s default.
+	// The low-level hook also runs for pgx.ConnectConfig and stdlib.OpenDB:
+	// migration serialization and Goose DDL must not wait indefinitely either.
+	previous := cfg.ConnConfig.Config.AfterConnect
+	cfg.ConnConfig.Config.AfterConnect = func(ctx context.Context, conn *pgconn.PgConn) error {
+		if previous != nil {
+			if err := previous(ctx, conn); err != nil {
+				return err
+			}
+		}
+		_, err := conn.Exec(ctx, `SELECT set_config('lock_timeout','5s',false)
+ WHERE current_setting('lock_timeout') = '0'`).ReadAll()
+		return err
+	}
 	return cfg, nil
 }
 
