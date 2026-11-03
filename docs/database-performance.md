@@ -497,6 +497,33 @@ after resolving contention. The lock tests cover effective fallback/override
 settings, bounded migration contention, and concurrent namespace initialization
 with real concurrent index DDL.
 
+### Retained application correctness locks
+
+`looster_event_id` still acquires the shared **per-namespace transaction advisory
+lock before allocating an event ID**. It holds that lock until commit or rollback.
+Removing it would let a later writer commit a larger ID while a smaller event is
+invisible, allowing an `--after` consumer to skip the late commit permanently.
+Event inserts therefore intentionally serialize within a namespace. The cursor
+regression test holds an uncommitted event, checks a competing writer times out
+without advancing a reader, then commits and retries in cursor order. Another
+test confirms that this lock does not serialize unrelated namespaces.
+
+Task-row locks still protect lifecycle/dispatch decisions. Manifest replacement
+and owner-memory replacement retain their transaction advisory locks and row
+locks to keep replacements atomic. These are short database-only transactions,
+not leases held across agent execution or object-store uploads, but contention
+can still make them wait or fail. Regression tests hold each advisory/row lock,
+assert bounded SQLSTATE `55P03` failures, and check that failed mutations do not
+leak partial task or memory updates. Queue leases continue using nonblocking
+session/job try-locks and preserve unavailable-predecessor FIFO.
+
+Timeout fallbacks apply only to connections created through Looster's namespace
+configuration. Arbitrary external SQL sessions need their own timeout policy.
+An explicitly configured nonzero timeout may be longer than the fallback. Only
+migration 016 uses the new online index strategy: pending older migrations can
+still take their original ordinary DDL locks, since deployed history is not
+rewritten. No claim of zero blocking or bounded total execution is made.
+
 The tests verify:
 
 1. Fresh default installation and fresh non-default namespace install, checking
@@ -522,11 +549,30 @@ The tests verify:
    indexes before and after. Forced generic ASC/DESC old-versus-selected log
    plans use the real query builder and preserve exact returned rows/order.
 
+`sqlc generate` with the repository's installed v1.31.1 completed with no diff
+in `postgres/db`. Index-only schema changes and inline query changes do not
+alter the sqlc query sources or their returned row types.
+
 Validation after the complete-query additions: `go test ./postgres -count=1`
 passed with the disposable database, as did `go test -race ./postgres -run
 '^TestQueryIndexes' -count=3`. Both opt-in large-fixture evidence tests above
 passed individually. Timing values in this document come from the dated
 non-race runs, not from race-instrumented tests.
+
+Final integrated-base verification also passed with all large-fixture tests
+included:
+
+```sh
+LOOSTER_TEST_DATABASE_URL=postgresql://looster_test@127.0.0.1:55427/looster_disposable \
+LOOSTER_QUERY_PLANS=1 go test -count=1 -timeout=10m ./...
+go vet ./...
+git diff --check
+```
+
+The PostgreSQL package completed in 81.572 seconds. The required full suite also
+passed without the optional plan flag. Queue/event-cursor/namespace race tests
+passed three repetitions. SQLC query sources were not changed, so regeneration
+of `postgres/db` was not required.
 
 The migration's Down section removes only these ten indexes concurrently. Older
 irreversible data migrations are untouched. Apply migration 016 independently to
