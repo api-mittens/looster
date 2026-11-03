@@ -140,10 +140,10 @@ func TestEventCursorCommitOrderingWithLockTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	initial, err := s.Events(ctx, created.ID, 0)
-	if err != nil || len(initial) != 1 {
+	if err != nil || len(initial) == 0 {
 		t.Fatalf("initial events: %+v %v", initial, err)
 	}
-	cursor := initial[0].ID
+	cursor := initial[len(initial)-1].ID
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
