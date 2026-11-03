@@ -76,6 +76,11 @@ git clone https://github.com/dominikbb/looster.git
 cd looster
 docker compose up -d --wait
 cp config.example.toml config.toml
+cp .env.example .env
+# Review/edit .env, then export its trusted contents in this shell.
+set -a
+. ./.env
+set +a
 looster --config config.toml db migrate
 looster --config config.toml behaviour check -f behaviour_example.txt
 looster --config config.toml behaviour apply -f behaviour_example.txt
@@ -97,9 +102,12 @@ The designer plans the work and moves it to `todo`; the coder implements it, and
 the reviewer validates the result. Use the returned task ID with
 `looster --config config.toml task follow TSK-1` to follow its events.
 The Compose credentials are local development defaults, not production settings.
+Load the same environment in every terminal running Looster. Database connection
+strings and S3 keys are environment-only; secret-bearing TOML keys are rejected.
 
 To spread work across machines, configure the same reachable PostgreSQL and
-S3-compatible endpoints and credentials on each host. The example `localhost`
+S3-compatible endpoints on each host, and provide credentials through that
+host's environment. The example `localhost`
 endpoints work only on the machine running Compose. Install and authenticate
 Jcode separately on every worker host, copy the appropriate config, then select
 which agents each server handles:
@@ -182,5 +190,12 @@ look, but does not establish which agent or workflow is inefficient. See the
 | [Releasing](docs/releasing.md) | Version tags, CI, release assets and checksums |
 
 Start with [config.example.toml](config.example.toml) and
-[behaviour_example.txt](behaviour_example.txt). Keep credentials in configuration
-or the environment, never in manifests.
+[behaviour_example.txt](behaviour_example.txt). Keep credentials exclusively in
+the environment, never in TOML configuration or manifests.
+
+## License
+
+Looster's original code is [MIT licensed](LICENSE). Dependencies retain their
+own licenses. See the [third-party notices](THIRD_PARTY_NOTICES.md) and
+[licensing guide](docs/licensing.md), including HCL's MPL-2.0 source availability.
+Run `looster licenses` to read the complete notices offline from any installed binary.

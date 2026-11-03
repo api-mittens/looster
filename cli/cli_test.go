@@ -24,10 +24,15 @@ func isolateConfigEnvironment(t *testing.T) {
 }
 
 func TestConfigEnvironmentOverrides(t *testing.T) {
+	// Simulate a developer shell containing unrelated active credentials.
+	t.Setenv("LOOSTER_DATABASE_URL", "postgres://polluted:secret@invalid/db")
+	t.Setenv("LOOSTER_S3_ACCESS_KEY", "polluted-access")
+	t.Setenv("LOOSTER_S3_SECRET_KEY", "polluted-secret")
+	t.Setenv("LOOSTER_S3_SESSION_TOKEN", "polluted-token")
 	isolateConfigEnvironment(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
-	if e := os.WriteFile(path, []byte("database_url='postgres://file/db'\n[s3]\nendpoint='http://file:9000'\nbucket='file'\nregion='file'\naccess_key='file'\nsecret_key='file'\n"), 0600); e != nil {
+	if e := os.WriteFile(path, []byte("[s3]\nendpoint='http://file:9000'\nbucket='file'\nregion='file'\n"), 0600); e != nil {
 		t.Fatal(e)
 	}
 	for _, tc := range []struct{ key, env, value string }{
@@ -37,6 +42,7 @@ func TestConfigEnvironmentOverrides(t *testing.T) {
 		{"s3.region", "LOOSTER_S3_REGION", "eu-north-1"},
 		{"s3.access_key", "LOOSTER_S3_ACCESS_KEY", "env-access"},
 		{"s3.secret_key", "LOOSTER_S3_SECRET_KEY", "env-secret"},
+		{"s3.session_token", "LOOSTER_S3_SESSION_TOKEN", "env-token"},
 		{"role", "LOOSTER_ROLE", "agent"},
 		{"agent", "LOOSTER_AGENT", "coder"},
 	} {
@@ -58,7 +64,7 @@ func TestConfigEnvironmentOverrides(t *testing.T) {
 func TestConfigFileAndFlagPrecedence(t *testing.T) {
 	isolateConfigEnvironment(t)
 	path := filepath.Join(t.TempDir(), "config.toml")
-	if e := os.WriteFile(path, []byte("database_url='postgres://file/db'\n[s3]\nbucket='file-bucket'\n"), 0600); e != nil {
+	if e := os.WriteFile(path, []byte("[s3]\nbucket='file-bucket'\n"), 0600); e != nil {
 		t.Fatal(e)
 	}
 	a := &application{v: viper.New()}
@@ -67,15 +73,25 @@ func TestConfigFileAndFlagPrecedence(t *testing.T) {
 	if e := a.load(); e != nil {
 		t.Fatal(e)
 	}
-	if a.v.GetString("database_url") != "postgres://file/db" || a.v.GetString("s3.bucket") != "file-bucket" {
+	if a.v.GetString("database_url") != "" || a.v.GetString("s3.bucket") != "file-bucket" {
 		t.Fatal("file settings not loaded")
 	}
 	t.Setenv("LOOSTER_DATABASE_URL", "postgres://env/db")
-	if e := root.PersistentFlags().Set("database-url", "postgres://flag/db"); e != nil {
+	if root.PersistentFlags().Lookup("database-url") != nil {
+		t.Fatal("database-url flag must not exist")
+	}
+	if a.v.GetString("database_url") != "postgres://env/db" {
+		t.Fatal("database URL must resolve from environment")
+	}
+	t.Setenv("LOOSTER_S3_BUCKET", "env-bucket")
+	if a.v.GetString("s3.bucket") != "env-bucket" {
+		t.Fatal("environment did not override nonsecret file setting")
+	}
+	if e := root.PersistentFlags().Set("namespace", "flag-namespace"); e != nil {
 		t.Fatal(e)
 	}
-	if a.v.GetString("database_url") != "postgres://flag/db" {
-		t.Fatal("flag did not override environment")
+	if a.v.GetString("namespace") != "flag-namespace" {
+		t.Fatal("namespace flag not resolved")
 	}
 }
 func TestLocalCLI(t *testing.T) {

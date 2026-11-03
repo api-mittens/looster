@@ -69,9 +69,8 @@ func (a *application) command() *cobra.Command {
 		v.SetDefault(k, x)
 	}
 	root := &cobra.Command{Use: "looster", Version: Version, Short: "Orchestrate agent tasks across machines", SilenceUsage: true, SilenceErrors: true}
+	root.AddCommand(licensesCommand())
 	root.PersistentFlags().StringVar(&a.config, "config", "", "TOML configuration file (default ~/.config/looster/config.toml)")
-	root.PersistentFlags().String("database-url", "", "PostgreSQL connection string (LOOSTER_DATABASE_URL); defaults to PG* environment variables")
-	_ = v.BindPFlag("database_url", root.PersistentFlags().Lookup("database-url"))
 	root.PersistentFlags().StringP("namespace", "N", namespace.Default, "Database namespace (LOOSTER_NAMESPACE)")
 	_ = v.BindPFlag("namespace", root.PersistentFlags().Lookup("namespace"))
 	root.PersistentFlags().String("role", "human", "Application role: human or agent (LOOSTER_ROLE)")
@@ -160,7 +159,17 @@ func (a *application) load() error {
 		if a.config == "" && (os.IsNotExist(e) || errors.As(e, &missing)) {
 			return nil
 		}
+		var parseError viper.ConfigParseError
+		if errors.As(e, &parseError) {
+			return errors.New("invalid TOML configuration (values omitted)")
+		}
 		return e
+	}
+	// Inspect file keys, not resolved settings: env overrides cannot hide secrets.
+	for _, key := range []string{"database_url", "s3.access_key", "s3.secret_key", "s3.session_token"} {
+		if a.v.InConfig(key) {
+			return fmt.Errorf("configuration key %s is environment-only; remove it from TOML", key)
+		}
 	}
 	return nil
 }
@@ -495,8 +504,18 @@ func (a *application) ownerCommand(kind string) *cobra.Command {
 }
 func (a *application) objects(ctx context.Context) (app.Objects, error) {
 	v := a.v
-	return objectstore.New(ctx, objectstore.Config{Endpoint: v.GetString("s3.endpoint"), Region: v.GetString("s3.region"), Bucket: v.GetString("s3.bucket"), AccessKey: v.GetString("s3.access_key"), SecretKey: v.GetString("s3.secret_key")})
+	return objectstore.New(ctx, objectstore.Config{Endpoint: v.GetString("s3.endpoint"), Region: v.GetString("s3.region"), Bucket: v.GetString("s3.bucket"), AccessKey: v.GetString("s3.access_key"), SecretKey: v.GetString("s3.secret_key"), SessionToken: v.GetString("s3.session_token")})
 }
+
+// workerEnvironment preserves selected nonsecret S3 config and env-only credentials.
+func (a *application) workerEnvironment() map[string]string {
+	env := map[string]string{}
+	for _, key := range []string{"endpoint", "region", "bucket", "access_key", "secret_key", "session_token"} {
+		env["LOOSTER_S3_"+strings.ToUpper(key)] = a.v.GetString("s3." + key)
+	}
+	return env
+}
+
 func randomID() string {
 	var b [16]byte
 	if _, e := rand.Read(b[:]); e != nil {
@@ -530,10 +549,7 @@ func (a *application) serveCommand() *cobra.Command {
 		if a.store.Pool.Config().MaxConns < int32(concurrency+4) {
 			return fmt.Errorf("PostgreSQL pool needs at least %d connections; add pool_max_conns=%d to database_url", concurrency+4, concurrency+4)
 		}
-		childEnv := map[string]string{}
-		for _, key := range []string{"endpoint", "region", "bucket", "access_key", "secret_key"} {
-			childEnv["LOOSTER_S3_"+strings.ToUpper(key)] = v.GetString("s3." + key)
-		}
+		childEnv := a.workerEnvironment()
 		service := app.Service{Log: slog.New(slog.NewTextHandler(c.ErrOrStderr(), nil)), Repo: a.repo, Queue: a.store, Harness: &jcode.Harness{Binary: v.GetString("jcode.binary"), SessionsDir: v.GetString("jcode.sessions_dir"), DatabaseURL: v.GetString("database_url"), Objects: objects, Environment: childEnv}, Objects: objects}
 		return service.Serve(c.Context(), app.WorkerConfig{Namespace: v.GetString("namespace"), Harness: v.GetString("harness"), ID: randomID(), Agents: names, Concurrency: concurrency, Workdir: workdir, Poll: v.GetDuration("poll_interval"), RunTimeout: v.GetDuration("run_timeout")})
 	}}

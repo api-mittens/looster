@@ -11,8 +11,9 @@ session histories in S3. Managed harnesses receive `LOOSTER_ROLE=agent` and thei
 processes share one database connection configuration, but work is scoped to the
 selected namespace. Never switch namespaces or override `LOOSTER_NAMESPACE` to
 access unrelated tasks or systems.
-Configuration and credentials belong in the environment or existing TOML config;
-do not put credentials in comments, memories, attachments, or skill files.
+Credentials belong exclusively in environment variables. TOML may contain only
+non-secret runtime settings; never put database URLs or S3 keys in TOML,
+comments, memories, attachments, or skill files.
 
 ## Find the task and context
 

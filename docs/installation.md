@@ -53,6 +53,11 @@ need Go, Node.js, npm, a bundler, or a runtime CDN. Running workers still requir
 Jcode and PostgreSQL, plus configured S3-compatible storage for files and archives.
 Authenticate Jcode independently before starting workers.
 
+The executable also retains Looster's MIT license and complete dependency notices.
+Run `looster licenses` offline to read them, including the exact source location
+for the MPL-2.0 HCL dependency. Release archives include the license documents and
+HCL source ZIP separately. See [licensing](licensing.md) before redistributing.
+
 ## Build from source
 
 The module is `github.com/dominikbb/looster`. Use **Go 1.27.2 or newer**, as declared
