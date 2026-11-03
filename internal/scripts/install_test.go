@@ -123,11 +123,11 @@ esac
 				if err != nil {
 					t.Fatal(err)
 				}
-				license, err := os.ReadFile("../LICENSE")
+				license, err := os.ReadFile("../../LICENSE")
 				if err != nil {
 					t.Fatal(err)
 				}
-				notices, err := os.ReadFile("../THIRD_PARTY_NOTICES.md")
+				notices, err := os.ReadFile("../../THIRD_PARTY_NOTICES.md")
 				if err != nil {
 					t.Fatal(err)
 				}
