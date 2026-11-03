@@ -12,12 +12,14 @@ import (
 	_ "image/jpeg"
 	"image/png"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
 	"path"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/api-mittens/looster/internal/app"
@@ -277,22 +279,31 @@ func uploadAttachment(w http.ResponseWriter, r *http.Request, repo attachmentRep
 		return
 	}
 	key := prefix + hex.EncodeToString(token) + "/" + safeAttachmentName(header.Filename)
-	cleanup := func() {
+	cleanup := func() error {
 		if d, ok := objects.(interface {
 			Delete(context.Context, string) error
 		}); ok {
-			_ = d.Delete(context.WithoutCancel(r.Context()), key)
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+			defer cancel()
+			return d.Delete(ctx, key)
 		}
+		return errors.New("object store does not support cleanup")
+	}
+	fail := func(err error) {
+		if cleanupErr := cleanup(); cleanupErr != nil {
+			slog.Error("attachment persistence and object cleanup failed", "error", err, "cleanup_error", cleanupErr, "object_key", key)
+			http.Error(w, "Attachment failed; object cleanup failed", http.StatusInternalServerError)
+			return
+		}
+		attachmentError(w, err)
 	}
 	if err = objects.Put(r.Context(), key, bytes.NewReader(data), int64(len(data))); err != nil {
-		cleanup()
-		attachmentError(w, err)
+		fail(err)
 		return
 	}
 	a, err := repo.AddAttachment(r.Context(), task.Attachment{TaskID: id, EventID: eventID, Name: safeAttachmentName(header.Filename), Key: key, Size: int64(len(data))})
 	if err != nil {
-		cleanup()
-		attachmentError(w, err)
+		fail(err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

@@ -42,11 +42,13 @@ func (r *attachmentTestRepo) AddAttachment(_ context.Context, a task.Attachment)
 }
 
 type attachmentTestObjects struct {
-	data    map[string][]byte
-	deleted int
-	gets    int
-	putErr  error
-	getErr  error
+	data           map[string][]byte
+	deleted        int
+	gets           int
+	putErr         error
+	getErr         error
+	deleteErr      error
+	cleanupBounded bool
 }
 
 func (s *attachmentTestObjects) Put(_ context.Context, key string, r io.Reader, _ int64) error {
@@ -61,8 +63,12 @@ func (s *attachmentTestObjects) Get(_ context.Context, key string) (io.ReadClose
 	}
 	return io.NopCloser(bytes.NewReader(s.data[key])), nil
 }
-func (s *attachmentTestObjects) Delete(_ context.Context, key string) error {
+func (s *attachmentTestObjects) Delete(ctx context.Context, key string) error {
 	s.deleted++
+	_, s.cleanupBounded = ctx.Deadline()
+	if s.deleteErr != nil {
+		return s.deleteErr
+	}
 	delete(s.data, key)
 	return nil
 }
@@ -289,5 +295,15 @@ func TestAttachmentStorageReadFailure(t *testing.T) {
 	w := attachmentRequest(HandlerWithStorage(repo, objects), "GET", "/api/tasks/TSK-1/attachments/7/download")
 	if w.Code != 500 || strings.Contains(w.Body.String(), "private") {
 		t.Fatalf("storage failure: %d %s", w.Code, w.Body)
+	}
+}
+
+func TestAttachmentCleanupFailure(t *testing.T) {
+	repo := &attachmentTestRepo{addErr: errors.New("private database detail")}
+	objects := &attachmentTestObjects{data: map[string][]byte{}, deleteErr: errors.New("private bucket detail")}
+	w := httptest.NewRecorder()
+	HandlerWithStorage(repo, objects).ServeHTTP(w, attachmentUpload([]byte("data")))
+	if w.Code != 500 || !strings.Contains(w.Body.String(), "object cleanup failed") || strings.Contains(w.Body.String(), "private") || !objects.cleanupBounded || objects.deleted != 1 {
+		t.Fatalf("cleanup failure: %d %s bounded=%v", w.Code, w.Body, objects.cleanupBounded)
 	}
 }
