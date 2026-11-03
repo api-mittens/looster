@@ -45,6 +45,22 @@ connect directly to the same database. S3-compatible storage holds attachments
 and session archives. No worker-to-worker mesh is needed. See
 [architecture](docs/architecture.md) and [session recovery](docs/usage.md#behaviour-and-sessions).
 
+## Source layout
+
+- `cmd/looster/` is the executable entry point. Build it with `go build ./cmd/looster`.
+- `internal/` contains private application packages, including the CLI, domain
+  model, worker orchestration, PostgreSQL storage, dashboard, and bundled skills.
+- Database migrations, SQL queries, and generated database code live together in
+  `internal/postgres/`. `sqlc.yaml` targets these paths.
+- Dashboard assets live in `internal/web/static/` and agent skill instructions in
+  `internal/skills/looster/`. Both remain embedded in the executable.
+- `scripts/` contains the distributable installer. Its Go tests live in
+  `internal/scripts/`.
+
+Run `go test ./...` and `go vet ./...` from the repository root. The module path
+and `cmd/looster` build target are unchanged. Release builds inject the version
+through `github.com/dominikbb/looster/internal/cli.Version`.
+
 ## Install
 
 Release binaries need **no Go toolchain**. On Linux or macOS, download the installer
