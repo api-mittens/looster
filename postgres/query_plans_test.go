@@ -3,11 +3,14 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/dominikbb/looster/event"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -132,9 +135,9 @@ var measuredQueries = []struct{ name, sql, index string }{
 	{"claim anti join", `SELECT j.id,coalesce(j.task_id,0),j.agent_name,j.state,j.session_id,j.prompt,coalesce(j.context_task_id,0),j.notification FROM jobs j WHERE j.agent_name=ANY(ARRAY['agent777']) AND j.available_at<=now() AND j.state IN ('pending','running','archiving') AND NOT EXISTS(SELECT FROM jobs earlier WHERE coalesce(earlier.task_id,earlier.context_task_id)=coalesce(j.task_id,j.context_task_id) AND earlier.agent_name=j.agent_name AND earlier.id<j.id AND earlier.state IN ('pending','running','archiving')) ORDER BY j.id LIMIT 100`, "jobs_active_session_idx"},
 }
 
-func explainQuery(t *testing.T, ctx context.Context, c *pgx.Conn, sql string) string {
+func explainQuery(t *testing.T, ctx context.Context, c *pgx.Conn, sql string, args ...any) string {
 	t.Helper()
-	rows, err := c.Query(ctx, "EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT) "+sql)
+	rows, err := c.Query(ctx, "EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT) "+sql, args...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,6 +192,103 @@ func TestQueryIndexPlans(t *testing.T) {
 			t.Errorf("%s did not use %s", q.name, q.index)
 		}
 	}
+}
+
+// Exercise the complete board query rather than treating an isolated activity
+// count as evidence for all-task board latency. Read the authoritative sqlc SQL.
+func TestQueryPlansTaskListAndGenericLogs(t *testing.T) {
+	if os.Getenv("LOOSTER_QUERY_PLANS") != "1" {
+		t.Skip("set LOOSTER_QUERY_PLANS=1 for large disposable fixture evidence")
+	}
+	ctx, url, c := queryPlanDatabase(t)
+	seedQueryPlans(t, ctx, c)
+	source, err := os.ReadFile("queries/tasks.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.SplitN(string(source), "-- name: ListTasks :many\n", 2)
+	if len(parts) != 2 {
+		t.Fatal("ListTasks SQL not found")
+	}
+	sql := strings.TrimSpace(strings.SplitN(parts[1], "-- name:", 2)[0])
+	for _, phase := range []string{"BEFORE", "AFTER"} {
+		if phase == "AFTER" {
+			if err = Migrate(ctx, url); err != nil {
+				t.Fatal(err)
+			}
+		}
+		_ = explainQuery(t, ctx, c, sql)
+		plan := explainQuery(t, ctx, c, sql)
+		t.Logf("%s full ListTasks (100000 tasks)\n%s", phase, plan)
+		for _, index := range []string{"events_task_activity_idx", "events_task_last_activity"} {
+			if !strings.Contains(plan, index) {
+				t.Errorf("%s full ListTasks missing %s", phase, index)
+			}
+		}
+	}
+	queryPlanExec(t, ctx, c, `SET plan_cache_mode=force_generic_plan; SET client_encoding='UTF8'`)
+	// Historical SQL kept here only as a measured regression baseline. The new
+	// query is built by logQuery itself, so shape regressions affect this test.
+	legacy := `SELECT id,task_id,kind,agent_name,body,created_at,actor_agent FROM events
+ WHERE id>$1 AND ($2::bigint=0 OR id<=$2) AND ($3::bigint=0 OR task_id=$3)
+ AND ($4::text='' OR agent_name=$4 OR actor_agent=$4)
+ AND (cardinality($5::text[])=0 OR kind=ANY($5))
+ AND ($6::timestamptz IS NULL OR created_at>=$6) ORDER BY id `
+	for _, desc := range []bool{false, true} {
+		direction := "ASC"
+		if desc {
+			direction = "DESC"
+		}
+		oldName := "legacy_log_" + strings.ToLower(direction)
+		newName := "selected_log_" + strings.ToLower(direction)
+		query, args := logQuery(event.Filter{TaskID: 777, Limit: 500, Desc: desc})
+		queryPlanExec(t, ctx, c, "PREPARE "+oldName+"(bigint,bigint,bigint,text,text[],timestamptz,integer) AS "+legacy+direction+" LIMIT $7")
+		queryPlanExec(t, ctx, c, "PREPARE "+newName+" AS "+query)
+		oldSQL := "EXECUTE " + oldName + "(0,0,777,'','{}',NULL,500)"
+		placeholders := make([]string, len(args))
+		for i := range args {
+			placeholders[i] = fmt.Sprintf("$%d", i+1)
+		}
+		newSQL := "EXECUTE " + newName + "(" + strings.Join(placeholders, ",") + ")"
+		// EXECUTE utility statements cannot bind extended-query parameters. Simple
+		// protocol safely interpolates the same values returned by logQuery.
+		bind := append([]any{pgx.QueryExecModeSimpleProtocol}, args...)
+		_ = explainQuery(t, ctx, c, oldSQL)
+		before := explainQuery(t, ctx, c, oldSQL)
+		_ = explainQuery(t, ctx, c, newSQL, bind...)
+		after := explainQuery(t, ctx, c, newSQL, bind...)
+		t.Logf("GENERIC LEGACY LOG %s\n%s", direction, before)
+		t.Logf("GENERIC SELECTED LOG %s\n%s", direction, after)
+		if !strings.Contains(after, "events_task_id_idx") {
+			t.Errorf("generic selected log %s lost task index", direction)
+		}
+		oldRows := queryPlanRows(t, ctx, c, oldSQL)
+		newRows := queryPlanRows(t, ctx, c, newSQL, bind...)
+		if len(oldRows) != 2 || !reflect.DeepEqual(oldRows, newRows) {
+			t.Errorf("log rows/order changed: old=%v new=%v", oldRows, newRows)
+		}
+	}
+}
+
+func queryPlanRows(t *testing.T, ctx context.Context, c *pgx.Conn, sql string, args ...any) [][]any {
+	t.Helper()
+	rows, err := c.Query(ctx, sql, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var result [][]any
+	for rows.Next() {
+		values, err := rows.Values()
+		if err != nil {
+			t.Fatal(err)
+		}
+		result = append(result, values)
+	}
+	if err = rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return result
 }
 
 func assertQueryIndexes(t *testing.T, ctx context.Context, c *pgx.Conn) {

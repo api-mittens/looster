@@ -17,6 +17,10 @@ LOOSTER_QUERY_PLANS=1 \
 go test ./postgres -run '^TestQueryIndexPlans$' -count=1 -v
 
 LOOSTER_TEST_DATABASE_URL=postgresql://looster_test@127.0.0.1:55427/looster_disposable \
+LOOSTER_QUERY_PLANS=1 \
+go test ./postgres -run '^TestQueryPlansTaskListAndGenericLogs$' -count=1 -v
+
+LOOSTER_TEST_DATABASE_URL=postgresql://looster_test@127.0.0.1:55427/looster_disposable \
 go test ./postgres -run '^TestQueryIndexes' -count=1 -v
 ```
 
@@ -245,6 +249,140 @@ Planning Time: 0.678 ms
 Execution Time: 0.494 ms
 ```
 
+## Complete ListTasks and generic log-query evidence
+
+A second run on November 3, 2026, 18:02:37-18:03:27 UTC uses the same fixture,
+server settings and per-query warm-up. `TestQueryPlansTaskListAndGenericLogs`
+reads the complete `ListTasks` statement directly from `queries/tasks.sql`,
+including task columns, ordered tag arrays, lateral filtered counts, correlated
+latest-activity lookup and final task ordering. It does not add a task filter or
+LIMIT. Both phases return all **100,000 tasks**.
+
+| Complete ListTasks | Execution ms | Root shared hits | JIT total ms | Plan |
+| --- | ---: | ---: | ---: | --- |
+| Version 015 | 1,800.636 | 1,222,094 | 190.032 | Nested Loop Left Join |
+| Version 016 | 1,286.180 | 1,222,094 | 130.942 | Same Nested Loop Left Join |
+
+**No board speedup is attributed to migration 016.** The plan, logical buffer
+work, existing index choices and row counts are identical. Wall time and JIT
+vary substantially on this shared machine. The earlier isolated count/maximum
+probes establish efficient per-task access, not constant-time all-task listing.
+The full query performs 100,000 count probes, 100,000 tag lookups/sorts, and
+100,000 maximum-activity probes. It still has linear work in task count and
+substantial repeated buffer accesses. Pagination or board-query restructuring
+would be a separate, workload-driven change, not justification for another
+near-duplicate events index here.
+
+Selected actual plan lines (tag subtree omitted, exact buffer breakdown below):
+
+```text
+BEFORE full ListTasks
+Nested Loop Left Join (actual time=189.034..1785.459 rows=100000.00 loops=1)
+  Buffers: shared hit=1222094
+  -> Index Scan using tasks_pkey on tasks (actual time=0.020..32.802 rows=100000.00 loops=1)
+       Buffers: shared hit=2094
+  -> Aggregate (actual time=0.004..0.004 rows=1.00 loops=100000)
+       Buffers: shared hit=220000
+       -> Index Only Scan using events_task_activity_idx on events (actual time=0.002..0.002 rows=0.20 loops=100000)
+            Index Cond: (task_id = tasks.id)
+            Heap Fetches: 20000
+            Buffers: shared hit=220000
+  ...
+  SubPlan 3
+    -> Result (actual time=0.004..0.004 rows=1.00 loops=100000)
+         Buffers: shared hit=400000
+         InitPlan 2
+           -> Limit (actual time=0.003..0.003 rows=1.00 loops=100000)
+                Buffers: shared hit=400000
+                -> Index Only Scan using events_task_last_activity on events e (actual time=0.003..0.003 rows=1.00 loops=100000)
+                     Index Cond: (task_id = tasks.id)
+                     Heap Fetches: 100000
+                     Buffers: shared hit=400000
+Execution Time: 1800.636 ms
+
+AFTER full ListTasks
+Nested Loop Left Join (actual time=130.245..1274.721 rows=100000.00 loops=1)
+  Buffers: shared hit=1222094
+  -> Index Scan using tasks_pkey on tasks (actual time=0.012..23.016 rows=100000.00 loops=1)
+       Buffers: shared hit=2094
+  -> Aggregate (actual time=0.003..0.003 rows=1.00 loops=100000)
+       Buffers: shared hit=220000
+       -> Index Only Scan using events_task_activity_idx on events (actual time=0.001..0.001 rows=0.20 loops=100000)
+            Index Cond: (task_id = tasks.id)
+            Heap Fetches: 20000
+            Buffers: shared hit=220000
+  ...
+  SubPlan 3
+    -> Result (actual time=0.003..0.003 rows=1.00 loops=100000)
+         Buffers: shared hit=400000
+         InitPlan 2
+           -> Limit (actual time=0.002..0.002 rows=1.00 loops=100000)
+                Buffers: shared hit=400000
+                -> Index Only Scan using events_task_last_activity on events e (actual time=0.002..0.002 rows=1.00 loops=100000)
+                     Index Cond: (task_id = tasks.id)
+                     Heap Fetches: 100000
+                     Buffers: shared hit=400000
+Execution Time: 1286.180 ms
+```
+
+Both omitted tag subtrees consume 600,000 hits: 300,000 through `task_tags_pkey`
+and 300,000 through `tags_pkey`, with 100,000 one-row sorts (25 kB each). The
+remaining 2,094 task, 220,000 count and 400,000 maximum hits reconcile exactly
+to the root's 1,222,094 hits. Both 011 and 015 indexes are asserted by the test.
+
+### Prepared generic logs: old optional OR filters versus selected predicates
+
+On that same version-016 fixture, set `plan_cache_mode=force_generic_plan` and
+PREPARE both SQL shapes. Old SQL is the historical optional-parameter OR query,
+retained explicitly as a baseline in the test. New SQL comes from the real
+`logQuery(event.Filter{TaskID:777, Limit:500, Desc:...})`, not a handwritten
+replacement. Both are executed once to warm up, then explained. Generic plans
+show `$1`/`$2` index predicates rather than substituted constants.
+
+Other filters are unselected: after=0, until=0, agent empty, kinds empty, since
+NULL. Task777 has two events, so the limit cannot hide a full scan. The test
+compares **all returned event columns and their order** in ASC and DESC modes.
+This measures SQL-shape improvement using the existing migration-001
+`events_task_id_idx`, **not** benefit from any new index in 016.
+
+| Generic task log | Execution ms | Root shared hits | Rows filtered | Access path |
+| --- | ---: | ---: | ---: | --- |
+| Old optional OR, ASC | 49.101 | 4,396 | 199,998 | events_pkey forward |
+| New selected predicate, ASC | 0.040 | 5 | 0 | events_task_id_idx forward |
+| Old optional OR, DESC | 45.666 | 4,396 | 199,998 | events_pkey backward |
+| New selected predicate, DESC | 0.044 | 5 | 0 | events_task_id_idx backward |
+
+Actual ASC plans:
+
+```text
+GENERIC LEGACY LOG ASC
+Limit (cost=0.42..599.23 rows=4 width=114) (actual time=0.243..49.065 rows=2.00 loops=1)
+  Buffers: shared hit=4396
+  -> Index Scan using events_pkey on events (cost=0.42..5689.11 rows=38 width=114) (actual time=0.241..49.060 rows=2.00 loops=1)
+       Index Cond: (id > $1)
+       Filter: ((($6 IS NULL) OR (created_at >= $6)) AND (($2 = 0) OR (id <= $2)) AND (($3 = 0) OR (task_id = $3)) AND (($4 = ''::text) OR (agent_name = $4) OR (actor_agent = $4)) AND ((cardinality($5) = 0) OR (kind = ANY ($5))))
+       Rows Removed by Filter: 199998
+       Buffers: shared hit=4396
+Planning Time: 0.034 ms
+Execution Time: 49.101 ms
+
+GENERIC SELECTED LOG ASC
+Limit (cost=0.42..8.44 rows=1 width=114) (actual time=0.017..0.020 rows=2.00 loops=1)
+  Buffers: shared hit=5
+  -> Index Scan using events_task_id_idx on events (cost=0.42..8.44 rows=1 width=114) (actual time=0.016..0.018 rows=2.00 loops=1)
+       Index Cond: ((task_id = $2) AND (id > $1))
+       Buffers: shared hit=5
+Planning Time: 0.013 ms
+Execution Time: 0.040 ms
+```
+
+DESC retains the same predicates but uses `Index Scan Backward`. Old actual scan
+`23.235..45.630`, new `0.018..0.021`, with execution totals 45.666 and 0.044 ms.
+The selected-filter task-index assertion is intentionally about a forced generic
+plan, which catches regressions that a literal-only EXPLAIN would miss. It does
+not establish selectivity for global actor-only, agent-only or time-only filters,
+so no unsupported actor/agent/time index was added from this test.
+
 ## Decisions and costs
 
 * Add `task_tags(tag_id)`: the existing `(task_id,tag_id)` primary key already
@@ -310,8 +448,8 @@ No INSERT/UPDATE throughput improvement is claimed.
 Goose `NO TRANSACTION` is mandatory for concurrent index DDL. Up uses
 one `DROP INDEX CONCURRENTLY IF EXISTS` per index and one separate
 `CREATE INDEX CONCURRENTLY` per build. Down only drops these indexes. Never put
-these statements inside a DO
-block or explicit transaction. No `CREATE INDEX IF NOT EXISTS`: a failed
+these statements inside a DO block or explicit transaction. No
+`CREATE INDEX IF NOT EXISTS`: a failed
 concurrent build can reserve the name with `indisvalid=false`, causing that form
 to silently leave queries unindexed.
 
@@ -329,6 +467,35 @@ can fail it. After resolving the blocker, rerun `looster db migrate` or
 `looster -N NAME db migrate`. Migration 016 is recorded only when all statements
 succeed. There is no unbounded automatic retry loop or hidden lock-timeout
 increase. If a build failed, do not manually mark version 016 applied.
+
+### Lock bounds and migration-runner snapshot safety
+
+Interactive/application connections receive a **5 second** `lock_timeout`
+fallback. Namespace migration connections and Goose DDL receive a **30 second**
+fallback, allowing a concurrent initializer to finish several index builds.
+`namespaceConfigWithLockTimeout` installs the value after startup only when the
+effective setting is zero. Nonzero explicit DSN, PGOPTIONS, role or database
+settings remain authoritative. A caller's context can impose a shorter overall
+bound. These are lock-wait bounds, not a total query or migration runtime limit,
+and `statement_timeout` is not changed.
+
+The migration mutex uses `pg_try_advisory_lock`, polling every **25 ms** until the
+configured lock-timeout duration or caller cancellation. It does **not** sit
+inside a blocking `pg_advisory_lock` call. A blocked advisory-lock statement can
+hold a statement snapshot while the owning runner is performing a concurrent
+expression-index build. That old snapshot can prevent the build from finishing,
+while the waiter is itself waiting for the owner's migration lock. Polling
+finishes each unsuccessful SQL statement and releases its snapshot before the
+Go timer waits, avoiding that waiter/build interlock.
+
+The dedicated migration connection keeps the successful session advisory lock
+until migration completion and connection close. DDL conflicts still report
+PostgreSQL lock timeout SQLSTATE `55P03`. Exhausting the polled namespace mutex
+wait returns a context-deadline/cancellation error instead, with the
+`namespace migration lock wait` diagnostic when its timer expires. Retry only
+after resolving contention. The lock tests cover effective fallback/override
+settings, bounded migration contention, and concurrent namespace initialization
+with real concurrent index DDL.
 
 The tests verify:
 
@@ -351,6 +518,15 @@ The tests verify:
    not machine-dependent sub-millisecond timing thresholds.
 7. Rollback from 016 to 015 drops all ten indexes, then reapplication restores
    valid definitions, in both default and non-default namespaces.
+8. The complete 100,000-task ListTasks plan retains both existing activity
+   indexes before and after. Forced generic ASC/DESC old-versus-selected log
+   plans use the real query builder and preserve exact returned rows/order.
+
+Validation after the complete-query additions: `go test ./postgres -count=1`
+passed with the disposable database, as did `go test -race ./postgres -run
+'^TestQueryIndexes' -count=3`. Both opt-in large-fixture evidence tests above
+passed individually. Timing values in this document come from the dated
+non-race runs, not from race-instrumented tests.
 
 The migration's Down section removes only these ten indexes concurrently. Older
 irreversible data migrations are untouched. Apply migration 016 independently to
