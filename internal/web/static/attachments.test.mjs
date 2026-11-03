@@ -99,16 +99,25 @@ test('namespace switch during upload stops further files and discards stale UI r
   assert.equal(board.refreshed,undefined);
 });
 
-test('attachment load shows missing storage and ignores stale detail response',async () => {
+test('attachment read errors retain explicit backend S3 diagnostics',async () => {
+  const board = harness(async () => ({ok:false,text:async () => 'Attachment storage unavailable: S3 is not configured'}));
+  board.outputs = new Map(); board.dialog = {open:true};
+  const notice = {textContent:''};
+  board.panel = {querySelector:() => notice};
+  await board.loadAttachments(33,board.outputs);
+  assert.match(notice.textContent,/Could not load attachments:.*S3 is not configured/);
+});
+
+test('attachment load uses array contract and ignores stale detail response',async () => {
   const board = harness(async () => {}), controls = new Map();
   board.outputs = new Map(); board.dialog = {open:true};
   board.panel = {querySelector:selector => {if(!controls.has(selector)) controls.set(selector,{innerHTML:'',textContent:''});return controls.get(selector);}};
-  board.api = async () => ({attachments:[{id:1,name:'saved.txt',size:1}],storage_configured:false});
+  board.api = async () => [{id:1,name:'saved.txt',size:1}];
   await board.loadAttachments(33,board.outputs);
-  assert.match(controls.get('#attachment-notice').textContent,/S3 is not configured/);
+  assert.equal(controls.get('#attachment-notice').textContent,'');
   assert.match(controls.get('#description-attachments').innerHTML,/saved.txt/);
   const old = board.outputs; board.outputs = new Map();
-  board.api = async () => ({attachments:[{id:2,name:'stale.txt',size:1}]});
+  board.api = async () => [{id:2,name:'stale.txt',size:1}];
   await board.loadAttachments(33,old);
   assert.doesNotMatch(controls.get('#description-attachments').innerHTML,/stale.txt/);
 });

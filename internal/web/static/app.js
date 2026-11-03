@@ -245,8 +245,8 @@ class LoosterBoard extends HTMLElement {
     try {
       const result = await this.api(`/api/tasks/TSK-${id}/attachments`,undefined,true);
       if(!current()) return;
-      this.attachments = result.attachments || [];
-      this.panel.querySelector('#attachment-notice').textContent = result.storage_configured === false ? 'Attachment storage is unavailable: S3 is not configured. Uploads and downloads require S3 configuration.' : '';
+      this.attachments = result || [];
+      this.panel.querySelector('#attachment-notice').textContent = '';
       const html = attachmentsHTML(this.attachments,id,null,this.namespace), box = this.panel.querySelector('#description-attachments');
       if(box.innerHTML !== html) box.innerHTML = html;
     } catch(error) {
