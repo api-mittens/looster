@@ -227,6 +227,20 @@ func run(check bool) error {
 	if err := emit(&out, notice{"web/static/vendor/D3-THIRD-PARTY-LICENSES.txt", string(b)}); err != nil {
 		return err
 	}
+	for _, bundled := range []struct{ name, file, source string }{
+		{"markdown-it v15.0.3", "MARKDOWN-IT-LICENSE.txt", "https://github.com/markdown-it/markdown-it/tree/15.0.3"},
+		{"markdown-it browser dependency notices", "MARKDOWN-IT-THIRD-PARTY-LICENSES.txt", "web/static/vendor/MARKDOWN-IT-README.md"},
+	} {
+		name := "web/static/vendor/" + bundled.file
+		b, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(&out, "## %s (bundled JavaScript)\n\nUsage: **build**, embedded web asset. Source and provenance: %s\n\n", bundled.name, bundled.source)
+		if err := emit(&out, notice{name, string(b)}); err != nil {
+			return err
+		}
+	}
 	dest := filepath.Join(root, "THIRD_PARTY_NOTICES.md")
 	return writeOrCheck(dest, out.Bytes(), check)
 }
@@ -373,7 +387,7 @@ func licenseDocument(name string) bool {
 	case ".go", ".yml", ".yaml", ".json", ".js", ".ts":
 		return false
 	}
-	if isLicense(name) || filepath.Base(name) == "D3-LICENSE.txt" || filepath.Base(name) == "D3-THIRD-PARTY-LICENSES.txt" {
+	if isLicense(name) || filepath.Base(name) == "D3-LICENSE.txt" || bundledLicenseCollection(name) || filepath.Base(name) == "MARKDOWN-IT-LICENSE.txt" {
 		return true
 	}
 	for _, part := range strings.Split(filepath.ToSlash(filepath.Dir(name)), "/") {
@@ -385,11 +399,20 @@ func licenseDocument(name string) bool {
 	return false
 }
 
+func bundledLicenseCollection(name string) bool {
+	switch filepath.Base(name) {
+	case "D3-THIRD-PARTY-LICENSES.txt", "MARKDOWN-IT-THIRD-PARTY-LICENSES.txt":
+		return true
+	}
+	return false
+}
+
 func noticeClassification(n notice) (string, error) {
-	if filepath.Base(n.name) == "D3-THIRD-PARTY-LICENSES.txt" {
+	if bundledLicenseCollection(n.name) {
 		// Checking only the aggregate would let one recognized license mask an
 		// unrecognized license elsewhere in the collection. Check each document.
 		count := 0
+		kinds := map[string]bool{}
 		rest := n.text
 		for {
 			start := strings.Index(rest, "--- ")
@@ -399,7 +422,7 @@ func noticeClassification(n notice) (string, error) {
 			rest = rest[start+4:]
 			end := strings.Index(rest, " (verbatim from tarball) ---\n")
 			if end < 0 {
-				return "", fmt.Errorf("malformed D3 license document marker")
+				return "", fmt.Errorf("malformed bundled license document marker")
 			}
 			name := rest[:end]
 			rest = rest[end+len(" (verbatim from tarball) ---\n"):]
@@ -408,9 +431,11 @@ func noticeClassification(n notice) (string, error) {
 			if boundary >= 0 {
 				text = rest[:boundary]
 			}
-			if _, err := noticeClassification(notice{name, text}); err != nil {
-				return "", fmt.Errorf("D3 embedded document %d: %w", count+1, err)
+			kind, err := noticeClassification(notice{name, text})
+			if err != nil {
+				return "", fmt.Errorf("bundled embedded document %d: %w", count+1, err)
 			}
+			kinds[kind] = true
 			count++
 			if boundary < 0 {
 				break
@@ -418,8 +443,14 @@ func noticeClassification(n notice) (string, error) {
 			rest = rest[boundary:]
 		}
 		if count == 0 {
-			return "", fmt.Errorf("D3 collection contains no embedded license documents")
+			return "", fmt.Errorf("bundled collection contains no embedded license documents")
 		}
+		labels := make([]string, 0, len(kinds))
+		for kind := range kinds {
+			labels = append(labels, kind)
+		}
+		sort.Strings(labels)
+		return "Reviewed bundled collection: " + strings.Join(labels, "; "), nil
 	}
 	if !licenseDocument(n.name) {
 		base := strings.ToLower(filepath.Base(n.name))
@@ -432,6 +463,12 @@ func noticeClassification(n notice) (string, error) {
 	}
 	if fmt.Sprintf("%x", sha256.Sum256([]byte(n.text))) == reviewedLucentSHA256 {
 		return "Reviewed Lucent permissive license (exact SHA-256: " + reviewedLucentSHA256 + ", not ISC)", nil
+	}
+	// entities 8.1.0 uses the two standard BSD redistribution conditions without
+	// bullets or numbering. Accept only these reviewed bytes, not arbitrary
+	// unnumbered BSD-like text. Whitespace around the document is not material.
+	if fmt.Sprintf("%x", sha256.Sum256([]byte(strings.TrimSpace(n.text)))) == "0e57eeaccc07eadeb2c7f720ab2601ef37e02fbc6a86cd6667caf7bf5c614de6" {
+		return "BSD-2-Clause (reviewed entities license, exact SHA-256)", nil
 	}
 	kind := classify(n.text)
 	if strings.HasPrefix(kind, "UNKNOWN") || strings.HasPrefix(kind, "BSD-style") {
