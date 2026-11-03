@@ -9,6 +9,36 @@ Run `looster --config config.toml web` and open `http://127.0.0.1:8080`.
 > binding. Do not publish or port-forward it. Namespace selection is not access
 > control, and the UI can read and change data using its database credentials.
 
+## Attachments
+
+Task details show files below the description and below the comment they belong
+to. Choose files and **Upload files** in either location. To attach to a new
+comment, post the comment first, then use its file picker. Uploads run one file
+at a time, so a failed file does not roll back earlier successful uploads.
+
+The CLI uses the same attachment records and private objects:
+
+```sh
+looster task file add TSK-1 ./screenshot.png
+looster task file add TSK-1 ./screenshot.png --comment EVENT_ID
+looster task file list TSK-1
+looster task file get TSK-1 FILE_ID ./download.png
+```
+
+Configure the existing `LOOSTER_S3_*` settings on the dashboard server, not in
+the browser. Keep the bucket private. No public bucket policy or browser S3
+credentials are needed. Without an S3 bucket the rest of the dashboard works,
+but attachments report that storage is unavailable. Invalid configured storage
+credentials fail dashboard startup rather than silently disabling attachments.
+
+Dashboard uploads are limited to 10 MiB per file. PNG, JPEG and GIF content can
+be previewed only after server-side decoding, with an 8192-pixel side limit and
+16-megapixel total limit. Previews are re-encoded as PNG. SVG, HTML and other
+files remain download-only, including older CLI attachments. Images that exceed
+preview limits can still be downloaded within the dashboard's file-size limit.
+Namespace and task selection scope file access, but are not user authentication.
+The trusted-local-only warning above still applies.
+
 ## Navigation
 
 The dashboard opens on **Graph**, the leftmost navigation tab, without a hint
