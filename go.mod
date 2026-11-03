@@ -1,4 +1,4 @@
-module github.com/dominikbb/looster
+module github.com/api-mittens/looster
 
 go 1.27.2
 

@@ -14,14 +14,14 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/dominikbb/looster/internal/agent"
-	"github.com/dominikbb/looster/internal/app"
-	"github.com/dominikbb/looster/internal/event"
-	"github.com/dominikbb/looster/internal/memory"
-	"github.com/dominikbb/looster/internal/namespace"
-	"github.com/dominikbb/looster/internal/postgres/db"
-	"github.com/dominikbb/looster/internal/tag"
-	"github.com/dominikbb/looster/internal/task"
+	"github.com/api-mittens/looster/internal/agent"
+	"github.com/api-mittens/looster/internal/app"
+	"github.com/api-mittens/looster/internal/event"
+	"github.com/api-mittens/looster/internal/memory"
+	"github.com/api-mittens/looster/internal/namespace"
+	"github.com/api-mittens/looster/internal/postgres/db"
+	"github.com/api-mittens/looster/internal/tag"
+	"github.com/api-mittens/looster/internal/task"
 )
 
 //go:embed migrations/*.sql

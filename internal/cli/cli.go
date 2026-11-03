@@ -19,12 +19,12 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"github.com/dominikbb/looster/internal/app"
-	"github.com/dominikbb/looster/internal/jcode"
-	"github.com/dominikbb/looster/internal/namespace"
-	"github.com/dominikbb/looster/internal/objectstore"
-	"github.com/dominikbb/looster/internal/postgres"
-	"github.com/dominikbb/looster/internal/task"
+	"github.com/api-mittens/looster/internal/app"
+	"github.com/api-mittens/looster/internal/jcode"
+	"github.com/api-mittens/looster/internal/namespace"
+	"github.com/api-mittens/looster/internal/objectstore"
+	"github.com/api-mittens/looster/internal/postgres"
+	"github.com/api-mittens/looster/internal/task"
 )
 
 // Version is set to the release tag by the release build.

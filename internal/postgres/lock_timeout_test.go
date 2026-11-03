@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dominikbb/looster/internal/postgres/db"
-	"github.com/dominikbb/looster/internal/task"
+	"github.com/api-mittens/looster/internal/postgres/db"
+	"github.com/api-mittens/looster/internal/task"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dominikbb/looster/internal/agent"
-	"github.com/dominikbb/looster/internal/tag"
-	"github.com/dominikbb/looster/internal/task"
+	"github.com/api-mittens/looster/internal/agent"
+	"github.com/api-mittens/looster/internal/tag"
+	"github.com/api-mittens/looster/internal/task"
 )
 
 const MaxIntervalSeconds = int64((1<<63 - 1) / time.Second)

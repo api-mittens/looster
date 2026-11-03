@@ -9,13 +9,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dominikbb/looster/internal/agent"
-	"github.com/dominikbb/looster/internal/app"
-	"github.com/dominikbb/looster/internal/behaviour"
-	"github.com/dominikbb/looster/internal/event"
-	"github.com/dominikbb/looster/internal/memory"
-	"github.com/dominikbb/looster/internal/tag"
-	"github.com/dominikbb/looster/internal/task"
+	"github.com/api-mittens/looster/internal/agent"
+	"github.com/api-mittens/looster/internal/app"
+	"github.com/api-mittens/looster/internal/behaviour"
+	"github.com/api-mittens/looster/internal/event"
+	"github.com/api-mittens/looster/internal/memory"
+	"github.com/api-mittens/looster/internal/tag"
+	"github.com/api-mittens/looster/internal/task"
 )
 
 type testRepo struct {

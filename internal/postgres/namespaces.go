@@ -15,8 +15,8 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
-	"github.com/dominikbb/looster/internal/namespace"
-	"github.com/dominikbb/looster/internal/postgres/db"
+	"github.com/api-mittens/looster/internal/namespace"
+	"github.com/api-mittens/looster/internal/postgres/db"
 )
 
 const namespaceSchemaPrefix = "looster_ns_"

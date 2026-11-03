@@ -4,8 +4,8 @@ import (
 	"context"
 	"sync"
 
-	"github.com/dominikbb/looster/internal/app"
-	"github.com/dominikbb/looster/internal/postgres"
+	"github.com/api-mittens/looster/internal/app"
+	"github.com/api-mittens/looster/internal/postgres"
 	"github.com/spf13/cobra"
 )
 

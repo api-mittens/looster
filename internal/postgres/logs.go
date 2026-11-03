@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dominikbb/looster/internal/event"
+	"github.com/api-mittens/looster/internal/event"
 )
 
 // Emit only selected predicates. Optional-parameter OR clauses conceal selective

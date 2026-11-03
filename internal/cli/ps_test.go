@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dominikbb/looster/internal/agent"
-	"github.com/dominikbb/looster/internal/app"
-	"github.com/dominikbb/looster/internal/task"
+	"github.com/api-mittens/looster/internal/agent"
+	"github.com/api-mittens/looster/internal/app"
+	"github.com/api-mittens/looster/internal/task"
 )
 
 type overviewRepo struct{ app.Repository }

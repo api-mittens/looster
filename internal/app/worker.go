@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dominikbb/looster/internal/namespace"
-	"github.com/dominikbb/looster/internal/task"
+	"github.com/api-mittens/looster/internal/namespace"
+	"github.com/api-mittens/looster/internal/task"
 )
 
 type Job struct {

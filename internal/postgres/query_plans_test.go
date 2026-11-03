@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dominikbb/looster/internal/event"
+	"github.com/api-mittens/looster/internal/event"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/stdlib"

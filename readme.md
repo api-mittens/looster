@@ -58,8 +58,9 @@ and session archives. No worker-to-worker mesh is needed. See
   `internal/scripts/`.
 
 Run `go test ./...` and `go vet ./...` from the repository root. The module path
-and `cmd/looster` build target are unchanged. Release builds inject the version
-through `github.com/dominikbb/looster/internal/cli.Version`.
+is `github.com/api-mittens/looster`, and the build target is `cmd/looster`.
+Release builds inject the version
+through `github.com/api-mittens/looster/internal/cli.Version`.
 
 ## Install
 
@@ -67,7 +68,7 @@ Release binaries need **no Go toolchain**. On Linux or macOS, download the insta
 to a file, inspect it, then run it:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/dominikbb/looster/main/scripts/install.sh -o install-looster.sh
+curl -fsSL https://raw.githubusercontent.com/api-mittens/looster/master/scripts/install.sh -o install-looster.sh
 # Review install-looster.sh before running it.
 sh install-looster.sh
 export PATH="$HOME/.local/bin:$PATH"
@@ -77,7 +78,7 @@ looster --help
 The installer detects your platform, verifies the release archive's SHA-256
 checksum, and installs to `~/.local/bin` without root. Set `LOOSTER_VERSION` to a **v-prefixed**
 release tag such as `v0.1.0`, `LOOSTER_INSTALL_DIR` to change the destination, or
-`LOOSTER_REPO` to override `dominikbb/looster`. Omit the version for the latest
+`LOOSTER_REPO` to override `api-mittens/looster`. Omit the version for the latest
 release. See [installation](docs/installation.md) for manual downloads and source
 builds using the Go version declared in `go.mod`.
 
@@ -88,7 +89,7 @@ PostgreSQL and S3-compatible infrastructure. Clone the repository (or use an
 existing checkout), then start the local services:
 
 ```sh
-git clone https://github.com/dominikbb/looster.git
+git clone https://github.com/api-mittens/looster.git
 cd looster
 docker compose up -d --wait
 cp config.example.toml config.toml

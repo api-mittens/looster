@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/dominikbb/looster/internal/app"
+	"github.com/api-mittens/looster/internal/app"
 )
 
 func TestNamespaceSubprocessIdentityCannotBeInheritedOrOverridden(t *testing.T) {

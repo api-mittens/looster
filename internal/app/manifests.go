@@ -2,7 +2,7 @@ package app
 
 import (
 	"context"
-	"github.com/dominikbb/looster/internal/behaviour"
+	"github.com/api-mittens/looster/internal/behaviour"
 )
 
 // ManifestRepository is an optional versioned configuration port.

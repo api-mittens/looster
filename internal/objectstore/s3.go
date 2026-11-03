@@ -10,7 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
-	"github.com/dominikbb/looster/internal/app"
+	"github.com/api-mittens/looster/internal/app"
 )
 
 type S3 struct {
