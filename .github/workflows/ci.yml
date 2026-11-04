@@ -2,13 +2,19 @@ name: Test and release
 
 on:
   push:
-    branches: ['**']
+    # Feature branches are tested by pull_request, not a second push run.
+    branches: [master]
     tags: ['v*']
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  # Only superseded PR runs are disposable. Never interrupt a tagged release.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
