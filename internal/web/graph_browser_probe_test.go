@@ -93,6 +93,7 @@ try {
   standalone.querySelector('button').focus();const selected=board.selected;
   board.data.sessions.find(s=>s.job_id===101).session_id='assigned-later';board.render();
   check(board.selected===selected&&document.activeElement.closest('task-card').dataset.jobId==='101','stable job identity retains focus after session assignment');
+  check(other().querySelector('task-card')===standalone&&document.activeElement===standalone.querySelector('button'),'background refresh retains the exact standalone card and focused button nodes');
   check(new Set([...other().querySelectorAll('task-card')].map(c=>c.dataset.key)).size===3,'concurrent runs have unique card keys');
   board.page='graph';board.render();
   check(graph.querySelector('[data-key="agent:solo"]')&&!graph.graph.edges.some(e=>e.target==='agent:solo'),'taskless graph agent is disconnected');
