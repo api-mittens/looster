@@ -3,11 +3,11 @@ package web
 // Behavioral probes execute only through their Go test entrypoints.
 const namespaceProbe = `import {behavioursHTML,ruleLabel} from './static/views.mjs';
 import {layout} from './static/workflow.mjs';
-import {sortTasksByLatestActivity,taskCardHTML} from './static/board.mjs';
+import {sortTasksByLatestActivity,taskCardHTML,isTasklessSession,boardAgentNames,activeTasklessSessions,sessionCardHTML} from './static/board.mjs';
 
 function boardHarness(fetch, globals={}) {
   const classes = new Map();
-  const context = vm.createContext({HTMLElement:class {},customElements:{define:(name,type) => classes.set(name,type)},URL,AbortController,DOMException,location:{origin:'http://localhost'},fetch,queueMicrotask,...globals});
+  const context = vm.createContext({isTasklessSession,boardAgentNames,activeTasklessSessions,sessionCardHTML,HTMLElement:class {},customElements:{define:(name,type) => classes.set(name,type)},URL,AbortController,DOMException,location:{origin:'http://localhost'},fetch,queueMicrotask,...globals});
   vm.runInContext(readFileSync(new URL('./static/app.js','file:./probe'),'utf8').replace(/^import .*;\n/gm,''),context);
   const board = new (classes.get('looster-board'))();
   Object.assign(board,{namespace:'alpha',generation:0,controller:new AbortController()});
@@ -19,7 +19,7 @@ test('list defaults hide stages and offline agents with independent reversible c
   const control=s=>{if(!controls.has(s)) controls.set(s,{setAttribute(k,v){this[k]=v;}});return controls.get(s);};
   // This probe asserts generated visibility markup, not DOM reconciliation.
   // Real keyed identity/focus behavior is exercised by the browser fixtures.
-  const patchHTML=(_root,html)=>{sections.length=0;sections.push(...(html.match(/<section\b[\s\S]*?<\/section>/g)||[]).map(html=>({html})));};
+  const patchHTML=(_root,html)=>{sections.length=0;sections.push(...(html.match(/<section\b[\s\S]*?<\/section>/g)||[]).filter(html=>!html.includes('data-refresh-key="other-sessions"')).map(html=>({html})));};
   const document={activeElement:{}};
   const board=boardHarness(async()=>{}, {document,patchHTML,sortTasksByLatestActivity,taskCardHTML});
   Object.assign(board,{page:'board',search:{value:''},data:{tasks:[],agents:[{name:'live'},{name:'offline'}],sessions:[{agent:'historical',status:'done'}]},status:{workers:[{agents:['live']}]},board:{contains:()=>false,replaceChildren(){sections.length=0;},append(s){sections.push(s);},querySelectorAll:()=>[],querySelector:()=>null}});
@@ -41,7 +41,7 @@ test('list defaults hide stages and offline agents with independent reversible c
 test('every stage and agent column preserves latest activity order after filtering and refresh',()=>{
   const sections=[];
   const document={activeElement:{}};
-  const patchHTML=(_root,html)=>{sections.length=0;sections.push(...(html.match(/<section\b[\s\S]*?<\/section>/g)||[]).map(html=>({html,rows:[...html.matchAll(/<task-card data-id="(\d+)"/g)].map(match=>Number(match[1]))})));};
+  const patchHTML=(_root,html)=>{sections.length=0;sections.push(...(html.match(/<section\b[\s\S]*?<\/section>/g)||[]).filter(html=>!html.includes('data-refresh-key="other-sessions"')).map(html=>({html,rows:[...html.matchAll(/<task-card data-id="(\d+)"/g)].map(match=>Number(match[1]))})));};
   const board=boardHarness(async()=>{}, {document,patchHTML,sortTasksByLatestActivity,taskCardHTML});
   const tasks=[];
   for(const [index,status] of ['planning','todo','validated','closed'].entries()) {
@@ -194,6 +194,14 @@ test('graph tag selection supports any-match, none, search and unavailable tags 
   board.search.value='Alpha';board.renderPage();assert.equal(graph.data.tasks.length,1);assert.equal(graph.data.tagOptions.length,2);
   board.search.value='';board.graphTags=[];board.renderPage();assert.equal(graph.data.tasks.length,4);
   board.graphTags=['removed'];board.renderPage();assert.equal(graph.data.tasks.length,0);assert.ok(graph.data.tagOptions.includes('removed'));
+});
+
+test('graph page retains active taskless sessions through combined filters',()=>{
+ const board=boardHarness(async()=>{}),graph={};
+ board.querySelector=s=>s==='#page'?{querySelector:()=>graph}:{};
+ Object.assign(board,{page:'graph',search:{value:'missing'},graphTags:['missing'],graphStatuses:[],data:{tasks:[{id:1,name:'Task',status:'todo'}],agents:[],sessions:[{task_id:0,job_id:1,agent:'solo',status:'running'},{task_id:0,job_id:2,agent:'solo',status:'running'},{task_id:0,job_id:3,agent:'ended',status:'idle'},{task_id:1,job_id:4,agent:'mixed',status:'running'}]}});
+ board.renderPage();assert.equal(graph.data.tasks.length,0);assert.deepEqual(Array.from(graph.data.sessions,s=>s.job_id),[1,2]);
+ board.data.sessions[0].status='idle';board.renderPage();assert.deepEqual(Array.from(graph.data.sessions,s=>s.job_id),[2]);
 });
 
 test('graph statuses combine with tags/search and persist on refresh including none selected',()=>{

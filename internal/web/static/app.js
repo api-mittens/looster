@@ -3,7 +3,7 @@ import {renderMarkdown} from './markdown.mjs';
 import {serversHTML,behavioursHTML,ruleLabel} from './views.mjs';
 import {appendOutput} from './output.mjs';
 import {searchItems} from './search.mjs';
-import {sortTasksByLatestActivity,taskCardHTML} from './board.mjs';
+import {sortTasksByLatestActivity,taskCardHTML,sessionCardHTML,boardAgentNames,activeTasklessSessions,isTasklessSession} from './board.mjs';
 import {attachmentsHTML,attachmentUploadHTML} from './attachments.mjs';
 import './workflow.js';
 import './task-graph.js';
@@ -11,8 +11,11 @@ const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const stages = ['planning','todo','validated','closed'];
 class TaskCard extends HTMLElement {
   set data({task:t,session:s}) {
-    this.dataset.id = t.id;
-    patchHTML(this,taskCardHTML(t,s));
+    if (t) this.dataset.id = t.id;
+    else delete this.dataset.id;
+    if (s?.job_id != null) this.dataset.jobId = s.job_id;
+    else delete this.dataset.jobId;
+    patchHTML(this,t ? taskCardHTML(t,s) : sessionCardHTML(s));
   }
 }
 customElements.define('task-card',TaskCard);
@@ -71,7 +74,7 @@ class LoosterBoard extends HTMLElement {
     this.querySelector('#close').onclick = () => this.dialog.close();
     this.querySelector('#help').onclick = () => this.showHelp();
     this.dialog.onclose = () => { this.detailID = null; if(this.page === 'board') this.focus(); else if(this.returnFocus?.isConnected) this.returnFocus.focus(); };
-    this.board.onclick = e => { const card = e.target.closest('task-card'); if (card) this.open(Number(card.dataset.id),card.dataset.key.startsWith('agent:') ? card.dataset.key.slice(6).split('/')[0] : ''); };
+    this.board.onclick = e => { const card = e.target.closest('task-card'); if (card?.dataset.id) this.open(Number(card.dataset.id),card.dataset.key.startsWith('agent:') ? card.dataset.key.slice(6).split('/')[0] : ''); };
     this.board.onpointerover = e => this.highlight(e.target.closest('task-card')?.dataset.id);
     this.board.onpointerleave = () => this.highlight(document.activeElement.closest('task-card')?.dataset.id);
     this.board.addEventListener('focusin',e => { const c = e.target.closest('task-card'); if (c) { this.selected = c.dataset.key; this.highlight(c.dataset.id); this.roving(c); } });
@@ -171,10 +174,11 @@ class LoosterBoard extends HTMLElement {
     if(other) { this.renderPage(); return; }
     const focused = this.board.contains(document.activeElement), q = this.search.value.toLowerCase().trim();
     const tasks = sortTasksByLatestActivity(this.data.tasks.filter(t => [t.name,t.description,t.status,`TSK-${t.id}`,...(t.tags || []),...this.data.sessions.filter(s => s.task_id === t.id).map(s => s.agent)].join(' ').toLowerCase().includes(q)));
-    const names = [...new Set([...this.data.agents.map(a => a.name),...this.data.sessions.map(s => s.agent)])].sort();
+    const names = boardAgentNames(this.data.agents,this.data.sessions);
     const cols = [...(this.stagesCollapsed ? [] : stages.map(s => ({key:s,label:s[0].toUpperCase()+s.slice(1),rows:tasks.filter(t => t.status === s).map(task => ({task}))}))),...names.map(n => ({key:'agent:'+n,label:'@ '+n,agent:true,online:(this.status?.workers || []).some(w => w.agents.includes(n)),rows:tasks.flatMap(task => this.data.sessions.filter(s => s.task_id === task.id && s.agent === n && s.status === 'running').map(session => ({task,session})))}))];
+    cols.push({key:'other-sessions',label:'Other sessions',rows:activeTasklessSessions(this.data.sessions).map(session => ({session}))});
     this.querySelector('#summary').textContent = `${tasks.length} tasks · ${this.data.sessions.filter(s => s.status === 'running').length} running`;
-    patchHTML(this.board,cols.filter(col => !col.agent || col.online || !this.offlineAgentsCollapsed).map(col => `<section data-refresh-key="${esc(col.key)}" class="column${col.agent ? ' agent' : ''}"><h2><span class="dot ${col.agent && !col.online ? 'offline' : ''}"></span>${esc(col.label)}${col.agent ? `<span class="muted">${col.online ? 'online' : 'offline'}</span>` : ''}<span class="count">${col.rows.length}</span></h2><div class="cards">${col.rows.map(row => `<task-card data-id="${esc(row.task.id)}" data-key="${esc(col.key+'/'+row.task.id)}">${taskCardHTML(row.task,row.session)}</task-card>`).join('') || '<div class="empty">No tasks here</div>'}</div></section>`).join(''));
+    patchHTML(this.board,cols.filter(col => !col.agent || col.online || !this.offlineAgentsCollapsed).map(col => `<section data-refresh-key="${esc(col.key)}" class="column${col.agent ? ' agent' : ''}"><h2><span class="dot ${col.agent && !col.online ? 'offline' : ''}"></span>${esc(col.label)}${col.agent ? `<span class="muted">${col.online ? 'online' : 'offline'}</span>` : ''}<span class="count">${col.rows.length}</span></h2><div class="cards">${col.rows.map(row => `<task-card ${row.task ? `data-id="${esc(row.task.id)}"` : ''}${row.session?.job_id != null ? ` data-job-id="${esc(row.session.job_id)}"` : ''} data-key="${esc(col.key+'/'+(row.session?.job_id != null ? 'job:'+row.session.job_id : row.task.id))}">${row.task ? taskCardHTML(row.task,row.session) : sessionCardHTML(row.session)}</task-card>`).join('') || '<div class="empty">No tasks here</div>'}</div></section>`).join(''));
     const cards = [...this.board.querySelectorAll('task-card')], current = cards.find(c => c.dataset.key === this.selected) || cards[0];
     this.selected = current?.dataset.key; this.roving(current); if (focused && !this.board.contains(document.activeElement)) current?.querySelector('button').focus({preventScroll:true}); this.highlight(this.board.querySelector('task-card:hover')?.dataset.id || (focused ? current?.dataset.id : null));
   }
@@ -319,7 +323,7 @@ class LoosterBoard extends HTMLElement {
       const tagOptions = [...new Set([...(this.data?.tasks || []).filter(t => selectedStatuses.includes(t.status)).flatMap(t => t.tags || []),...selectedTags])].sort();
       const tasks = (this.data?.tasks || []).filter(t => selectedStatuses.includes(t.status)).filter(t => !selectedTags.length || selectedTags.some(tag => (t.tags || []).includes(tag))).filter(t => [t.name,t.description,t.status,`TSK-${t.id}`,...(t.tags || []),...(this.data?.sessions || []).filter(s => s.task_id === t.id).map(s => s.agent)].join(' ').toLowerCase().includes(q));
       const taskIDs = new Set(tasks.map(t => t.id));
-      const sessions = (this.data?.sessions || []).filter(s => taskIDs.has(s.task_id));
+      const sessions = (this.data?.sessions || []).filter(s => taskIDs.has(s.task_id) || (isTasklessSession(s) && s.status === 'running'));
       graph.data = {tasks,tagOptions,selectedTags,selectedStatuses,agents:this.data?.agents || [],sessions,workers:this.status?.workers || []};
       this.querySelector('#summary').textContent = `${tasks.length} tasks · ${sessions.filter(s => s.status === 'running').length} running`;
       return;
@@ -352,7 +356,7 @@ class LoosterBoard extends HTMLElement {
     for(const t of this.library?.tags || []) items.push({key:`tag:${t.name}`,kind:'Tag',label:`# ${t.name}`,detail:t.description || '',search:`tag ${t.name} ${t.description || ''} ${(t.memories || []).map(m => m.body).join(' ')}`,open:() => { location.hash = 'system'; setTimeout(() => this.querySelector(`[data-tag="${CSS.escape(t.name)}"]`)?.scrollIntoView({block:'center'}),0); }});
     for(const r of (this.system?.behaviours || []).filter(r => !['prompt','agent','tag'].includes(r.trigger))) items.push({key:`workflow:${JSON.stringify([r.trigger,r.source || '',r.target,r.interval_seconds || 0,r.tag_pattern || '',Boolean(r.tag_negated)])}`,kind:'Workflow',label:ruleLabel(r),detail:r.prompt || '',search:`workflow ${ruleLabel(r)} ${r.trigger.startsWith('stop_') ? 'verified stop pinging' : ''} ${r.source || ''} ${r.prompt || ''}`,open:() => { location.hash = 'system'; setTimeout(() => this.querySelector('workflow-graph')?.scrollIntoView({block:'center'}),0); }});
     for(const w of this.status?.workers || []) items.push({key:`server:${w.id}`,kind:'Server',label:w.id,detail:(w.agents || []).join(', '),search:`server ${w.id} ${(w.agents || []).join(' ')}`,open:() => { location.hash = 'servers'; }});
-    for(const s of this.data?.sessions || []) items.push({key:`session:${s.task_id}:${s.agent}`,kind:'Session',label:`TSK-${s.task_id} · ${s.agent}`,detail:s.status,search:`session ${s.task_id} ${s.agent} ${s.status} ${s.session_id || ''}`,open:() => this.open(s.task_id,s.agent)});
+    for(const s of (this.data?.sessions || []).filter(s => !isTasklessSession(s))) items.push({key:`session:${s.task_id}:${s.agent}`,kind:'Session',label:`TSK-${s.task_id} · ${s.agent}`,detail:s.status,search:`session ${s.task_id} ${s.agent} ${s.status} ${s.session_id || ''}`,open:() => this.open(s.task_id,s.agent)});
     items.unshift({key:'action:create',kind:'Action',label:'Create task',detail:'Add a new task',search:'new create add task',open:() => this.openCreate('task')});
     return items;
   }

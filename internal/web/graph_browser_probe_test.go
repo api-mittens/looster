@@ -13,9 +13,9 @@ try {
   clearInterval(board.timer);
   const graph=board.querySelector('task-agent-graph');
   await wait(()=>graph.simulation);
-  // This dump-DOM fixture runs under Chromium's virtual clock, which does not
-  // guarantee animation frames. Autonomous motion is checked separately by the
-  // real production CDP workflow, without virtual time or mocked API responses.
+  // Settle this fixture explicitly for deterministic relationship assertions.
+  // Autonomous motion is checked separately by the real production CDP
+  // workflow, without mocked API responses.
   check(!!graph.simulation,'D3 simulation initializes');
   graph.settle();
   check(graph.querySelectorAll('.tg-task').length===4,'unfinished tasks render');
@@ -82,6 +82,29 @@ try {
   check(graph.positions.get('task:1').x===anchor.x && graph.positions.get('task:1').y===anchor.y,'drag anchor survives weighted reflow');
   board.data.tasks.find(t=>t.id===5).status='validated';board.render();
   check(!graph.querySelector('[data-key="task:5"]') && !graph.graph.edges.some(e=>e.source==='task:5'),'completed task and links disappear on refresh');
+  board.data.sessions.push({task_id:0,job_id:101,agent:'solo',status:'running'},{task_id:0,job_id:102,agent:'solo',status:'running'},{task_id:0,job_id:103,agent:'coder',status:'running'},{task_id:0,job_id:104,agent:'finished',status:'idle'});
+  board.page='board';board.render();
+  const other=()=>board.board.lastElementChild;
+  check(other().querySelector('h2').textContent.includes('Other sessions')&&other().querySelectorAll('task-card').length===3,'far right Other sessions contains concurrent active runs only');
+  check(![...board.board.querySelectorAll('.column h2')].some(h=>h.textContent.includes('@ solo'))&&[...board.board.querySelectorAll('.column h2')].some(h=>h.textContent.includes('@ coder')),'standalone columns hidden while mixed coder remains');
+  const standalone=other().querySelector('task-card');
+  check(!standalone.dataset.id&&!standalone.textContent.includes('TSK-'),'standalone card has no fake task identity');
+  standalone.querySelector('button').click();check(!board.dialog.open,'standalone card does not navigate to task');
+  standalone.querySelector('button').focus();const selected=board.selected;
+  board.data.sessions.find(s=>s.job_id===101).session_id='assigned-later';board.render();
+  check(board.selected===selected&&document.activeElement.closest('task-card').dataset.jobId==='101','stable job identity retains focus after session assignment');
+  check(other().querySelector('task-card')===standalone&&document.activeElement===standalone.querySelector('button'),'background refresh retains the exact standalone card and focused button nodes');
+  check(new Set([...other().querySelectorAll('task-card')].map(c=>c.dataset.key)).size===3,'concurrent runs have unique card keys');
+  board.page='graph';board.render();
+  check(graph.querySelector('[data-key="agent:solo"]')&&!graph.graph.edges.some(e=>e.target==='agent:solo'),'taskless graph agent is disconnected');
+  check(graph.graph.edges.some(e=>e.target==='agent:coder'),'mixed-use task links preserved');
+  board.search.value='no matching task';board.graphTags=['missing'];board.graphStatuses=[];board.render();
+  check(!graph.querySelector('.tg-task')&&graph.querySelector('[data-key="agent:solo"]')&&graph.querySelector('[data-key="agent:coder"]')&&!graph.querySelector('.tg-edge'),'active taskless agents survive combined search status and tag filters');
+  board.data.agents.push({name:'solo',taskless_only:true});
+  board.data.sessions=board.data.sessions.filter(s=>s.agent!=='solo');board.page='board';board.render();
+  check(![...board.board.querySelectorAll('.column h2')].some(h=>h.textContent.includes('@ solo'))&&!other().textContent.includes('solo'),'completed taskless runs omitted by API do not restore ordinary agent column');
+  board.page='graph';board.render();
+  board.search.value='';board.graphTags=[];board.graphStatuses=['planning','todo'];
   board.switchNamespace('beta');await wait(()=>board.data?.tasks?.[0]?.name==='Beta only');
   const next=board.querySelector('task-agent-graph');
   check(next!==graph && !graph.isConnected,'namespace destroys prior graph');

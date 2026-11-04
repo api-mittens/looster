@@ -206,7 +206,16 @@ func (s *Store) RemoveTag(ctx context.Context, name string) error {
 	return errors.New("remove TAG declarations by applying a complete behaviour manifest; legacy task tags are retained")
 }
 func (s *Store) Agents(ctx context.Context) ([]agent.Agent, error) {
-	rows, e := s.Pool.Query(ctx, `SELECT name,description FROM agents ORDER BY name`)
+	// Use durable jobs and manifest roles rather than active sessions, so a
+	// standalone-only agent does not gain an empty task column when a run ends.
+	// Deleted-task notifications retain context_task_id and are task evidence.
+	rows, e := s.Pool.Query(ctx, `SELECT a.name,a.description,
+ (EXISTS(SELECT FROM jobs j WHERE j.agent_name=a.name AND j.task_id IS NULL AND j.context_task_id IS NULL)
+  OR EXISTS(SELECT FROM rules r WHERE r.target=a.name AND r.trigger='every'))
+ AND NOT EXISTS(SELECT FROM sessions s WHERE s.agent_name=a.name)
+ AND NOT EXISTS(SELECT FROM jobs j WHERE j.agent_name=a.name AND (j.task_id IS NOT NULL OR j.context_task_id IS NOT NULL))
+ AND NOT EXISTS(SELECT FROM rules r WHERE r.trigger<>'every' AND (r.target=a.name OR r.source=a.name))
+ FROM agents a ORDER BY a.name`)
 	if e != nil {
 		return nil, e
 	}
@@ -214,7 +223,7 @@ func (s *Store) Agents(ctx context.Context) ([]agent.Agent, error) {
 	out := []agent.Agent{}
 	for rows.Next() {
 		var r agent.Agent
-		if e = rows.Scan(&r.Name, &r.Description); e != nil {
+		if e = rows.Scan(&r.Name, &r.Description, &r.TasklessOnly); e != nil {
 			return nil, e
 		}
 		out = append(out, r)
@@ -315,24 +324,34 @@ func (s *Store) RemoveMemory(ctx context.Context, kind, name string, id int64) e
 	return affected(s.Pool.Exec(ctx, `DELETE FROM memories WHERE `+where+` AND id=$2`, name, id))
 }
 func (s *Store) Sessions(ctx context.Context, name string) ([]agent.Session, error) {
-	// Stored session state survives process crashes. A running session is active
-	// only while a live worker covers its agent and the task/agent lease is held.
-	query := `SELECT s.task_id,s.agent_name,s.session_id,
+	// Stored task sessions survive process crashes. Taskless runs instead use
+	// their durable job identity and disappear when processing finishes. Match
+	// Claim's lock identity, including notification jobs with a context task.
+	query := `WITH candidates AS (
+ SELECT s.task_id,0::bigint AS job_id,s.agent_name,s.session_id,s.status,
+ 'looster:session:'||s.task_id||':'||s.agent_name AS lock_key FROM sessions s
+ UNION ALL
+ SELECT 0,j.id,j.agent_name,j.session_id,'running',
+ CASE WHEN j.context_task_id IS NOT NULL AND j.context_task_id>0
+ THEN 'looster:session:'||j.context_task_id||':'||j.agent_name
+ ELSE 'looster:job:'||j.id END
+ FROM jobs j WHERE j.task_id IS NULL AND j.state IN ('running','archiving')
+ ) SELECT s.task_id,s.job_id,s.agent_name,s.session_id,
  CASE WHEN s.status <> 'running' THEN s.status
  WHEN NOT EXISTS (SELECT FROM workers w WHERE w.last_seen>now()-interval '30 seconds' AND s.agent_name=ANY(w.agents)) THEN 'orphaned'
  WHEN NOT EXISTS (SELECT FROM pg_locks l WHERE l.locktype='advisory' AND l.granted
  AND l.database=(SELECT oid FROM pg_database WHERE datname=current_database())
- AND l.classid=((hashtextextended((CASE WHEN current_schema()='public' THEN '' ELSE current_schema()||':' END)||'looster:session:'||s.task_id||':'||s.agent_name,0)>>32)&4294967295)::oid
- AND l.objid=(hashtextextended((CASE WHEN current_schema()='public' THEN '' ELSE current_schema()||':' END)||'looster:session:'||s.task_id||':'||s.agent_name,0)&4294967295)::oid
+ AND l.classid=((hashtextextended((CASE WHEN current_schema()='public' THEN '' ELSE current_schema()||':' END)||s.lock_key,0)>>32)&4294967295)::oid
+ AND l.objid=(hashtextextended((CASE WHEN current_schema()='public' THEN '' ELSE current_schema()||':' END)||s.lock_key,0)&4294967295)::oid
  AND l.objsubid=1) THEN 'interrupted'
  ELSE 'running' END
- FROM sessions s`
+ FROM candidates s`
 	var args []any
 	if name != "" {
 		query += ` WHERE s.agent_name=$1`
 		args = append(args, name)
 	}
-	query += ` ORDER BY s.task_id,s.agent_name`
+	query += ` ORDER BY s.task_id,s.agent_name,s.job_id`
 	rows, e := s.Pool.Query(ctx, query, args...)
 	if e != nil {
 		return nil, e
@@ -341,7 +360,7 @@ func (s *Store) Sessions(ctx context.Context, name string) ([]agent.Session, err
 	out := []agent.Session{}
 	for rows.Next() {
 		var r agent.Session
-		if e = rows.Scan(&r.TaskID, &r.Agent, &r.SessionID, &r.Status); e != nil {
+		if e = rows.Scan(&r.TaskID, &r.JobID, &r.Agent, &r.SessionID, &r.Status); e != nil {
 			return nil, e
 		}
 		out = append(out, r)

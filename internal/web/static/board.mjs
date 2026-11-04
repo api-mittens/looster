@@ -1,5 +1,16 @@
 const esc = v => String(v ?? '').replace(/[&<>"']/g,c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
+export const isTasklessSession = s => s.task_id === 0;
+export const activeTasklessSessions = sessions => sessions.filter(s => isTasklessSession(s) && s.status === 'running');
+export function boardAgentNames(agents, sessions) {
+  const standalone = new Set([...agents.filter(a => a.taskless_only).map(a => a.name), ...sessions.filter(isTasklessSession).map(s => s.agent)]);
+  const taskAgents = new Set(sessions.filter(s => !isTasklessSession(s)).map(s => s.agent));
+  return [...new Set([...agents.map(a => a.name), ...sessions.map(s => s.agent)])].filter(n => n && (!standalone.has(n) || taskAgents.has(n))).sort();
+}
+export function sessionCardHTML(s) {
+  return `<button tabindex="-1" type="button"><div class="card-top"><span class="ref">Other session</span></div><h3>${esc(s.agent)}</h3><div class="badges"><span class="badge running">${esc(s.status)}</span></div><code>${esc(s.session_id || s.job_id)}</code></button>`;
+}
+
 // Fall back to creation when activity is unavailable, and put undated tasks last.
 // Keep the existing ID order as a deterministic tie-breaker.
 const timestamp = value => typeof value === 'string' && value.trim() ? Date.parse(value) : NaN;

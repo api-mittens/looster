@@ -4,7 +4,24 @@ package web
 const outputProbe = `import {appendOutput} from './static/output.mjs';
 import {layout} from './static/workflow.mjs';
 import {behavioursHTML,serversHTML,ruleLabel} from './static/views.mjs';
-import {sortTasksByLatestActivity,taskCardHTML} from './static/board.mjs';
+import {sortTasksByLatestActivity,taskCardHTML,activeTasklessSessions,boardAgentNames,sessionCardHTML} from './static/board.mjs';
+
+test('taskless board sessions stay active only and mixed agents keep regular columns',()=>{
+ const sessions=[{task_id:0,job_id:10,agent:'solo',status:'running'},{task_id:0,job_id:11,agent:'solo',status:'running'},{task_id:0,job_id:12,agent:'mixed',status:'running'},{task_id:0,job_id:13,agent:'ended',status:'idle'},{task_id:1,job_id:14,agent:'mixed',status:'idle'}];
+ assert.deepEqual(activeTasklessSessions(sessions).map(s=>s.job_id),[10,11,12]);
+ assert.deepEqual(boardAgentNames([{name:'solo'},{name:'mixed'},{name:'unused'}],sessions),['mixed','unused']);
+ const html=sessionCardHTML({...sessions[0],agent:'<solo>'});
+ assert.ok(html.includes('&lt;solo&gt;'));assert.ok(!html.includes('TSK-'));assert.ok(!html.includes('data-task'));
+});
+
+test('completed taskless jobs do not restore empty agent columns',()=>{
+ const agents=[{name:'solo',taskless_only:true},{name:'mixed',taskless_only:false},{name:'unused'}];
+ const running=[{task_id:0,job_id:1,agent:'solo',status:'running'}];
+ assert.deepEqual(boardAgentNames(agents,running),['mixed','unused']);
+ assert.deepEqual(boardAgentNames(agents,[]),['mixed','unused']);
+ assert.deepEqual(boardAgentNames(agents,[{task_id:1,agent:'solo',status:'idle'}]),['mixed','solo','unused']);
+ assert.equal(activeTasklessSessions([]).length,0);
+});
 
 test('board cards preserve activity counts and escaping',() => {
   const tasks=[{id:3,name:'Third',status:'todo',status_changes:2,comment_count:4},{id:2,name:'Second',status:'todo',status_changes:4,comment_count:1},{id:1,name:'<First>',status:'todo',status_changes:2,comment_count:0}];
