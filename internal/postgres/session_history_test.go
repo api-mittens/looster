@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/api-mittens/looster/internal/agent"
 	"github.com/api-mittens/looster/internal/app"
 	"github.com/api-mittens/looster/internal/task"
 )
@@ -99,6 +100,49 @@ func TestSessionHistoryCompletionAndArchiveResume(t *testing.T) {
 	}
 }
 
+func TestSessionHistoryRetainsDistinctSuccessiveTasklessSummaries(t *testing.T) {
+	ctx, s := queuePerformanceStore(t)
+	summaries := []string{"first scheduled result", "second scheduled result"}
+	var ids []int64
+	for _, summary := range summaries {
+		id := queuePerformanceJob(t, ctx, s, nil, nil, "queue_test", "pending", nil)
+		ids = append(ids, id)
+		l := historyClaim(t, ctx, s)
+		if l.Job().ID != id {
+			t.Fatalf("claimed job %d, want %d", l.Job().ID, id)
+		}
+		if err := l.Started(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := l.Capture(ctx, app.Output{SessionID: "shared-scheduled-session", Text: `{"type":"done","text":"` + summary + `"}`}); err != nil {
+			t.Fatal(err)
+		}
+		if err := l.Archive(ctx, app.Result{SessionID: "shared-scheduled-session"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := l.Complete(ctx); err != nil {
+			t.Fatal(err)
+		}
+		l.Close()
+	}
+	runs, err := s.SessionHistory(ctx, "queue_test", 0, 0, 10)
+	if err != nil || len(runs) != 2 {
+		t.Fatalf("retained history=%+v err=%v", runs, err)
+	}
+	for i, id := range ids {
+		listed := runs[len(runs)-1-i]
+		detail, err := s.SessionRun(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, run := range []agent.SessionRun{listed, detail} {
+			if run.JobID != id || run.Summary != summaries[i] || run.SummaryStatus != "available" || run.Outcome != "done" || run.SessionID != "shared-scheduled-session" || run.TaskID != 0 || run.ContextTaskID != 0 {
+				t.Fatalf("job %d lost its distinct taskless summary: %+v", id, run)
+			}
+		}
+	}
+}
+
 func TestSessionHistoryFailureInterruptionAndDeletion(t *testing.T) {
 	ctx, s := queuePerformanceStore(t)
 	for _, tc := range []struct {
@@ -107,6 +151,7 @@ func TestSessionHistoryFailureInterruptionAndDeletion(t *testing.T) {
 		want  string
 	}{
 		{"failed", errors.New("harness failed"), "failed"},
+		{"deadline exceeded", context.DeadlineExceeded, "failed"},
 		{"closed", app.ErrTaskClosed, "interrupted"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -125,6 +170,10 @@ func TestSessionHistoryFailureInterruptionAndDeletion(t *testing.T) {
 			r, err := s.SessionRun(ctx, id)
 			if err != nil || r.Outcome != tc.want || r.SummaryStatus != tc.want || r.Error != tc.cause.Error() || r.SessionID != "failure-session" || r.ContextTaskID != 123 {
 				t.Fatalf("run=%+v err=%v", r, err)
+			}
+			var state string
+			if err := s.Pool.QueryRow(ctx, `SELECT state FROM jobs WHERE id=$1`, id).Scan(&state); err != nil || state != "failed" {
+				t.Fatalf("terminal job state=%q err=%v", state, err)
 			}
 		})
 	}
