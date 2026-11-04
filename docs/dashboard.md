@@ -60,8 +60,12 @@ changes the namespace and clears the prior view.
 ## Reading the graph
 
 Only unfinished tasks (`planning` and `todo`) and their actual session links
-appear. Completed tasks (`validated` and `closed`) are excluded. Only agents
-linked to visible tasks appear. Links represent actual task sessions, not planned
+appear by default. Completed tasks (`validated` and `closed`) are excluded unless
+selected in the status controls. Agents linked to visible tasks appear, alongside
+agents with active taskless sessions as disconnected nodes. A mixed-use agent
+keeps its legitimate task links. Taskless sessions remain visible when task search,
+tag, or status filters exclude all tasks, and disappear when no longer active.
+Links represent actual task sessions, not planned
 behaviour rules. Animated links indicate current work; quiet links indicate prior
 or idle sessions. Agent online status comes from live worker coverage, independent
 of whether the agent is working on a particular task.
@@ -79,7 +83,19 @@ The graph has +/− zoom buttons and a heatmap toggle. The **Tags** dropdown acc
 multiple tags, matching any selected tag. With no selection it shows all
 unfinished tasks, including untagged ones. Tag filters combine with search,
 survive polling in the current client, and reset on reload or namespace switch.
-Filtered tasks lose their links, and unrelated agents disappear too.
+Filtered tasks lose their links, and unrelated agents disappear too, except for
+agents with active taskless sessions.
+
+## Other sessions in List
+
+The far-right **Other sessions** column shows running sessions without a task
+assignment, including scheduled and monitoring agents. Concurrent runs have
+separate cards identified by their durable job IDs, even before a harness session
+ID is assigned. These cards do not open task details or invent task references.
+Standalone-only agents are omitted from ordinary agent columns, while mixed-use
+agents retain their task-bound sessions. Completed, interrupted, and stale-worker
+runs are not shown as active cards. Liveness requires both live worker coverage
+and the run's advisory lease.
 
 Heat means comment count plus state-change count, not errors or task health.
 Heatmap activity does not invent relationships or change their link weights.
