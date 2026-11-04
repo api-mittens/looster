@@ -192,6 +192,24 @@ func dashboardHandler(repo Repository, objects app.Objects, selected string) htt
 		}
 		write(w, map[string]any{"workers": workers, "agents": agents, "sessions": sessions, "heartbeat_window_seconds": 30}, nil)
 	})
+	mux.HandleFunc("POST /api/behaviours/{id}/run", func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || id <= 0 {
+			http.Error(w, "Invalid rule ID", http.StatusBadRequest)
+			return
+		}
+		var input struct{}
+		if !decode(w, r, &input) {
+			return
+		}
+		schedules, ok := repo.(app.ManualScheduleRepository)
+		if !ok {
+			http.Error(w, "Manual schedule runs unavailable", http.StatusNotImplemented)
+			return
+		}
+		result, err := schedules.RunSchedule(r.Context(), id)
+		write(w, result, err)
+	})
 	mux.HandleFunc("GET /api/system", func(w http.ResponseWriter, r *http.Request) {
 		rules, err := repo.Behaviour(r.Context())
 		if err != nil {

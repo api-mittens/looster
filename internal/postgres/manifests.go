@@ -134,7 +134,16 @@ func (s *Store) Behaviour(ctx context.Context) ([]behaviour.Rule, error) {
 	out := []behaviour.Rule{}
 	err := s.withTx(ctx, func(tx pgx.Tx) error {
 		var data []byte
-		err := tx.QueryRow(ctx, `SELECT m.rules FROM behaviour_manifests m JOIN behaviour_manifest_state s ON s.active_id=m.id WHERE s.singleton`).Scan(&data)
+		err := tx.QueryRow(ctx, `SELECT coalesce(jsonb_agg(d.value || CASE WHEN r.id IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('id',r.id) END ORDER BY d.ordinality),'[]'::jsonb)
+ FROM behaviour_manifests m JOIN behaviour_manifest_state s ON s.active_id=m.id
+ CROSS JOIN LATERAL jsonb_array_elements(m.rules) WITH ORDINALITY d(value,ordinality)
+ LEFT JOIN rules r ON r.trigger=d.value->>'trigger' AND r.target=d.value->>'target'
+ AND r.source IS NOT DISTINCT FROM nullif(d.value->>'source','')
+ AND r.interval_seconds=coalesce((d.value->>'interval_seconds')::bigint,0)
+ AND r.prompt=coalesce(d.value->>'prompt','')
+ AND r.tag_pattern=coalesce(d.value->>'tag_pattern','')
+ AND r.tag_negated=coalesce((d.value->>'tag_negated')::boolean,false)
+ WHERE s.singleton`).Scan(&data)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}

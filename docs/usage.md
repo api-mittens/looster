@@ -446,6 +446,35 @@ task-bound sessions; standalone runs are tracked in the job/event log.
 Changing or removing a rule stops future ticks but leaves existing jobs and
 history intact. Reapplying unchanged rules keeps their next due time.
 
+### Manual agent pings
+
+Mention an exact, case-sensitive registered agent name in a dashboard or CLI
+comment to queue work:
+
+```sh
+printf 'Please @coder review this with @reviewer.\n' | looster task comment TSK-1
+```
+
+Only human comments trigger manual pings. Unknown names are ignored, repeated
+mentions queue one job per agent per comment, and email addresses are not
+mentions. Existing task sessions are reused without a second notification for
+that comment. Closed tasks and applicable `STOP PINGING` rules block manual pings.
+
+The Behaviour page gives each active `EVERY` rule its own **Run now** button and
+rule ID. CLI users can discover the same active IDs and run a particular rule:
+
+```sh
+looster behaviour rules
+looster behaviour run 42
+```
+
+These operations are human-only and namespace-scoped. Results distinguish
+`queued` from `already_active` when the rule has a pending, running, or archiving
+job. Manual runs use the configured prompt and standalone queue without changing
+the next scheduled time or creating a manifest version. IDs remain stable while
+definitions are unchanged. Use IDs from the current namespace's active rules,
+not immutable manifest history or another namespace.
+
 Each agent/task pair has one harness session. Jcode runs headlessly with
 `--ndjson`, and an existing ID is passed with `--resume`. Workdirs are named
 `AGENT-TSK-n`. Stream events are appended to the task log, and the full saved Jcode
