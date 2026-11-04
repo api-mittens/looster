@@ -103,7 +103,7 @@ func TestMarkdownBrowser(t *testing.T) {
 	}
 	for _, mode := range []string{"dark", "light"} {
 		t.Run(mode, func(t *testing.T) {
-			if err := chromedp.Run(tab, emulation.SetEmulatedMedia().WithFeatures([]*emulation.MediaFeature{{Name: "prefers-color-scheme", Value: mode}}), emulation.SetDeviceMetricsOverride(375, 900, 1, false), chromedp.Navigate(server.URL+"/#board"), chromedp.WaitVisible("task-card"), chromedp.Click(`task-card[data-id="1"]`), chromedp.WaitVisible("#task-description h1"), chromedp.WaitVisible("#task-comments h2")); err != nil {
+			if err := chromedp.Run(tab, emulation.SetEmulatedMedia().WithFeatures([]*emulation.MediaFeature{{Name: "prefers-color-scheme", Value: mode}}), emulation.SetDeviceMetricsOverride(375, 900, 1, false), chromedp.Navigate(server.URL+"/?theme="+mode+"#board"), chromedp.Click("#toggle-stages"), chromedp.WaitVisible("task-card"), chromedp.Click(`task-card[data-id="1"]`), chromedp.WaitVisible("#task-description h1"), chromedp.WaitVisible("#task-comments h2")); err != nil {
 				t.Fatal(err)
 			}
 			evaluateTrue(t, `matchMedia('(prefers-color-scheme: dark)').matches===`+strconv.FormatBool(mode == "dark"))
@@ -128,7 +128,7 @@ func TestMarkdownBrowser(t *testing.T) {
 	if gotPosted != submitted {
 		t.Fatalf("comment source changed: got %q want %q", gotPosted, submitted)
 	}
-	if err := chromedp.Run(tab, chromedp.Reload(), chromedp.WaitVisible("task-card"), chromedp.Click(`task-card[data-id="1"]`), chromedp.WaitVisible("#task-comments article:nth-child(2) h2")); err != nil {
+	if err := chromedp.Run(tab, chromedp.Reload(), chromedp.Click("#toggle-stages"), chromedp.WaitVisible("task-card"), chromedp.Click(`task-card[data-id="1"]`), chromedp.WaitVisible("#task-comments article:nth-child(2) h2")); err != nil {
 		t.Fatal(err)
 	}
 	evaluateTrue(t, `document.querySelectorAll('#task-comments article').length===2 && document.querySelector('#task-comments article:first-child h2').textContent==='Existing comment' && document.querySelector('#task-comments article:last-child code').textContent.includes('<not-html>')`)
