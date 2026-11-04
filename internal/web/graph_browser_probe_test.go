@@ -89,7 +89,17 @@ try {
   check(![...board.board.querySelectorAll('.column h2')].some(h=>h.textContent.includes('@ solo'))&&[...board.board.querySelectorAll('.column h2')].some(h=>h.textContent.includes('@ coder')),'standalone columns hidden while mixed coder remains');
   const standalone=other().querySelector('task-card');
   check(!standalone.dataset.id&&!standalone.textContent.includes('TSK-'),'standalone card has no fake task identity');
-  standalone.querySelector('button').click();check(!board.dialog.open,'standalone card does not navigate to task');
+  standalone.querySelector('button').click();
+  await wait(()=>board.panel.querySelector('#selected-run')?.textContent.includes('Run summary <safe>'));
+  check(board.dialog.open && board.querySelector('#dialog-title').textContent==='@ solo','standalone card opens shared agent inspector without task');
+  check(board.panel.textContent.includes('success')&&board.panel.textContent.includes('session-101')&&board.panel.textContent.includes('No task'),'selected run shows outcome session and taskless state');
+  board.panel.querySelector('[data-run-before="101"]').click();
+  await wait(()=>board.panel.querySelector('[data-run="81"]'));
+  check(!!board.panel.querySelector('[data-run-previous]'),'history paginates in shared inspector');
+  board.panel.querySelector('[data-run-previous]').click();
+  await wait(()=>board.panel.querySelector('[data-run="101"]'));
+  board.dialog.close();
+  await new Promise(r=>setTimeout(r,0));
   standalone.querySelector('button').focus();const selected=board.selected;
   board.data.sessions.find(s=>s.job_id===101).session_id='assigned-later';board.render();
   check(board.selected===selected&&document.activeElement.closest('task-card').dataset.jobId==='101','stable job identity retains focus after session assignment');

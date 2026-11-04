@@ -144,6 +144,7 @@ func dashboardHandler(repo Repository, objects app.Objects, selected string) htt
 		}
 		_ = json.NewEncoder(w).Encode(data)
 	}
+	registerAgentRuns(mux, repo, write)
 	mux.HandleFunc("GET /api/manifests", func(w http.ResponseWriter, r *http.Request) {
 		manifests, ok := repo.(app.ManifestRepository)
 		if !ok {
