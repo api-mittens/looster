@@ -14,6 +14,15 @@ test('taskless board sessions stay active only and mixed agents keep regular col
  assert.ok(html.includes('&lt;solo&gt;'));assert.ok(!html.includes('TSK-'));assert.ok(!html.includes('data-task'));
 });
 
+test('completed taskless jobs do not restore empty agent columns',()=>{
+ const agents=[{name:'solo',taskless_only:true},{name:'mixed',taskless_only:false},{name:'unused'}];
+ const running=[{task_id:0,job_id:1,agent:'solo',status:'running'}];
+ assert.deepEqual(boardAgentNames(agents,running),['mixed','unused']);
+ assert.deepEqual(boardAgentNames(agents,[]),['mixed','unused']);
+ assert.deepEqual(boardAgentNames(agents,[{task_id:1,agent:'solo',status:'idle'}]),['mixed','solo','unused']);
+ assert.equal(activeTasklessSessions([]).length,0);
+});
+
 test('board cards show activity counts and sort by status changes',() => {
   const tasks=[{id:3,name:'Third',status:'todo',status_changes:2,comment_count:4},{id:2,name:'Second',status:'todo',status_changes:4,comment_count:1},{id:1,name:'<First>',status:'todo',status_changes:2,comment_count:0}];
   assert.deepEqual(sortTasksByStatusChanges(tasks).map(t=>t.id),[2,1,3]);

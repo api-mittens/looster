@@ -14,6 +14,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/chromedp/cdproto/emulation"
+	"github.com/chromedp/chromedp"
 )
 
 // Opt in with LOOSTER_BROWSER_TEST=1 go test ./internal/web -run TestGraphBrowser.
@@ -22,7 +25,7 @@ func TestGraphBrowser(t *testing.T) {
 	if os.Getenv("LOOSTER_BROWSER_TEST") != "1" {
 		t.Skip("set LOOSTER_BROWSER_TEST=1 to run Chromium acceptance")
 	}
-	browser := chromiumPath(t)
+	chromiumPath(t)
 	script := graphbrowserProbe
 	tasks := json.RawMessage(`[{"id":1,"name":"Alpha task","status":"planning","comment_count":3,"status_changes":10},{"id":2,"name":"Implementation","status":"todo","comment_count":0,"status_changes":1},{"id":3,"name":"Review","status":"validated","comment_count":14,"status_changes":12},{"id":4,"name":"Done","status":"closed","comment_count":1,"status_changes":3},{"id":5,"name":"Follow-up","status":"todo","comment_count":1,"status_changes":2},{"id":6,"name":"Next item","status":"planning","comment_count":0,"status_changes":1}]`)
 	agents := json.RawMessage(`[{"name":"coder","description":"Code"},{"name":"reviewer","description":"Review"}]`)
@@ -91,21 +94,36 @@ func TestGraphBrowser(t *testing.T) {
 		w.Write(text)
 	}))
 	defer server.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	args := []string{"--headless", "--no-sandbox", "--disable-gpu", "--disable-background-networking", "--no-first-run", "--window-size=1440,1100", "--user-data-dir=" + t.TempDir(), "--dump-dom", "--virtual-time-budget=25000"}
-	if shot := os.Getenv("LOOSTER_GRAPH_SCREENSHOT"); shot != "" {
-		args = append(args, "--screenshot="+shot)
-	}
+	// Drive the fixture via CDP instead of dump-dom's virtual clock. Brave on
+	// macOS can remain in dump-dom indefinitely despite its virtual time budget.
+	opts := []chromedp.ExecAllocatorOption{chromedp.WindowSize(1440, 1100)}
 	if os.Getenv("LOOSTER_BROWSER_DARK") == "1" {
-		args = append(args, "--force-dark-mode")
+		opts = append(opts, chromedp.Flag("force-dark-mode", true))
 	}
-	output, err := exec.CommandContext(ctx, browser, append(args, server.URL+"/#graph")...).CombinedOutput()
-	if err != nil {
-		t.Fatalf("Chromium: %v\n%s", err, output)
+	tab, stopBrowser := newTestBrowser(t, ctx, opts...)
+	defer stopBrowser()
+	var output string
+	if err := chromedp.Run(tab,
+		emulation.SetFocusEmulationEnabled(true),
+		chromedp.Navigate(server.URL+"/#graph"),
+		chromedp.WaitReady("#browser-result", chromedp.ByQuery),
+		chromedp.OuterHTML("html", &output, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("Chromium fixture: %v", err)
 	}
-	result := regexp.MustCompile(`<pre id="browser-result">([^<]*)</pre>`).FindSubmatch(output)
-	if len(result) != 2 || !strings.HasPrefix(string(result[1]), "PASS ") {
+	if shot := os.Getenv("LOOSTER_GRAPH_SCREENSHOT"); shot != "" {
+		var image []byte
+		if err := chromedp.Run(tab, chromedp.CaptureScreenshot(&image)); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(shot, image, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result := regexp.MustCompile(`<pre id="browser-result">([^<]*)</pre>`).FindStringSubmatch(output)
+	if len(result) != 2 || !strings.HasPrefix(result[1], "PASS ") {
 		t.Fatalf("browser acceptance failed: %s", output)
 	}
 	mu.Lock()

@@ -3,7 +3,7 @@ const esc = v => String(v ?? '').replace(/[&<>"']/g,c => ({'&':'&amp;','<':'&lt;
 export const isTasklessSession = s => s.task_id === 0;
 export const activeTasklessSessions = sessions => sessions.filter(s => isTasklessSession(s) && s.status === 'running');
 export function boardAgentNames(agents, sessions) {
-  const standalone = new Set(sessions.filter(isTasklessSession).map(s => s.agent));
+  const standalone = new Set([...agents.filter(a => a.taskless_only).map(a => a.name), ...sessions.filter(isTasklessSession).map(s => s.agent)]);
   const taskAgents = new Set(sessions.filter(s => !isTasklessSession(s)).map(s => s.agent));
   return [...new Set([...agents.map(a => a.name), ...sessions.map(s => s.agent)])].filter(n => n && (!standalone.has(n) || taskAgents.has(n))).sort();
 }
