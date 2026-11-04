@@ -156,11 +156,13 @@ func (s *Store) Comment(ctx context.Context, id int64, body string) (int64, erro
 	if strings.TrimSpace(body) == "" {
 		return 0, errors.New("comment is empty")
 	}
+	// Event triggers dispatch human mentions and session notifications atomically
+	// with the comment, including comments inserted by other persistence clients.
 	var eid int64
 	e := s.withTx(ctx, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `INSERT INTO events(task_id,kind,body) SELECT id,'comment',$2 FROM tasks WHERE id=$1 RETURNING id`, id, body).Scan(&eid)
 	})
-	return eid, e
+	return eid, repositoryError(e)
 }
 func (s *Store) Events(ctx context.Context, taskID, after int64) ([]event.Event, error) {
 	rows, e := s.Pool.Query(ctx, `SELECT id,task_id,kind,agent_name,body,created_at,actor_agent FROM events WHERE id>$1 AND ($2::bigint=0 OR task_id=$2) ORDER BY id LIMIT 500`, after, taskID)
