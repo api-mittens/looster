@@ -3,7 +3,7 @@ package web
 // Behavioral probes execute only through their Go test entrypoints.
 const namespaceProbe = `import {behavioursHTML,ruleLabel} from './static/views.mjs';
 import {layout} from './static/workflow.mjs';
-import {sortTasksByLatestActivity} from './static/board.mjs';
+import {sortTasksByLatestActivity,taskCardHTML} from './static/board.mjs';
 
 function boardHarness(fetch, globals={}) {
   const classes = new Map();
@@ -17,8 +17,11 @@ function boardHarness(fetch, globals={}) {
 test('list defaults hide stages and offline agents with independent reversible controls',()=>{
   const sections=[], controls=new Map();
   const control=s=>{if(!controls.has(s)) controls.set(s,{setAttribute(k,v){this[k]=v;}});return controls.get(s);};
-  const document={activeElement:{},createElement:()=>({querySelector:()=>({}),set innerHTML(v){this.html=v;}})};
-  const board=boardHarness(async()=>{}, {document,sortTasksByLatestActivity});
+  // This probe asserts generated visibility markup, not DOM reconciliation.
+  // Real keyed identity/focus behavior is exercised by the browser fixtures.
+  const patchHTML=(_root,html)=>{sections.length=0;sections.push(...(html.match(/<section\b[\s\S]*?<\/section>/g)||[]).map(html=>({html})));};
+  const document={activeElement:{}};
+  const board=boardHarness(async()=>{}, {document,patchHTML,sortTasksByLatestActivity,taskCardHTML});
   Object.assign(board,{page:'board',search:{value:''},data:{tasks:[],agents:[{name:'live'},{name:'offline'}],sessions:[{agent:'historical',status:'done'}]},status:{workers:[{agents:['live']}]},board:{contains:()=>false,replaceChildren(){sections.length=0;},append(s){sections.push(s);},querySelectorAll:()=>[],querySelector:()=>null}});
   board.querySelector=control;board.querySelectorAll=()=>[];
   const labels=()=>sections.map(s=>s.html);
@@ -37,8 +40,9 @@ test('list defaults hide stages and offline agents with independent reversible c
 
 test('every stage and agent column preserves latest activity order after filtering and refresh',()=>{
   const sections=[];
-  const document={activeElement:{},createElement:tag=>tag==='task-card'?{dataset:{}}:{rows:[],querySelector(){return {append:card=>this.rows.push(card.data.task.id)};},set innerHTML(v){this.html=v;}}};
-  const board=boardHarness(async()=>{}, {document,sortTasksByLatestActivity});
+  const document={activeElement:{}};
+  const patchHTML=(_root,html)=>{sections.length=0;sections.push(...(html.match(/<section\b[\s\S]*?<\/section>/g)||[]).map(html=>({html,rows:[...html.matchAll(/<task-card data-id="(\d+)"/g)].map(match=>Number(match[1]))})));};
+  const board=boardHarness(async()=>{}, {document,patchHTML,sortTasksByLatestActivity,taskCardHTML});
   const tasks=[];
   for(const [index,status] of ['planning','todo','validated','closed'].entries()) {
     for(const [offset,last_activity_at] of [[3,'2026-11-01T00:00:00Z'],[2,'2026-11-03T00:00:00Z'],[1,'2026-11-03T00:00:00Z']]) tasks.push({id:index*10+offset,status,name:'Keep',last_activity_at,status_changes:offset*100});
