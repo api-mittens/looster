@@ -85,6 +85,12 @@ Heat means comment count plus state-change count, not errors or task health.
 Heatmap activity does not invent relationships or change their link weights.
 Search and the namespace switcher apply to Graph as well as other views.
 
+The List hides task-stage columns and offline agent columns by default. Use
+**Show task stages** (`s`) and **Show offline agents** to reveal them independently.
+An agent is online when a live worker covers it, regardless of session status.
+These visibility choices survive polling, navigation, and namespace switches in
+the current client, but reset on reload. No list visibility preferences are persisted.
+
 ## Layout and activity aging
 
 Locally vendored D3 force physics uses weighted task-agent attraction, repulsion,

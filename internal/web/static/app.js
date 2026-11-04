@@ -16,6 +16,8 @@ class TaskCard extends HTMLElement {
 }
 customElements.define('task-card',TaskCard);
 class LoosterBoard extends HTMLElement {
+  stagesCollapsed = true;
+  offlineAgentsCollapsed = true;
   connectedCallback() {
     this.innerHTML = `<header><img class="logo" src="/logo.svg" alt="Looster" width="30" height="30"><strong>looster</strong><span>/ Workspace</span><div class="spacer"></div><button id="help">Shortcuts <kbd>?</kbd></button></header><main><h1>Task list</h1><p>Follow tasks from planning through closure.</p><div class="toolbar"><input type="search" aria-label="Search tasks" placeholder="Search tasks, tags, agents… /"><span id="summary" class="muted"></span><div class="spacer"></div><span id="sync" class="muted"></span><button id="refresh" title="Refresh (r)">Refresh <kbd>r</kbd></button></div><div id="notice" class="notice" role="status"></div><div class="board" aria-label="Task list"></div><div class="footer"><span><kbd>h</kbd> <kbd>l</kbd> columns</span><span><kbd>j</kbd> <kbd>k</kbd> tasks</span><span><kbd>Enter</kbd> details</span><span><kbd>/</kbd> search</span><span><kbd>n</kbd> new task</span><span>Hover or focus to trace a task across columns</span></div></main><dialog aria-labelledby="dialog-title"><div class="dialog-head"><h2 id="dialog-title"></h2><div class="spacer"></div><button id="close">Close <kbd>Esc</kbd></button></div><div class="detail" tabindex="0"></div></dialog>`;
     this.board = this.querySelector('.board'); this.search = this.querySelector('input'); this.dialog = this.querySelector('dialog'); this.panel = this.querySelector('.detail');
@@ -35,8 +37,16 @@ class LoosterBoard extends HTMLElement {
     const hints = this.querySelector('.footer');
     this.board.before(hints); this.board.id = 'board-columns';
     hints.querySelectorAll('span').forEach(span => span.classList.add('board-hint'));
-    hints.insertAdjacentHTML('beforeend','<span class="page-hint" hidden><kbd>j</kbd> <kbd>k</kbd> scroll</span><span class="page-hint" hidden><kbd>G</kbd> bottom</span><div class="spacer"></div><button id="toggle-stages" aria-controls="board-columns" aria-expanded="true">Hide task stages <kbd>s</kbd></button>');
+    hints.insertAdjacentHTML('beforeend','<span class="page-hint" hidden><kbd>j</kbd> <kbd>k</kbd> scroll</span><span class="page-hint" hidden><kbd>G</kbd> bottom</span><div class="spacer"></div><button id="toggle-stages" aria-controls="board-columns" aria-expanded="false">Show task stages <kbd>s</kbd></button>');
     this.querySelector('#toggle-stages').onclick = () => this.toggleStages();
+    hints.insertAdjacentHTML('beforeend','<button id="toggle-offline-agents" aria-controls="board-columns" aria-expanded="false">Show offline agents</button>');
+    this.querySelector('#toggle-offline-agents').onclick = () => this.toggleOfflineAgents();
+    const offlineButton = this.querySelector('#toggle-offline-agents');
+    offlineButton.setAttribute('aria-expanded',String(!this.offlineAgentsCollapsed));
+    offlineButton.textContent = (this.offlineAgentsCollapsed ? 'Show' : 'Hide')+' offline agents';
+    const stagesButton = this.querySelector('#toggle-stages');
+    stagesButton.setAttribute('aria-expanded',String(!this.stagesCollapsed));
+    stagesButton.innerHTML = (this.stagesCollapsed ? 'Show' : 'Hide')+' task stages <kbd>s</kbd>';
     this.page = location.hash === '#library' ? 'system' : location.hash.slice(1) || 'graph';
     this.route = () => { this.page = location.hash === '#library' ? 'system' : location.hash.slice(1) || 'graph'; this.goPrefix = 0; this.lastG = 0; this.render(); this.refresh(); };
     window.addEventListener('hashchange',this.route);
@@ -154,6 +164,7 @@ class LoosterBoard extends HTMLElement {
     this.querySelectorAll('.page-hint').forEach(hint => hint.hidden = !other || this.page === 'graph');
     this.querySelector('.footer').hidden = this.page === 'graph';
     this.querySelector('#toggle-stages').hidden = other;
+    this.querySelector('#toggle-offline-agents').hidden = other;
     this.querySelector('h1').textContent = this.page === 'graph' ? 'Task graph' : this.page === 'servers' ? 'Servers & agents' : this.page === 'system' ? 'Behaviours' : 'Task list';
     this.querySelector('main > p').textContent = this.page === 'graph' ? 'Explore tasks by status, tags and search. Planning and todo are shown by default. Animated links show active work, quiet links show past sessions.' : this.page === 'servers' ? 'Live workers, agent coverage, and interrupted sessions.' : this.page === 'system' ? 'How work moves through the factory.' : 'Follow tasks from planning through closure.';
     if(other) { this.renderPage(); return; }
@@ -164,6 +175,7 @@ class LoosterBoard extends HTMLElement {
     this.querySelector('#summary').textContent = `${tasks.length} tasks · ${this.data.sessions.filter(s => s.status === 'running').length} running`;
     this.board.replaceChildren();
     for (const col of cols) {
+      if(col.agent && !col.online && this.offlineAgentsCollapsed) continue;
       const section = document.createElement('section'); section.className = 'column'+(col.agent ? ' agent' : ''); section.innerHTML = `<h2><span class="dot ${col.agent && !col.online ? 'offline' : ''}"></span>${esc(col.label)}${col.agent ? `<span class="muted">${col.online ? 'online' : 'offline'}</span>` : ''}<span class="count">${col.rows.length}</span></h2><div class="cards"></div>`;
       for (const row of col.rows) { const card = document.createElement('task-card'); card.data = row; card.dataset.key = col.key+'/'+row.task.id; section.querySelector('.cards').append(card); }
       if (!col.rows.length) section.querySelector('.cards').innerHTML = '<div class="empty">No tasks here</div>';
@@ -177,6 +189,11 @@ class LoosterBoard extends HTMLElement {
     this.stagesCollapsed = !this.stagesCollapsed;
     const button = this.querySelector('#toggle-stages'); button.setAttribute('aria-expanded',String(!this.stagesCollapsed));
     button.innerHTML = (this.stagesCollapsed ? 'Show' : 'Hide')+' task stages <kbd>s</kbd>'; this.render();
+  }
+  toggleOfflineAgents() {
+    this.offlineAgentsCollapsed = !this.offlineAgentsCollapsed;
+    const button = this.querySelector('#toggle-offline-agents'); button.setAttribute('aria-expanded',String(!this.offlineAgentsCollapsed));
+    button.textContent = (this.offlineAgentsCollapsed ? 'Show' : 'Hide')+' offline agents'; this.render();
   }
   focus() { const c = [...this.board.querySelectorAll('task-card')].find(c => c.dataset.key === this.selected); c?.querySelector('button').focus({preventScroll:true}); c?.scrollIntoView({block:'nearest',inline:'nearest'}); }
   highlight(id) { this.board.querySelectorAll('task-card').forEach(c => c.classList.toggle('linked',!!id && c.dataset.id === id)); }
