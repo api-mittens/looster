@@ -4,7 +4,7 @@ package web
 const outputProbe = `import {appendOutput} from './static/output.mjs';
 import {layout} from './static/workflow.mjs';
 import {behavioursHTML,serversHTML,ruleLabel} from './static/views.mjs';
-import {sortTasksByStatusChanges,taskCardHTML,activeTasklessSessions,boardAgentNames,sessionCardHTML} from './static/board.mjs';
+import {sortTasksByLatestActivity,taskCardHTML,activeTasklessSessions,boardAgentNames,sessionCardHTML} from './static/board.mjs';
 
 test('taskless board sessions stay active only and mixed agents keep regular columns',()=>{
  const sessions=[{task_id:0,job_id:10,agent:'solo',status:'running'},{task_id:0,job_id:11,agent:'solo',status:'running'},{task_id:0,job_id:12,agent:'mixed',status:'running'},{task_id:0,job_id:13,agent:'ended',status:'idle'},{task_id:1,job_id:14,agent:'mixed',status:'idle'}];
@@ -23,14 +23,41 @@ test('completed taskless jobs do not restore empty agent columns',()=>{
  assert.equal(activeTasklessSessions([]).length,0);
 });
 
-test('board cards show activity counts and sort by status changes',() => {
+test('board cards preserve activity counts and escaping',() => {
   const tasks=[{id:3,name:'Third',status:'todo',status_changes:2,comment_count:4},{id:2,name:'Second',status:'todo',status_changes:4,comment_count:1},{id:1,name:'<First>',status:'todo',status_changes:2,comment_count:0}];
-  assert.deepEqual(sortTasksByStatusChanges(tasks).map(t=>t.id),[2,1,3]);
   assert.deepEqual(tasks.map(t=>t.id),[3,2,1]);
   const html=taskCardHTML(tasks[2]);
   assert.ok(html.indexOf('Status 2') < html.indexOf('&lt;First&gt;'));
   assert.ok(html.includes('Comments 0'));
   assert.ok(html.includes('aria-label="2 status changes including initial status"'));
+});
+
+test('latest activity wins over status counts, creation dates and input order',() => {
+  const tasks=Object.freeze([
+    Object.freeze({id:1,status_changes:100,created_at:'2026-11-04T12:00:00Z',last_activity_at:'2026-11-01T12:00:00Z'}),
+    Object.freeze({id:3,status_changes:0,last_activity_at:'2026-11-03T13:00:00+01:00'}),
+    Object.freeze({id:2,status_changes:50,last_activity_at:'2026-11-03T12:00:00Z'}),
+    Object.freeze({id:4,last_activity_at:'2026-11-03T12:00:00.001Z'})
+  ]);
+  assert.deepEqual(sortTasksByLatestActivity(tasks).map(t=>t.id),[4,2,3,1]);
+  assert.deepEqual(tasks.map(t=>t.id),[1,3,2,4]);
+  assert.deepEqual(sortTasksByLatestActivity([...tasks].reverse()).map(t=>t.id),[4,2,3,1]);
+  assert.deepEqual(sortTasksByLatestActivity([]),[]);
+});
+
+test('missing or invalid activity uses creation, then undated tasks sort last by ID',() => {
+  for(const missing of [undefined,null,'','  ','invalid',false,0,{},[]]) {
+    const tasks=[
+      {id:9,last_activity_at:missing,created_at:'2026-11-03T12:00:00Z'},
+      {id:8,last_activity_at:'2026-11-02T12:00:00Z'},
+      {id:7,last_activity_at:missing,created_at:missing,status_changes:999},
+      {id:6,last_activity_at:missing,created_at:missing},
+      {id:5,last_activity_at:'1970-01-01T00:00:00Z'},
+      {id:4,last_activity_at:'1969-12-31T23:59:59Z'},
+      {id:3,last_activity_at:'2026-11-03T12:00:00Z'}
+    ];
+    assert.deepEqual(sortTasksByLatestActivity(tasks).map(t=>t.id),[3,9,8,5,4,6,7]);
+  }
 });
 
 test('text deltas preserve whitespace without repeating final answer',() => {

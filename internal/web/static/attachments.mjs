@@ -13,7 +13,7 @@ export function attachmentsHTML(attachments, taskID, eventID, namespace = '') {
   return `<ul class="attachments" aria-label="Attachments">${files.map(file => {
     const download = esc(attachmentURL(taskID,file.id,'download',namespace));
     const preview = file.previewable === true ? `<img class="attachment-preview" src="${esc(attachmentURL(taskID,file.id,'preview',namespace))}" alt="Preview of ${esc(file.name)}" loading="lazy">` : '';
-    return `<li>${preview}<a href="${download}" download>${esc(file.name || 'Unnamed file')}</a><span class="muted">${esc(file.size)} bytes</span></li>`;
+    return `<li data-refresh-key="attachment:${esc(file.id)}">${preview}<a href="${download}" download>${esc(file.name || 'Unnamed file')}</a><span class="muted">${esc(file.size)} bytes</span></li>`;
   }).join('')}</ul>`;
 }
 

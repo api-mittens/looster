@@ -86,6 +86,21 @@ func runJSProbe(t *testing.T, source string) {
 		if value, ok := cache[path]; ok {
 			return value
 		}
+		if strings.HasSuffix(path, "refresh.mjs") {
+			// These probes use string-parsing element doubles, not a DOM. Keep
+			// their rendering adapter at the module boundary. Real keyed DOM
+			// reconciliation is exercised by the browser acceptance tests.
+			object := vm.NewObject()
+			render, err := vm.RunString(`(root, html) => { root.innerHTML = html; }`)
+			if err != nil {
+				panic(vm.NewGoError(err))
+			}
+			if err := object.Set("patchHTML", render); err != nil {
+				panic(vm.NewGoError(err))
+			}
+			cache[path] = object
+			return object
+		}
 		if strings.HasSuffix(path, "d3-force-adapter.mjs") {
 			return load("./vendor/d3.v7.9.0.min.js", "static")
 		}

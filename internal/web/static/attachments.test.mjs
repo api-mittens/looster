@@ -6,7 +6,7 @@ import {attachmentsHTML,attachmentURL,attachmentUploadHTML} from './attachments.
 
 function harness(fetch) {
   const classes = new Map();
-  const context = vm.createContext({HTMLElement:class {},customElements:{define:(name,type) => classes.set(name,type)},URL,AbortController,DOMException,FormData,location:{origin:'http://localhost'},fetch,queueMicrotask,attachmentsHTML});
+  const context = vm.createContext({HTMLElement:class {},customElements:{define:(name,type) => classes.set(name,type)},URL,AbortController,DOMException,FormData,location:{origin:'http://localhost'},fetch,queueMicrotask,attachmentsHTML,patchHTML:(root,html) => { root.innerHTML = html; }});
   vm.runInContext(readFileSync(new URL('./app.js',import.meta.url),'utf8').replace(/^import .*;\n/gm,''),context);
   const board = new (classes.get('looster-board'))();
   Object.assign(board,{namespace:'alpha /&',generation:0,controller:new AbortController(),detailID:33});

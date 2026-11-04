@@ -91,6 +91,7 @@ func TestAttachmentBrowser(t *testing.T) {
 	}
 	if err := chromedp.Run(tab,
 		chromedp.Navigate(server.URL+"/#board"),
+		chromedp.Click("#toggle-stages"),
 		chromedp.WaitVisible("task-card"),
 		chromedp.Click("task-card"),
 		chromedp.WaitVisible("#description-attachments img"),

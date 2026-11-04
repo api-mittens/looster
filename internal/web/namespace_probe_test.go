@@ -3,16 +3,70 @@ package web
 // Behavioral probes execute only through their Go test entrypoints.
 const namespaceProbe = `import {behavioursHTML,ruleLabel} from './static/views.mjs';
 import {layout} from './static/workflow.mjs';
-import {isTasklessSession} from './static/board.mjs';
+import {sortTasksByLatestActivity,taskCardHTML,isTasklessSession,boardAgentNames,activeTasklessSessions,sessionCardHTML} from './static/board.mjs';
 
-function boardHarness(fetch) {
+function boardHarness(fetch, globals={}) {
   const classes = new Map();
-  const context = vm.createContext({isTasklessSession,HTMLElement:class {},customElements:{define:(name,type) => classes.set(name,type)},URL,AbortController,DOMException,location:{origin:'http://localhost'},fetch,queueMicrotask});
+  const context = vm.createContext({isTasklessSession,boardAgentNames,activeTasklessSessions,sessionCardHTML,HTMLElement:class {},customElements:{define:(name,type) => classes.set(name,type)},URL,AbortController,DOMException,location:{origin:'http://localhost'},fetch,queueMicrotask,...globals});
   vm.runInContext(readFileSync(new URL('./static/app.js','file:./probe'),'utf8').replace(/^import .*;\n/gm,''),context);
   const board = new (classes.get('looster-board'))();
   Object.assign(board,{namespace:'alpha',generation:0,controller:new AbortController()});
   return board;
 }
+
+test('list defaults hide stages and offline agents with independent reversible controls',()=>{
+  const sections=[], controls=new Map();
+  const control=s=>{if(!controls.has(s)) controls.set(s,{setAttribute(k,v){this[k]=v;}});return controls.get(s);};
+  // This probe asserts generated visibility markup, not DOM reconciliation.
+  // Real keyed identity/focus behavior is exercised by the browser fixtures.
+  const patchHTML=(_root,html)=>{sections.length=0;sections.push(...(html.match(/<section\b[\s\S]*?<\/section>/g)||[]).filter(html=>!html.includes('data-refresh-key="other-sessions"')).map(html=>({html})));};
+  const document={activeElement:{}};
+  const board=boardHarness(async()=>{}, {document,patchHTML,sortTasksByLatestActivity,taskCardHTML});
+  Object.assign(board,{page:'board',search:{value:''},data:{tasks:[],agents:[{name:'live'},{name:'offline'}],sessions:[{agent:'historical',status:'done'}]},status:{workers:[{agents:['live']}]},board:{contains:()=>false,replaceChildren(){sections.length=0;},append(s){sections.push(s);},querySelectorAll:()=>[],querySelector:()=>null}});
+  board.querySelector=control;board.querySelectorAll=()=>[];
+  const labels=()=>sections.map(s=>s.html);
+  board.render();assert.equal(sections.length,1);assert.match(labels()[0],/@ live/);
+  board.toggleOfflineAgents();assert.equal(sections.length,3);assert.equal(control('#toggle-offline-agents')['aria-expanded'],'true');assert.equal(control('#toggle-offline-agents').textContent,'Hide offline agents');
+  assert.ok(labels().some(s=>s.includes('@ historical')));
+  board.toggleStages();assert.equal(sections.length,7);assert.equal(control('#toggle-stages')['aria-expanded'],'true');
+  board.render();assert.equal(sections.length,7);
+  board.toggleOfflineAgents();assert.equal(sections.length,5);assert.equal(control('#toggle-offline-agents')['aria-expanded'],'false');
+  board.toggleStages();assert.equal(sections.length,1);
+  board.status={workers:[]};board.render();assert.equal(sections.length,0);
+  board.status={workers:[{agents:['offline']}]};board.render();assert.equal(sections.length,1);assert.match(labels()[0],/@ offline/);
+  board.page='servers';board.renderPage=()=>{};board.render();assert.equal(control('#toggle-offline-agents').hidden,true);assert.equal(control('#toggle-stages').hidden,true);
+  board.page='board';board.render();assert.equal(control('#toggle-offline-agents').hidden,false);assert.equal(sections.length,1);
+});
+
+test('every stage and agent column preserves latest activity order after filtering and refresh',()=>{
+  const sections=[];
+  const document={activeElement:{}};
+  const patchHTML=(_root,html)=>{sections.length=0;sections.push(...(html.match(/<section\b[\s\S]*?<\/section>/g)||[]).filter(html=>!html.includes('data-refresh-key="other-sessions"')).map(html=>({html,rows:[...html.matchAll(/<task-card data-id="(\d+)"/g)].map(match=>Number(match[1]))})));};
+  const board=boardHarness(async()=>{}, {document,patchHTML,sortTasksByLatestActivity,taskCardHTML});
+  const tasks=[];
+  for(const [index,status] of ['planning','todo','validated','closed'].entries()) {
+    for(const [offset,last_activity_at] of [[3,'2026-11-01T00:00:00Z'],[2,'2026-11-03T00:00:00Z'],[1,'2026-11-03T00:00:00Z']]) tasks.push({id:index*10+offset,status,name:'Keep',last_activity_at,status_changes:offset*100});
+  }
+  const sessions=tasks.flatMap(t=>['live','offline'].map(agent=>({task_id:t.id,agent,status:'running'})));
+  sessions.push({task_id:1,agent:'historical',status:'done'});
+  Object.assign(board,{page:'board',stagesCollapsed:false,offlineAgentsCollapsed:false,search:{value:''},data:{tasks,agents:[{name:'live'},{name:'offline'}],sessions},status:{workers:[{agents:['live']}]},board:{contains:()=>false,replaceChildren(){sections.length=0;},append(s){sections.push(s);},querySelectorAll:()=>[],querySelector:()=>null}});
+  board.querySelector=()=>({});board.querySelectorAll=()=>[];
+  const check=()=>{
+    assert.deepEqual(sections.slice(0,4).map(s=>s.rows),[[1,2,3],[11,12,13],[21,22,23],[31,32,33]]);
+    assert.deepEqual(sections.slice(4).map(s=>s.rows),[[],[1,2,11,12,21,22,31,32,3,13,23,33],[1,2,11,12,21,22,31,32,3,13,23,33]]);
+  };
+  board.render();check();
+  board.data.tasks=[...tasks].reverse();board.render();check();
+  board.search.value='TSK-13';board.render();
+  assert.deepEqual(sections.map(s=>s.rows),[[],[13],[],[],[],[13],[13]]);
+  board.search.value='';
+  board.data.tasks=tasks.map(t=>t.id===13?{...t,last_activity_at:'2026-11-04T00:00:00Z'}:t);
+  board.render();
+  assert.deepEqual(sections[1].rows,[13,11,12]);
+  assert.deepEqual(sections[5].rows,[13,1,2,11,12,21,22,31,32,3,23,33]);
+  assert.deepEqual(sections[6].rows,sections[5].rows);
+  assert.deepEqual(tasks.map(t=>t.id),[3,2,1,13,12,11,23,22,21,33,32,31]);
+});
 
 test('manifest view shows full source, prior immutable versions, activation and escaping',() => {
   const source='agents:\n  coder:\n    prompt: |\n      <script>alert(1)</script>\ntags:\n  design: Full tag prompt\n';
@@ -83,7 +137,9 @@ test('namespace switch clears all cached data, dialogs, cursors, search and form
   Object.assign(board,{graphStatuses:['closed'],data:{},status:{},system:{},library:{},manifests:[{}],manifestID:1,detailID:1,cursor:10,commentCursor:20,selected:'todo/1',pageHTML:'old',paletteItems:[{}],panel:control('panel'),board:control('board'),search:control('search'),paletteInput:control('paletteInput')});
   let refreshed=false;board.refresh=()=>{refreshed=true;};
   const signal=board.controller.signal;
+  board.stagesCollapsed=false;board.offlineAgentsCollapsed=false;
   board.switchNamespace('beta');
+  assert.equal(board.stagesCollapsed,false);assert.equal(board.offlineAgentsCollapsed,false);
   assert.ok(signal.aborted); assert.ok(closed); assert.ok(refreshed);
   for(const key of ['data','status','system','library','manifests','manifestID','detailID','selected','pageHTML']) assert.equal(board[key],null,key);
   assert.equal(board.cursor,0); assert.equal(board.commentCursor,0);

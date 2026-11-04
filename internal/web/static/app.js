@@ -1,8 +1,9 @@
+import {patchHTML} from './refresh.mjs';
 import {renderMarkdown} from './markdown.mjs';
 import {serversHTML,behavioursHTML,ruleLabel} from './views.mjs';
 import {appendOutput} from './output.mjs';
 import {searchItems} from './search.mjs';
-import {sortTasksByStatusChanges,taskCardHTML,sessionCardHTML,boardAgentNames,activeTasklessSessions,isTasklessSession} from './board.mjs';
+import {sortTasksByLatestActivity,taskCardHTML,sessionCardHTML,boardAgentNames,activeTasklessSessions,isTasklessSession} from './board.mjs';
 import {attachmentsHTML,attachmentUploadHTML} from './attachments.mjs';
 import './workflow.js';
 import './task-graph.js';
@@ -14,11 +15,13 @@ class TaskCard extends HTMLElement {
     else delete this.dataset.id;
     if (s?.job_id != null) this.dataset.jobId = s.job_id;
     else delete this.dataset.jobId;
-    this.innerHTML = t ? taskCardHTML(t,s) : sessionCardHTML(s);
+    patchHTML(this,t ? taskCardHTML(t,s) : sessionCardHTML(s));
   }
 }
 customElements.define('task-card',TaskCard);
 class LoosterBoard extends HTMLElement {
+  stagesCollapsed = true;
+  offlineAgentsCollapsed = true;
   connectedCallback() {
     this.innerHTML = `<header><img class="logo" src="/logo.svg" alt="Looster" width="30" height="30"><strong>looster</strong><span>/ Workspace</span><div class="spacer"></div><button id="help">Shortcuts <kbd>?</kbd></button></header><main><h1>Task list</h1><p>Follow tasks from planning through closure.</p><div class="toolbar"><input type="search" aria-label="Search tasks" placeholder="Search tasks, tags, agents… /"><span id="summary" class="muted"></span><div class="spacer"></div><span id="sync" class="muted"></span><button id="refresh" title="Refresh (r)">Refresh <kbd>r</kbd></button></div><div id="notice" class="notice" role="status"></div><div class="board" aria-label="Task list"></div><div class="footer"><span><kbd>h</kbd> <kbd>l</kbd> columns</span><span><kbd>j</kbd> <kbd>k</kbd> tasks</span><span><kbd>Enter</kbd> details</span><span><kbd>/</kbd> search</span><span><kbd>n</kbd> new task</span><span>Hover or focus to trace a task across columns</span></div></main><dialog aria-labelledby="dialog-title"><div class="dialog-head"><h2 id="dialog-title"></h2><div class="spacer"></div><button id="close">Close <kbd>Esc</kbd></button></div><div class="detail" tabindex="0"></div></dialog>`;
     this.board = this.querySelector('.board'); this.search = this.querySelector('input'); this.dialog = this.querySelector('dialog'); this.panel = this.querySelector('.detail');
@@ -38,8 +41,16 @@ class LoosterBoard extends HTMLElement {
     const hints = this.querySelector('.footer');
     this.board.before(hints); this.board.id = 'board-columns';
     hints.querySelectorAll('span').forEach(span => span.classList.add('board-hint'));
-    hints.insertAdjacentHTML('beforeend','<span class="page-hint" hidden><kbd>j</kbd> <kbd>k</kbd> scroll</span><span class="page-hint" hidden><kbd>G</kbd> bottom</span><div class="spacer"></div><button id="toggle-stages" aria-controls="board-columns" aria-expanded="true">Hide task stages <kbd>s</kbd></button>');
+    hints.insertAdjacentHTML('beforeend','<span class="page-hint" hidden><kbd>j</kbd> <kbd>k</kbd> scroll</span><span class="page-hint" hidden><kbd>G</kbd> bottom</span><div class="spacer"></div><button id="toggle-stages" aria-controls="board-columns" aria-expanded="false">Show task stages <kbd>s</kbd></button>');
     this.querySelector('#toggle-stages').onclick = () => this.toggleStages();
+    hints.insertAdjacentHTML('beforeend','<button id="toggle-offline-agents" aria-controls="board-columns" aria-expanded="false">Show offline agents</button>');
+    this.querySelector('#toggle-offline-agents').onclick = () => this.toggleOfflineAgents();
+    const offlineButton = this.querySelector('#toggle-offline-agents');
+    offlineButton.setAttribute('aria-expanded',String(!this.offlineAgentsCollapsed));
+    offlineButton.textContent = (this.offlineAgentsCollapsed ? 'Show' : 'Hide')+' offline agents';
+    const stagesButton = this.querySelector('#toggle-stages');
+    stagesButton.setAttribute('aria-expanded',String(!this.stagesCollapsed));
+    stagesButton.innerHTML = (this.stagesCollapsed ? 'Show' : 'Hide')+' task stages <kbd>s</kbd>';
     this.page = location.hash === '#library' ? 'system' : location.hash.slice(1) || 'graph';
     this.route = () => { this.page = location.hash === '#library' ? 'system' : location.hash.slice(1) || 'graph'; this.goPrefix = 0; this.lastG = 0; this.render(); this.refresh(); };
     window.addEventListener('hashchange',this.route);
@@ -157,30 +168,30 @@ class LoosterBoard extends HTMLElement {
     this.querySelectorAll('.page-hint').forEach(hint => hint.hidden = !other || this.page === 'graph');
     this.querySelector('.footer').hidden = this.page === 'graph';
     this.querySelector('#toggle-stages').hidden = other;
+    this.querySelector('#toggle-offline-agents').hidden = other;
     this.querySelector('h1').textContent = this.page === 'graph' ? 'Task graph' : this.page === 'servers' ? 'Servers & agents' : this.page === 'system' ? 'Behaviours' : 'Task list';
     this.querySelector('main > p').textContent = this.page === 'graph' ? 'Explore tasks by status, tags and search. Planning and todo are shown by default. Animated links show active work, quiet links show past sessions.' : this.page === 'servers' ? 'Live workers, agent coverage, and interrupted sessions.' : this.page === 'system' ? 'How work moves through the factory.' : 'Follow tasks from planning through closure.';
     if(other) { this.renderPage(); return; }
     const focused = this.board.contains(document.activeElement), q = this.search.value.toLowerCase().trim();
-    const tasks = sortTasksByStatusChanges(this.data.tasks.filter(t => [t.name,t.description,t.status,`TSK-${t.id}`,...(t.tags || []),...this.data.sessions.filter(s => s.task_id === t.id).map(s => s.agent)].join(' ').toLowerCase().includes(q)));
+    const tasks = sortTasksByLatestActivity(this.data.tasks.filter(t => [t.name,t.description,t.status,`TSK-${t.id}`,...(t.tags || []),...this.data.sessions.filter(s => s.task_id === t.id).map(s => s.agent)].join(' ').toLowerCase().includes(q)));
     const names = boardAgentNames(this.data.agents,this.data.sessions);
     const cols = [...(this.stagesCollapsed ? [] : stages.map(s => ({key:s,label:s[0].toUpperCase()+s.slice(1),rows:tasks.filter(t => t.status === s).map(task => ({task}))}))),...names.map(n => ({key:'agent:'+n,label:'@ '+n,agent:true,online:(this.status?.workers || []).some(w => w.agents.includes(n)),rows:tasks.flatMap(task => this.data.sessions.filter(s => s.task_id === task.id && s.agent === n && s.status === 'running').map(session => ({task,session})))}))];
     cols.push({key:'other-sessions',label:'Other sessions',rows:activeTasklessSessions(this.data.sessions).map(session => ({session}))});
     this.querySelector('#summary').textContent = `${tasks.length} tasks · ${this.data.sessions.filter(s => s.status === 'running').length} running`;
-    this.board.replaceChildren();
-    for (const col of cols) {
-      const section = document.createElement('section'); section.className = 'column'+(col.agent ? ' agent' : ''); section.innerHTML = `<h2><span class="dot ${col.agent && !col.online ? 'offline' : ''}"></span>${esc(col.label)}${col.agent ? `<span class="muted">${col.online ? 'online' : 'offline'}</span>` : ''}<span class="count">${col.rows.length}</span></h2><div class="cards"></div>`;
-      for (const row of col.rows) { const card = document.createElement('task-card'); card.data = row; card.dataset.key = col.key+'/'+(row.session?.job_id != null ? 'job:'+row.session.job_id : row.task.id); section.querySelector('.cards').append(card); }
-      if (!col.rows.length) section.querySelector('.cards').innerHTML = '<div class="empty">No tasks here</div>';
-      this.board.append(section);
-    }
+    patchHTML(this.board,cols.filter(col => !col.agent || col.online || !this.offlineAgentsCollapsed).map(col => `<section data-refresh-key="${esc(col.key)}" class="column${col.agent ? ' agent' : ''}"><h2><span class="dot ${col.agent && !col.online ? 'offline' : ''}"></span>${esc(col.label)}${col.agent ? `<span class="muted">${col.online ? 'online' : 'offline'}</span>` : ''}<span class="count">${col.rows.length}</span></h2><div class="cards">${col.rows.map(row => `<task-card ${row.task ? `data-id="${esc(row.task.id)}"` : ''}${row.session?.job_id != null ? ` data-job-id="${esc(row.session.job_id)}"` : ''} data-key="${esc(col.key+'/'+(row.session?.job_id != null ? 'job:'+row.session.job_id : row.task.id))}">${row.task ? taskCardHTML(row.task,row.session) : sessionCardHTML(row.session)}</task-card>`).join('') || '<div class="empty">No tasks here</div>'}</div></section>`).join(''));
     const cards = [...this.board.querySelectorAll('task-card')], current = cards.find(c => c.dataset.key === this.selected) || cards[0];
-    this.selected = current?.dataset.key; this.roving(current); if (focused) this.focus(); else this.highlight(this.board.querySelector('task-card:hover')?.dataset.id);
+    this.selected = current?.dataset.key; this.roving(current); if (focused && !this.board.contains(document.activeElement)) current?.querySelector('button').focus({preventScroll:true}); this.highlight(this.board.querySelector('task-card:hover')?.dataset.id || (focused ? current?.dataset.id : null));
   }
   roving(current) { this.board.querySelectorAll('task-card').forEach(c => c.querySelector('button').tabIndex = c === current ? 0 : -1); }
   toggleStages() {
     this.stagesCollapsed = !this.stagesCollapsed;
     const button = this.querySelector('#toggle-stages'); button.setAttribute('aria-expanded',String(!this.stagesCollapsed));
     button.innerHTML = (this.stagesCollapsed ? 'Show' : 'Hide')+' task stages <kbd>s</kbd>'; this.render();
+  }
+  toggleOfflineAgents() {
+    this.offlineAgentsCollapsed = !this.offlineAgentsCollapsed;
+    const button = this.querySelector('#toggle-offline-agents'); button.setAttribute('aria-expanded',String(!this.offlineAgentsCollapsed));
+    button.textContent = (this.offlineAgentsCollapsed ? 'Show' : 'Hide')+' offline agents'; this.render();
   }
   focus() { const c = [...this.board.querySelectorAll('task-card')].find(c => c.dataset.key === this.selected); c?.querySelector('button').focus({preventScroll:true}); c?.scrollIntoView({block:'nearest',inline:'nearest'}); }
   highlight(id) { this.board.querySelectorAll('task-card').forEach(c => c.classList.toggle('linked',!!id && c.dataset.id === id)); }
@@ -193,14 +204,15 @@ class LoosterBoard extends HTMLElement {
     try {
       const d = await this.api(`/api/tasks/TSK-${id}`);
       if (this.outputs !== generation || this.detailID !== id || !this.dialog.open) return;
-      this.querySelector('#dialog-title').textContent = `TSK-${id} · ${d.task.name}`;
+      const title = `TSK-${id} · ${d.task.name}`;
+      patchHTML(this.querySelector('#dialog-title'),esc(title));
       if (!this.panel.querySelector('#session-output')) this.panel.innerHTML = '<div class="task-status-control"><label for="task-status">Status</label><select id="task-status" aria-label="Task status"><option value="planning">Planning</option><option value="todo">Todo</option><option value="validated">Validated</option><option value="closed">Closed</option></select><span id="status-error" class="form-error" role="alert"></span></div><div class="description markdown-body" id="task-description"></div><div id="description-attachments"></div><div id="description-upload"></div><p id="attachment-notice" class="form-error" role="status"></p><div id="tag-context"></div><h3>Comments</h3><div id="task-comments"></div><form id="comment-form"><label>Add comment <textarea name="body" rows="3" required></textarea></label><p class="form-error" role="alert"></p><button type="submit">Post comment</button></form><h3>Sessions</h3><div id="sessions"></div><div class="output-heading"><h3>Session output</h3><label>Agent <select id="log-agent" aria-label="Session output agent"></select></label></div><pre id="session-output" class="session-output" tabindex="0" aria-label="Session output"></pre><p id="output-note" class="muted" role="status"></p>';
-      this.panel.querySelector('#task-status').value = d.task.status;
-      this.panel.querySelector('#task-description').innerHTML = renderMarkdown(d.task.description || 'No description.');
+      if(!this.panel.querySelector('#task-status').disabled) this.panel.querySelector('#task-status').value = d.task.status;
+      patchHTML(this.panel.querySelector('#task-description'),renderMarkdown(d.task.description || 'No description.'));
       if(!this.panel.querySelector('#description-upload').firstChild) this.panel.querySelector('#description-upload').innerHTML = attachmentUploadHTML();
-      const contextHTML = (d.context?.tags || []).map(t => `<details class="context-card"><summary>Tag: ${esc(t.name)} · ${(t.memories || []).length} memories</summary><pre>${esc(t.description)}</pre>${this.memoryHTML(t.memories)}</details>`).join('');
-      if(this.panel.querySelector('#tag-context').innerHTML !== contextHTML) this.panel.querySelector('#tag-context').innerHTML = contextHTML;
-      this.panel.querySelector('#sessions').innerHTML = (d.sessions || []).map(s => `<div class="session"><strong>${esc(s.agent)}</strong><span class="badge ${s.status === 'running' ? 'running' : ''}">${esc(s.status)}</span><code>${esc(s.session_id || 'Not started')}</code></div>`).join('') || '<p>No sessions yet.</p>';
+      const contextHTML = (d.context?.tags || []).map(t => `<details class="context-card" data-refresh-key="${esc(t.id ?? t.name)}"><summary>Tag: ${esc(t.name)} · ${(t.memories || []).length} memories</summary><pre>${esc(t.description)}</pre>${this.memoryHTML(t.memories)}</details>`).join('');
+      patchHTML(this.panel.querySelector('#tag-context'),contextHTML);
+      patchHTML(this.panel.querySelector('#sessions'),(d.sessions || []).map(s => `<div class="session" data-refresh-key="${esc(s.agent)}"><strong>${esc(s.agent)}</strong><span class="badge ${s.status === 'running' ? 'running' : ''}">${esc(s.status)}</span><code>${esc(s.session_id || 'Not started')}</code></div>`).join('') || '<p>No sessions yet.</p>');
       for (const s of d.sessions || []) if (!this.outputs.has(s.agent)) this.outputs.set(s.agent,{text:''});
       for(let page=0;page<10;page++) {
         const comments = await this.api(`/api/tasks/TSK-${id}/events?kind=comment&after=${this.commentCursor}`) || [];
@@ -221,9 +233,9 @@ class LoosterBoard extends HTMLElement {
           commentBox.append(article);
         }
         const content = `<span class="muted">${esc(c.actor_agent || c.agent || 'human')} · ${esc(new Date(c.created_at).toLocaleString())}</span><div class="description markdown-body">${renderMarkdown(c.body)}</div>`;
-        if(article.querySelector('.comment-content').innerHTML !== content) article.querySelector('.comment-content').innerHTML = content;
+        patchHTML(article.querySelector('.comment-content'),content);
         const files = attachmentsHTML(this.attachments,id,c.id,this.namespace);
-        if(article.querySelector('.comment-attachments').innerHTML !== files) article.querySelector('.comment-attachments').innerHTML = files;
+        patchHTML(article.querySelector('.comment-attachments'),files);
       }
       let pages = 0, more = true;
       while (more && pages++ < 10) {
@@ -237,7 +249,7 @@ class LoosterBoard extends HTMLElement {
       }
       const select = this.panel.querySelector('#log-agent'), agents = [...this.outputs.keys()].sort();
       const options = agents.map(a => `<option value="${esc(a)}">${esc(a)}</option>`).join('');
-      if (select.innerHTML !== options) select.innerHTML = options;
+      patchHTML(select,options);
       if (!agents.includes(this.logAgent)) this.logAgent = agents[0] || '';
       select.value = this.logAgent; select.disabled = !agents.length;
       this.paintOutput(); this.panel.querySelector('#output-note').textContent = more ? 'Loading output in batches…' : 'Updates every 5 seconds. Scroll up to pause following output.';
@@ -252,7 +264,7 @@ class LoosterBoard extends HTMLElement {
       this.attachments = result || [];
       this.panel.querySelector('#attachment-notice').textContent = '';
       const html = attachmentsHTML(this.attachments,id,null,this.namespace), box = this.panel.querySelector('#description-attachments');
-      if(box.innerHTML !== html) box.innerHTML = html;
+      patchHTML(box,html);
     } catch(error) {
       if(current() && error.name !== 'AbortError') this.panel.querySelector('#attachment-notice').textContent = `Could not load attachments: ${error.message}`;
     }
@@ -296,7 +308,7 @@ class LoosterBoard extends HTMLElement {
     const box = this.panel.querySelector('#session-output'); if (!box) return;
     const follow = box.dataset.agent !== this.logAgent || box.scrollHeight-box.scrollTop-box.clientHeight < 40;
     const text = this.outputs.get(this.logAgent)?.text || 'No output yet.';
-    if (box.textContent !== text) box.textContent = text;
+    if (box.textContent !== text) patchHTML(box,esc(text));
     box.dataset.agent = this.logAgent; if(follow) box.scrollTop = box.scrollHeight;
   }
   renderPage() {
@@ -319,17 +331,12 @@ class LoosterBoard extends HTMLElement {
     this.manifestID = (this.manifests || []).some(m => m.id === this.manifestID) ? this.manifestID : (this.manifests || []).find(m => m.active)?.id || this.manifests?.[0]?.id;
     const html = this.page === 'servers' ? serversHTML(this.status) : behavioursHTML(this.system,this.library,m => this.memoryHTML(m),this.manifests,this.manifestID);
     if(this.pageHTML !== html) {
-      const expanded = new Set([...panel.querySelectorAll('details[open][data-section]')].map(d => d.dataset.section));
-      const focused = document.activeElement;
-      const agent = focused?.dataset.agent, task = focused?.dataset.task;
-      panel.innerHTML = html; this.pageHTML = html;
-      panel.querySelectorAll('[data-section]').forEach(d => d.open = expanded.has(d.dataset.section));
+      if(panel.dataset.refreshPage !== this.page) { panel.replaceChildren(); panel.dataset.refreshPage = this.page; }
+      patchHTML(panel,html); this.pageHTML = html;
       panel.querySelectorAll('[data-task]').forEach(a => a.onclick = () => this.open(Number(a.dataset.task)));
       panel.querySelectorAll('[data-agent]').forEach(a => a.onclick = () => this.openAgent(a.dataset.agent));
-      if(this.page === 'system') panel.querySelector('workflow-graph').rules = this.system?.behaviours || [];
-      if(agent) panel.querySelector('[data-agent="'+CSS.escape(agent)+'"]')?.focus();
-      else if(task) panel.querySelector('[data-task="'+CSS.escape(task)+'"]')?.focus();
     }
+    if(this.page === 'system') panel.querySelector('workflow-graph').rules = this.system?.behaviours || [];
   }
   openAgent(name) {
     const agent = this.library?.agents?.find(a => a.name === name);
@@ -340,27 +347,31 @@ class LoosterBoard extends HTMLElement {
     this.dialog.showModal();
   }
   memoryHTML(memories) {
-    return (memories || []).map(m => `<div class="memory"><span class="muted">MEM-${m.id}${m.created_at ? ' · '+esc(new Date(m.created_at).toLocaleString()) : ''}</span><pre>${esc(m.body)}</pre></div>`).join('') || '<p class="muted">No memories yet.</p>';
+    return (memories || []).map(m => `<div class="memory" data-refresh-key="memory:${esc(m.id)}"><span class="muted">MEM-${m.id}${m.created_at ? ' · '+esc(new Date(m.created_at).toLocaleString()) : ''}</span><pre>${esc(m.body)}</pre></div>`).join('') || '<p class="muted">No memories yet.</p>';
   }
   searchIndex() {
     const items = [];
-    for(const t of this.data?.tasks || []) items.push({kind:'Task',label:`TSK-${t.id} · ${t.name}`,detail:t.description || t.status,search:`TSK-${t.id} ${t.name} ${t.description} ${t.status} ${(t.tags || []).join(' ')}`,open:() => this.open(t.id)});
-    for(const a of this.library?.agents || this.data?.agents || []) items.push({kind:'Agent',label:`@ ${a.name}`,detail:a.description || '',search:`agent ${a.name} ${a.description || ''} ${(a.memories || []).map(m => m.body).join(' ')}`,open:() => this.openAgent(a.name)});
-    for(const t of this.library?.tags || []) items.push({kind:'Tag',label:`# ${t.name}`,detail:t.description || '',search:`tag ${t.name} ${t.description || ''} ${(t.memories || []).map(m => m.body).join(' ')}`,open:() => { location.hash = 'system'; setTimeout(() => this.querySelector(`[data-tag="${CSS.escape(t.name)}"]`)?.scrollIntoView({block:'center'}),0); }});
-    for(const r of (this.system?.behaviours || []).filter(r => !['prompt','agent','tag'].includes(r.trigger))) items.push({kind:'Workflow',label:ruleLabel(r),detail:r.prompt || '',search:`workflow ${ruleLabel(r)} ${r.trigger.startsWith('stop_') ? 'verified stop pinging' : ''} ${r.source || ''} ${r.prompt || ''}`,open:() => { location.hash = 'system'; setTimeout(() => this.querySelector('workflow-graph')?.scrollIntoView({block:'center'}),0); }});
-    for(const w of this.status?.workers || []) items.push({kind:'Server',label:w.id,detail:(w.agents || []).join(', '),search:`server ${w.id} ${(w.agents || []).join(' ')}`,open:() => { location.hash = 'servers'; }});
-    for(const s of (this.data?.sessions || []).filter(s => !isTasklessSession(s))) items.push({kind:'Session',label:`TSK-${s.task_id} · ${s.agent}`,detail:s.status,search:`session ${s.task_id} ${s.agent} ${s.status} ${s.session_id || ''}`,open:() => this.open(s.task_id,s.agent)});
-    items.unshift({kind:'Action',label:'Create task',detail:'Add a new task',search:'new create add task',open:() => this.openCreate('task')});
+    for(const t of this.data?.tasks || []) items.push({key:`task:${t.id}`,kind:'Task',label:`TSK-${t.id} · ${t.name}`,detail:t.description || t.status,search:`TSK-${t.id} ${t.name} ${t.description} ${t.status} ${(t.tags || []).join(' ')}`,open:() => this.open(t.id)});
+    for(const a of this.library?.agents || this.data?.agents || []) items.push({key:`agent:${a.name}`,kind:'Agent',label:`@ ${a.name}`,detail:a.description || '',search:`agent ${a.name} ${a.description || ''} ${(a.memories || []).map(m => m.body).join(' ')}`,open:() => this.openAgent(a.name)});
+    for(const t of this.library?.tags || []) items.push({key:`tag:${t.name}`,kind:'Tag',label:`# ${t.name}`,detail:t.description || '',search:`tag ${t.name} ${t.description || ''} ${(t.memories || []).map(m => m.body).join(' ')}`,open:() => { location.hash = 'system'; setTimeout(() => this.querySelector(`[data-tag="${CSS.escape(t.name)}"]`)?.scrollIntoView({block:'center'}),0); }});
+    for(const r of (this.system?.behaviours || []).filter(r => !['prompt','agent','tag'].includes(r.trigger))) items.push({key:`workflow:${JSON.stringify([r.trigger,r.source || '',r.target,r.interval_seconds || 0,r.tag_pattern || '',Boolean(r.tag_negated)])}`,kind:'Workflow',label:ruleLabel(r),detail:r.prompt || '',search:`workflow ${ruleLabel(r)} ${r.trigger.startsWith('stop_') ? 'verified stop pinging' : ''} ${r.source || ''} ${r.prompt || ''}`,open:() => { location.hash = 'system'; setTimeout(() => this.querySelector('workflow-graph')?.scrollIntoView({block:'center'}),0); }});
+    for(const w of this.status?.workers || []) items.push({key:`server:${w.id}`,kind:'Server',label:w.id,detail:(w.agents || []).join(', '),search:`server ${w.id} ${(w.agents || []).join(' ')}`,open:() => { location.hash = 'servers'; }});
+    for(const s of (this.data?.sessions || []).filter(s => !isTasklessSession(s))) items.push({key:`session:${s.task_id}:${s.agent}`,kind:'Session',label:`TSK-${s.task_id} · ${s.agent}`,detail:s.status,search:`session ${s.task_id} ${s.agent} ${s.status} ${s.session_id || ''}`,open:() => this.open(s.task_id,s.agent)});
+    items.unshift({key:'action:create',kind:'Action',label:'Create task',detail:'Add a new task',search:'new create add task',open:() => this.openCreate('task')});
     return items;
   }
-  openPalette() { this.paletteReturnFocus = document.activeElement; this.paletteInput.value=''; this.paletteSelection=0; this.palette.showModal(); this.renderPalette(); this.paletteInput.focus(); }
+  openPalette() { this.paletteReturnFocus = document.activeElement; this.paletteInput.value=''; this.paletteItems = []; this.paletteQuery = null; this.paletteSelection=0; this.palette.showModal(); this.renderPalette(); this.paletteInput.focus(); }
   renderPalette() {
+    const selected = this.paletteItems?.[this.paletteSelection]?.key;
+    const sameQuery = this.paletteQuery === this.paletteInput.value;
+    this.paletteQuery = this.paletteInput.value;
     this.paletteItems = searchItems(this.searchIndex(),this.paletteInput.value).slice(0,50);
-    this.paletteSelection = Math.min(this.paletteSelection || 0,Math.max(0,this.paletteItems.length-1));
-    this.palette.querySelector('.palette-results').innerHTML = this.paletteItems.map((item,i) => `<button type="button" role="option" aria-selected="${i === this.paletteSelection}" data-index="${i}"><span class="badge">${esc(item.kind)}</span><span><strong>${esc(item.label)}</strong><small>${esc(item.detail)}</small></span></button>`).join('') || '<p class="muted">No matches</p>';
+    const index = sameQuery ? this.paletteItems.findIndex(item => item.key === selected) : -1;
+    this.paletteSelection = index >= 0 ? index : Math.min(this.paletteSelection || 0,Math.max(0,this.paletteItems.length-1));
+    patchHTML(this.palette.querySelector('.palette-results'),this.paletteItems.map((item,i) => `<button data-refresh-key="${esc(item.key)}" type="button" role="option" aria-selected="${i === this.paletteSelection}" data-index="${i}"><span class="badge">${esc(item.kind)}</span><span><strong>${esc(item.label)}</strong><small>${esc(item.detail)}</small></span></button>`).join('') || '<p class="muted">No matches</p>');
   }
   paletteKey(e) {
-    if(e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); this.paletteSelection = Math.max(0,Math.min(this.paletteItems.length-1,this.paletteSelection+(e.key === 'ArrowDown' ? 1 : -1))); this.renderPalette(); this.palette.querySelector('[aria-selected="true"]')?.scrollIntoView({block:'nearest'}); }
+    if(e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); this.paletteSelection = Math.max(0,Math.min(this.paletteItems.length-1,this.paletteSelection+(e.key === 'ArrowDown' ? 1 : -1))); this.paletteQuery = null; this.renderPalette(); this.palette.querySelector('[aria-selected="true"]')?.scrollIntoView({block:'nearest'}); }
     if(e.key === 'Enter') { e.preventDefault(); this.selectPalette(this.paletteSelection); }
   }
   selectPalette(index) { const item=this.paletteItems[index]; if(!item) return; this.palette.close(); if(this.dialog.open) this.dialog.close(); item.open(); }
