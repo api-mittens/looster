@@ -104,7 +104,12 @@ func TestUpgradeExistingDatabasePreservesFactoryData(t *testing.T) {
 		out := map[string]string{}
 		for _, table := range []string{"events", "jobs", "sessions", "memories", "attachments", "task_tags"} {
 			var body string
-			query := "SELECT coalesce(jsonb_agg(to_jsonb(x) ORDER BY to_jsonb(x)::text),'[]'::jsonb)::text FROM " + table + " x"
+			projection := "to_jsonb(x)"
+			if table == "jobs" {
+				// Migration 017 adds nullable/default-only staging metadata.
+				projection = "(to_jsonb(x)-'started_at'-'summary')"
+			}
+			query := "SELECT coalesce(jsonb_agg(" + projection + " ORDER BY " + projection + "::text),'[]'::jsonb)::text FROM " + table + " x"
 			if err := old.QueryRow(ctx, query).Scan(&body); err != nil {
 				t.Fatal(err)
 			}
