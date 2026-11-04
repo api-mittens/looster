@@ -89,7 +89,7 @@ func TestScheduledJobsStartFreshSessions(t *testing.T) {
 		if l.failed != nil {
 			t.Fatal(l.failed)
 		}
-		if h.run.SessionID != "" || h.run.Task.ID != 0 || h.run.Workdir != "" || h.run.Prompt != "Triage agent instructions.\n\n"+l.job.Prompt {
+		if h.run.SessionID != "" || h.run.Task.ID != 0 || h.run.Workdir != "" || h.run.Prompt != "Triage agent instructions.\n\n"+l.job.Prompt+sessionSummaryInstruction {
 			t.Fatalf("scheduled ping acquired unwanted context: %+v", h.run)
 		}
 		if h.run.ArchivePrefix == previousPrefix || !strings.Contains(objects.key, "/scheduled/") {
@@ -266,7 +266,7 @@ func TestWorkerLifecycle(t *testing.T) {
 				t.Fatalf("harness calls %d", h.calls)
 			}
 			if tc.runs > 0 && tc.runErr == nil {
-				for _, want := range []string{"Important requirement", "agent context", "tag context", "Design instructions: match the established system.", "spec.txt", l.job.Prompt} {
+				for _, want := range []string{"Important requirement", "agent context", "tag context", "Design instructions: match the established system.", "spec.txt", l.job.Prompt, sessionSummaryInstruction} {
 					if !strings.Contains(h.run.Prompt, want) {
 						t.Errorf("prompt missing %s", want)
 					}

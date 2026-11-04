@@ -29,6 +29,8 @@ type Job struct {
 	Notification  bool
 }
 
+const sessionSummaryInstruction = "\n\nSession reporting requirement: End every run with a 4-5 sentence session summary in your final response, including runs with no task or no changes. Describe what you attempted, concrete outcomes and verification, and any blockers or unfinished work. Explicitly say when no work was performed and why. Do not claim success when execution failed or was blocked.\n"
+
 var ErrTaskClosed = errors.New("task closed")
 var ErrTaskPingStopped = errors.New("ping stopped by behaviour")
 
@@ -242,6 +244,7 @@ func (s *Service) process(ctx context.Context, c WorkerConfig, lease Lease) {
 			err = errors.New("job has no prompt")
 			return
 		}
+		prompt += sessionSummaryInstruction
 		if err = lease.Started(ctx); err != nil {
 			return
 		}
