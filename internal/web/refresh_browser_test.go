@@ -31,8 +31,8 @@ func TestRefreshPreservesUIBrowser(t *testing.T) {
  let revision=0, reverse=false;
  const task=id=>({id,name:'Task '+id+' revision '+revision,status:'todo',description:'Description '+revision,tags:['a','b']});
  b.api=async path=>{
-  if(path==='/api/board') return {tasks:[task(1),task(2)],agents:[],sessions:[]};
-  if(path==='/api/status') return {workers:[]};
+  if(path==='/api/board') return {tasks:[task(1),task(2)],agents:[{name:'aaa-offline'},{name:'coder'}],sessions:[{task_id:1,agent:'aaa-offline',status:'running'},{task_id:1,agent:'coder',status:'running'}]};
+  if(path==='/api/status') return {workers:[{id:'refresh-worker',agents:['coder']}]};
   if(path==='/api/system') return {behaviours:[]};
   if(path==='/api/library') return {agents:[{name:'coder',description:'Prompt '+revision}],tags:[{name:'a',description:'Tag '+revision,memories:[]}]};
   if(path==='/api/manifests') return [];
@@ -41,6 +41,32 @@ func TestRefreshPreservesUIBrowser(t *testing.T) {
  };
  const assert=(ok,message)=>{if(!ok) throw Error(message);};
  await b.refresh(); window.refreshTestStage='board';
+ assert(b.stagesCollapsed && b.querySelector('#toggle-stages').getAttribute('aria-expanded')==='false','stages not collapsed by default');
+ assert(!b.board.querySelector('[data-refresh-key="todo"]'),'collapsed stage rendered');
+ const onlineColumn=b.board.querySelector('[data-refresh-key="agent:coder"]');
+ const onlineCard=onlineColumn.querySelector('task-card'), onlineButton=onlineCard.querySelector('button');
+ const offline=()=>b.board.querySelector('[data-refresh-key="agent:aaa-offline"]');
+ const checkOnline=()=>{
+  assert(b.board.querySelector('[data-refresh-key="agent:coder"]')===onlineColumn,'online column replaced');
+  assert(onlineColumn.querySelector('task-card')===onlineCard && onlineCard.querySelector('button')===onlineButton,'online card/button replaced');
+  assert(document.activeElement===onlineButton,'online focus lost');
+ };
+ onlineButton.focus();
+ assert(!offline(),'offline agent visible by default');
+ for(let i=0;i<2;i++){
+  b.querySelector('#toggle-offline-agents').click();
+  assert(!!offline(),'offline toggle did not show agent'); checkOnline();
+  await b.refresh(); checkOnline();
+  assert(!!offline(),'refresh hid expanded offline agent');
+  b.querySelector('#toggle-offline-agents').click();
+  assert(!offline(),'offline toggle did not hide agent'); checkOnline();
+  await b.refresh(); checkOnline();
+  assert(!offline(),'refresh restored filtered offline agent');
+ }
+ // Stages are now opt-in. Show them explicitly for the stage-card checks.
+ b.querySelector('#toggle-stages').click();
+ assert(!b.stagesCollapsed && !!b.board.querySelector('[data-refresh-key="todo"]'),'stages did not expand');
+ checkOnline();
  const card=b.board.querySelector('task-card'), button=card.querySelector('button');
  button.focus();
  for(let i=0;i<3;i++) await b.refresh();
@@ -104,7 +130,7 @@ func TestRefreshPreservesUIBrowser(t *testing.T) {
 })().catch(e=>window.refreshTestResult=e.stack || String(e));`
 	if err := chromedp.Run(tab,
 		chromedp.Navigate(server.URL+"/#board"),
-		chromedp.WaitVisible("task-card"),
+		chromedp.WaitVisible("#toggle-stages"),
 		chromedp.Evaluate(script, nil, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }),
 		chromedp.Evaluate(`window.refreshTestResult`, &result),
 	); err != nil {

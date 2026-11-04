@@ -4,14 +4,38 @@ package web
 const namespaceProbe = `import {behavioursHTML,ruleLabel} from './static/views.mjs';
 import {layout} from './static/workflow.mjs';
 
-function boardHarness(fetch) {
+function boardHarness(fetch, globals={}) {
   const classes = new Map();
-  const context = vm.createContext({HTMLElement:class {},customElements:{define:(name,type) => classes.set(name,type)},URL,AbortController,DOMException,location:{origin:'http://localhost'},fetch,queueMicrotask});
+  const context = vm.createContext({HTMLElement:class {},customElements:{define:(name,type) => classes.set(name,type)},URL,AbortController,DOMException,location:{origin:'http://localhost'},fetch,queueMicrotask,...globals});
   vm.runInContext(readFileSync(new URL('./static/app.js','file:./probe'),'utf8').replace(/^import .*;\n/gm,''),context);
   const board = new (classes.get('looster-board'))();
   Object.assign(board,{namespace:'alpha',generation:0,controller:new AbortController()});
   return board;
 }
+
+test('list defaults hide stages and offline agents with independent reversible controls',()=>{
+  const sections=[], controls=new Map();
+  const control=s=>{if(!controls.has(s)) controls.set(s,{setAttribute(k,v){this[k]=v;}});return controls.get(s);};
+  // This probe asserts generated visibility markup, not DOM reconciliation.
+  // Real keyed identity/focus behavior is exercised by the browser fixtures.
+  const patchHTML=(_root,html)=>{sections.length=0;sections.push(...(html.match(/<section\b[\s\S]*?<\/section>/g)||[]).map(html=>({html})));};
+  const document={activeElement:{}};
+  const board=boardHarness(async()=>{}, {document,patchHTML,sortTasksByStatusChanges:tasks=>tasks});
+  Object.assign(board,{page:'board',search:{value:''},data:{tasks:[],agents:[{name:'live'},{name:'offline'}],sessions:[{agent:'historical',status:'done'}]},status:{workers:[{agents:['live']}]},board:{contains:()=>false,replaceChildren(){sections.length=0;},append(s){sections.push(s);},querySelectorAll:()=>[],querySelector:()=>null}});
+  board.querySelector=control;board.querySelectorAll=()=>[];
+  const labels=()=>sections.map(s=>s.html);
+  board.render();assert.equal(sections.length,1);assert.match(labels()[0],/@ live/);
+  board.toggleOfflineAgents();assert.equal(sections.length,3);assert.equal(control('#toggle-offline-agents')['aria-expanded'],'true');assert.equal(control('#toggle-offline-agents').textContent,'Hide offline agents');
+  assert.ok(labels().some(s=>s.includes('@ historical')));
+  board.toggleStages();assert.equal(sections.length,7);assert.equal(control('#toggle-stages')['aria-expanded'],'true');
+  board.render();assert.equal(sections.length,7);
+  board.toggleOfflineAgents();assert.equal(sections.length,5);assert.equal(control('#toggle-offline-agents')['aria-expanded'],'false');
+  board.toggleStages();assert.equal(sections.length,1);
+  board.status={workers:[]};board.render();assert.equal(sections.length,0);
+  board.status={workers:[{agents:['offline']}]};board.render();assert.equal(sections.length,1);assert.match(labels()[0],/@ offline/);
+  board.page='servers';board.renderPage=()=>{};board.render();assert.equal(control('#toggle-offline-agents').hidden,true);assert.equal(control('#toggle-stages').hidden,true);
+  board.page='board';board.render();assert.equal(control('#toggle-offline-agents').hidden,false);assert.equal(sections.length,1);
+});
 
 test('manifest view shows full source, prior immutable versions, activation and escaping',() => {
   const source='agents:\n  coder:\n    prompt: |\n      <script>alert(1)</script>\ntags:\n  design: Full tag prompt\n';
@@ -82,7 +106,9 @@ test('namespace switch clears all cached data, dialogs, cursors, search and form
   Object.assign(board,{graphStatuses:['closed'],data:{},status:{},system:{},library:{},manifests:[{}],manifestID:1,detailID:1,cursor:10,commentCursor:20,selected:'todo/1',pageHTML:'old',paletteItems:[{}],panel:control('panel'),board:control('board'),search:control('search'),paletteInput:control('paletteInput')});
   let refreshed=false;board.refresh=()=>{refreshed=true;};
   const signal=board.controller.signal;
+  board.stagesCollapsed=false;board.offlineAgentsCollapsed=false;
   board.switchNamespace('beta');
+  assert.equal(board.stagesCollapsed,false);assert.equal(board.offlineAgentsCollapsed,false);
   assert.ok(signal.aborted); assert.ok(closed); assert.ok(refreshed);
   for(const key of ['data','status','system','library','manifests','manifestID','detailID','selected','pageHTML']) assert.equal(board[key],null,key);
   assert.equal(board.cursor,0); assert.equal(board.commentCursor,0);
