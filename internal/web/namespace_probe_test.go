@@ -16,8 +16,11 @@ function boardHarness(fetch, globals={}) {
 test('list defaults hide stages and offline agents with independent reversible controls',()=>{
   const sections=[], controls=new Map();
   const control=s=>{if(!controls.has(s)) controls.set(s,{setAttribute(k,v){this[k]=v;}});return controls.get(s);};
-  const document={activeElement:{},createElement:()=>({querySelector:()=>({}),set innerHTML(v){this.html=v;}})};
-  const board=boardHarness(async()=>{}, {document,sortTasksByStatusChanges:tasks=>tasks});
+  // This probe asserts generated visibility markup, not DOM reconciliation.
+  // Real keyed identity/focus behavior is exercised by the browser fixtures.
+  const patchHTML=(_root,html)=>{sections.length=0;sections.push(...(html.match(/<section\b[\s\S]*?<\/section>/g)||[]).map(html=>({html})));};
+  const document={activeElement:{}};
+  const board=boardHarness(async()=>{}, {document,patchHTML,sortTasksByStatusChanges:tasks=>tasks});
   Object.assign(board,{page:'board',search:{value:''},data:{tasks:[],agents:[{name:'live'},{name:'offline'}],sessions:[{agent:'historical',status:'done'}]},status:{workers:[{agents:['live']}]},board:{contains:()=>false,replaceChildren(){sections.length=0;},append(s){sections.push(s);},querySelectorAll:()=>[],querySelector:()=>null}});
   board.querySelector=control;board.querySelectorAll=()=>[];
   const labels=()=>sections.map(s=>s.html);
