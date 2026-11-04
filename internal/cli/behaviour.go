@@ -28,6 +28,13 @@ func (a *application) behaviourCommand() *cobra.Command {
 		}
 		return output(c, result)
 	}})
+	cmd.AddCommand(&cobra.Command{Use: "rules", Short: "List active rules with IDs for manual runs", Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error {
+		rules, err := a.repo.Behaviour(c.Context())
+		if err != nil {
+			return err
+		}
+		return output(c, rules)
+	}})
 	for _, mode := range []string{"apply", "check"} {
 		mode := mode
 		var file string

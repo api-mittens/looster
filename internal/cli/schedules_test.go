@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/api-mittens/looster/internal/app"
+	"github.com/api-mittens/looster/internal/behaviour"
 	"strings"
 	"testing"
 )
@@ -23,6 +24,25 @@ func (r *scheduleRecorder) RunSchedule(_ context.Context, id int64) (app.Schedul
 	r.id = id
 	return app.ScheduleRunResult{RuleID: id, Status: r.status, AgentName: "coder"}, r.err
 }
+func (r *scheduleRecorder) Behaviour(context.Context) ([]behaviour.Rule, error) {
+	return []behaviour.Rule{{ID: 42, Trigger: "every", Target: "coder", IntervalSeconds: 60}}, r.err
+}
+
+func TestBehaviourRules(t *testing.T) {
+	r := &scheduleRecorder{}
+	cmd := (&application{repo: r}).behaviourCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"rules"})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var rules []behaviour.Rule
+	if err := json.Unmarshal(out.Bytes(), &rules); err != nil || len(rules) != 1 || rules[0].ID != 42 {
+		t.Fatalf("active rules: %s, error %v", out.String(), err)
+	}
+}
+
 func TestBehaviourRun(t *testing.T) {
 	for _, status := range []string{"queued", "already_active"} {
 		r := &scheduleRecorder{status: status}
