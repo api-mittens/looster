@@ -13,6 +13,21 @@ import (
 
 func (a *application) behaviourCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "behaviour", Short: "Apply and activate complete versioned behaviour manifests"}
+	cmd.AddCommand(&cobra.Command{Use: "run RULE_ID", Short: "Run an active recurring rule now without changing its cadence", Args: cobra.ExactArgs(1), Annotations: map[string]string{"human": "true"}, RunE: func(c *cobra.Command, args []string) error {
+		id, err := strconv.ParseInt(args[0], 10, 64)
+		if err != nil || id < 1 {
+			return errors.New("rule ID must be a positive integer")
+		}
+		repo, ok := a.repo.(app.ManualScheduleRepository)
+		if !ok {
+			return errors.New("repository does not support manual schedules")
+		}
+		result, err := repo.RunSchedule(c.Context(), id)
+		if err != nil {
+			return err
+		}
+		return output(c, result)
+	}})
 	for _, mode := range []string{"apply", "check"} {
 		mode := mode
 		var file string
