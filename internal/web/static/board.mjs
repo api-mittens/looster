@@ -1,7 +1,15 @@
 const esc = v => String(v ?? '').replace(/[&<>"']/g,c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-export function sortTasksByStatusChanges(tasks) {
-  return [...tasks].sort((a,b) => (b.status_changes ?? 0)-(a.status_changes ?? 0) || a.id-b.id);
+// Fall back to creation when activity is unavailable, and put undated tasks last.
+// Keep the existing ID order as a deterministic tie-breaker.
+const timestamp = value => typeof value === 'string' && value.trim() ? Date.parse(value) : NaN;
+const activityTime = task => {
+  const activity = timestamp(task.last_activity_at), created = timestamp(task.created_at);
+  return Number.isFinite(activity) ? activity : Number.isFinite(created) ? created : -Infinity;
+};
+
+export function sortTasksByLatestActivity(tasks) {
+  return [...tasks].sort((a,b) => activityTime(b)-activityTime(a) || a.id-b.id);
 }
 
 export function taskCardHTML(t,s) {
