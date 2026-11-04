@@ -9,6 +9,8 @@ func ValidName(s string) bool { return validName.MatchString(s) }
 type Agent struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	// TasklessOnly is durable board placement metadata, not current liveness.
+	TasklessOnly bool `json:"taskless_only,omitempty"`
 }
 type Session struct {
 	// JobID identifies a taskless run before the harness supplies a session ID.
