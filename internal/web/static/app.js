@@ -3,7 +3,7 @@ import {renderMarkdown} from './markdown.mjs';
 import {serversHTML,behavioursHTML,ruleLabel} from './views.mjs';
 import {appendOutput} from './output.mjs';
 import {searchItems} from './search.mjs';
-import {sortTasksByStatusChanges,taskCardHTML} from './board.mjs';
+import {sortTasksByLatestActivity,taskCardHTML} from './board.mjs';
 import {attachmentsHTML,attachmentUploadHTML} from './attachments.mjs';
 import './workflow.js';
 import './task-graph.js';
@@ -170,7 +170,7 @@ class LoosterBoard extends HTMLElement {
     this.querySelector('main > p').textContent = this.page === 'graph' ? 'Explore tasks by status, tags and search. Planning and todo are shown by default. Animated links show active work, quiet links show past sessions.' : this.page === 'servers' ? 'Live workers, agent coverage, and interrupted sessions.' : this.page === 'system' ? 'How work moves through the factory.' : 'Follow tasks from planning through closure.';
     if(other) { this.renderPage(); return; }
     const focused = this.board.contains(document.activeElement), q = this.search.value.toLowerCase().trim();
-    const tasks = sortTasksByStatusChanges(this.data.tasks.filter(t => [t.name,t.description,t.status,`TSK-${t.id}`,...(t.tags || []),...this.data.sessions.filter(s => s.task_id === t.id).map(s => s.agent)].join(' ').toLowerCase().includes(q)));
+    const tasks = sortTasksByLatestActivity(this.data.tasks.filter(t => [t.name,t.description,t.status,`TSK-${t.id}`,...(t.tags || []),...this.data.sessions.filter(s => s.task_id === t.id).map(s => s.agent)].join(' ').toLowerCase().includes(q)));
     const names = [...new Set([...this.data.agents.map(a => a.name),...this.data.sessions.map(s => s.agent)])].sort();
     const cols = [...(this.stagesCollapsed ? [] : stages.map(s => ({key:s,label:s[0].toUpperCase()+s.slice(1),rows:tasks.filter(t => t.status === s).map(task => ({task}))}))),...names.map(n => ({key:'agent:'+n,label:'@ '+n,agent:true,online:(this.status?.workers || []).some(w => w.agents.includes(n)),rows:tasks.flatMap(task => this.data.sessions.filter(s => s.task_id === task.id && s.agent === n && s.status === 'running').map(session => ({task,session})))}))];
     this.querySelector('#summary').textContent = `${tasks.length} tasks · ${this.data.sessions.filter(s => s.status === 'running').length} running`;
