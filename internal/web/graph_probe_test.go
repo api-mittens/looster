@@ -9,6 +9,14 @@ test('model aggregates sessions without losing active state and uses worker onli
  assert.equal(graph.nodes.find(n=>n.key==='agent:dev').online,true);assert.equal(graph.nodes.find(n=>n.key==='agent:idle'),undefined);assert.equal(graph.nodes[0].total,13);
  assert.equal(buildGraph({tasks:[{id:1,status:'todo'},{id:'1',status:'todo'}]}).nodes.length,1);
 });
+test('active taskless agents survive task filtering without fabricated links',()=>{
+ const sessions=[{task_id:0,job_id:1,agent:'solo',status:'running'},{task_id:0,job_id:2,agent:'solo',status:'running'},{task_id:0,job_id:3,agent:'mixed',status:'running'},{task_id:1,job_id:4,agent:'mixed',status:'idle'},{task_id:0,job_id:5,agent:'ended',status:'idle'}];
+ const graph=buildGraph({tasks:[{id:1,status:'todo'}],sessions});
+ assert.deepEqual(graph.nodes.filter(n=>n.kind==='agent').map(n=>n.name),['mixed','solo']);assert.equal(graph.edges.length,1);assert.equal(graph.edges[0].target,'agent:mixed');assert.equal(graph.edges[0].active,false);
+ const filtered=buildGraph({tasks:[],sessions,selectedStatuses:[]});
+ assert.deepEqual(filtered.nodes.map(n=>n.key),['agent:mixed','agent:solo']);assert.equal(filtered.edges.length,0);
+});
+
 test('heatmap is absolute, sanitized, and thresholds are explained',()=>{
  for(const [total,level] of [[0,'green'],[9,'green'],[10,'yellow'],[24,'yellow'],[25,'red'],[1000,'red']]) assert.equal(activity({comment_count:total}).level,level);
  assert.deepEqual(activity({comment_count:-2,status_changes:Infinity}),{comments:0,changes:0,total:0,level:'green'});assert.match(HEATMAP_LEGEND,/25\+/);

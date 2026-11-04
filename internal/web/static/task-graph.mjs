@@ -1,3 +1,4 @@
+import {isTasklessSession} from './board.mjs';
 import {forceSimulation,forceLink,forceManyBody,forceCollide,forceX,forceY} from './d3-force-adapter.mjs';
 // Model/render helpers and deterministic D3 layout. No DOM dependencies.
 export const escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -41,7 +42,7 @@ export function buildGraph({tasks = [], agents = [], sessions = [], workers = []
     taskKeys.add(String(task.id));
     nodes.push({key:`task:${task.id}`, kind:'task', id:task.id, label:String(task.name ?? `TSK-${task.id}`), status:task.status, working:running.has(String(task.id)), ...activity(task),...taskRecency(task,{now,active:running.has(String(task.id))})});
   }
-  for (const session of sessions) if (taskKeys.has(String(session.task_id)) && session.agent) agentNames.add(String(session.agent));
+  for (const session of sessions) if ((taskKeys.has(String(session.task_id)) || (isTasklessSession(session) && session.status === 'running')) && session.agent) agentNames.add(String(session.agent));
   const online = new Set(workers.flatMap(w => Array.isArray(w.agents) ? w.agents : []));
   for (const name of [...agentNames].sort()) nodes.push({key:`agent:${name}`, kind:'agent', name, label:name, online:online.has(name)});
   const grouped = new Map();
