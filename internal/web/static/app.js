@@ -56,7 +56,7 @@ class LoosterBoard extends HTMLElement {
     this.querySelector('#page').addEventListener('tag-filter',e => { this.graphTags = e.detail.tags; this.renderPage(); });
     this.querySelector('#page').addEventListener('task-open',e => this.open(e.detail.id));
     this.querySelector('#page').addEventListener('change',e => { if(e.target.id === 'manifest-version') { this.manifestID = Number(e.target.value); this.renderPage(); } });
-    this.querySelector('#page').addEventListener('click',e => { if(e.target.closest('#activate-manifest')) this.activateManifest(); });
+    this.querySelector('#page').addEventListener('click',e => { if(e.target.closest('#activate-manifest')) this.activateManifest(); const run=e.target.closest('[data-run-schedule]'); if(run) this.runSchedule(Number(run.dataset.runSchedule)); });
     this.panel.onchange = e => { if(e.target.id === 'log-agent') { this.logAgent = e.target.value; this.paintOutput(); } else if(e.target.id === 'task-status') this.changeStatus(e.target); };
     this.panel.onsubmit = async e => {
       if(e.target.matches('.attachment-upload')) { e.preventDefault(); await this.uploadAttachments(e.target); return; }
@@ -111,7 +111,7 @@ class LoosterBoard extends HTMLElement {
   post(path, data) { return this.api(path,data); }
   switchNamespace(namespace) {
     this.controller.abort(); this.controller = new AbortController(); this.generation++;
-    this.namespace = namespace; this.goPrefix = 0;
+    this.namespace = namespace; this.goPrefix = 0; this.scheduleRuns = {};
     for(const dialog of this.querySelectorAll('dialog')) if(dialog.open) dialog.close();
     this.detailID = null; this.outputs = new Map(); this.comments = new Map(); this.detailQueued = false;
     this.cursor = 0; this.commentCursor = 0; this.logAgent = ''; this.selected = null;
@@ -124,6 +124,25 @@ class LoosterBoard extends HTMLElement {
     this.querySelector('#summary').textContent = ''; this.querySelector('#sync').textContent = '';
     this.palette.querySelector('.palette-results').replaceChildren(); this.returnFocus = null; this.paletteReturnFocus = null; this.createReturnFocus = null;
     this.querySelector('#notice').textContent = 'Loading namespace…'; this.refresh();
+  }
+  async runSchedule(id) {
+    this.scheduleRuns ||= {};
+    if(this.scheduleRuns[id]?.pending) return;
+    const generation = this.generation;
+    this.scheduleRuns[id] = {pending:true,message:'Queuing run…'};
+    this.renderPage();
+    try {
+      const result = await this.post(`/api/behaviours/${id}/run`,{});
+      if(generation !== this.generation) return;
+      if(!['queued','already_active'].includes(result.status)) throw Error('Unexpected run result');
+      this.scheduleRuns[id] = {message:result.status === 'queued' ? `Queued for ${result.agent_name}.` : `Already active for ${result.agent_name}. No duplicate run queued.`};
+    } catch(e) {
+      if(generation !== this.generation || e.name === 'AbortError') return;
+      let message=e.message;
+      try { message=JSON.parse(message).error || message; } catch {}
+      this.scheduleRuns[id] = {blocked:true,message:`Blocked: ${message}`};
+    }
+    if(generation === this.generation) this.renderPage();
   }
   async activateManifest() {
     const button = this.querySelector('#activate-manifest'); if(!button) return;
@@ -202,7 +221,7 @@ class LoosterBoard extends HTMLElement {
       if (this.outputs !== generation || this.detailID !== id || !this.dialog.open) return;
       const title = `TSK-${id} · ${d.task.name}`;
       patchHTML(this.querySelector('#dialog-title'),esc(title));
-      if (!this.panel.querySelector('#session-output')) this.panel.innerHTML = '<div class="task-status-control"><label for="task-status">Status</label><select id="task-status" aria-label="Task status"><option value="planning">Planning</option><option value="todo">Todo</option><option value="validated">Validated</option><option value="closed">Closed</option></select><span id="status-error" class="form-error" role="alert"></span></div><div class="description markdown-body" id="task-description"></div><div id="description-attachments"></div><div id="description-upload"></div><p id="attachment-notice" class="form-error" role="status"></p><div id="tag-context"></div><h3>Comments</h3><div id="task-comments"></div><form id="comment-form"><label>Add comment <textarea name="body" rows="3" required></textarea></label><p class="form-error" role="alert"></p><button type="submit">Post comment</button></form><h3>Sessions</h3><div id="sessions"></div><div class="output-heading"><h3>Session output</h3><label>Agent <select id="log-agent" aria-label="Session output agent"></select></label></div><pre id="session-output" class="session-output" tabindex="0" aria-label="Session output"></pre><p id="output-note" class="muted" role="status"></p>';
+      if (!this.panel.querySelector('#session-output')) this.panel.innerHTML = '<div class="task-status-control"><label for="task-status">Status</label><select id="task-status" aria-label="Task status"><option value="planning">Planning</option><option value="todo">Todo</option><option value="validated">Validated</option><option value="closed">Closed</option></select><span id="status-error" class="form-error" role="alert"></span></div><div class="description markdown-body" id="task-description"></div><div id="description-attachments"></div><div id="description-upload"></div><p id="attachment-notice" class="form-error" role="status"></p><div id="tag-context"></div><h3>Comments</h3><div id="task-comments"></div><form id="comment-form"><label>Add comment <textarea name="body" rows="3" required aria-describedby="comment-mention-hint"></textarea></label><p id="comment-mention-hint" class="muted">Mention @registered-agent to request a run on this task. Unknown agent names are ignored.</p><p class="form-error" role="alert"></p><button type="submit">Post comment</button></form><h3>Sessions</h3><div id="sessions"></div><div class="output-heading"><h3>Session output</h3><label>Agent <select id="log-agent" aria-label="Session output agent"></select></label></div><pre id="session-output" class="session-output" tabindex="0" aria-label="Session output"></pre><p id="output-note" class="muted" role="status"></p>';
       if(!this.panel.querySelector('#task-status').disabled) this.panel.querySelector('#task-status').value = d.task.status;
       patchHTML(this.panel.querySelector('#task-description'),renderMarkdown(d.task.description || 'No description.'));
       if(!this.panel.querySelector('#description-upload').firstChild) this.panel.querySelector('#description-upload').innerHTML = attachmentUploadHTML();
@@ -325,7 +344,7 @@ class LoosterBoard extends HTMLElement {
       return;
     }
     this.manifestID = (this.manifests || []).some(m => m.id === this.manifestID) ? this.manifestID : (this.manifests || []).find(m => m.active)?.id || this.manifests?.[0]?.id;
-    const html = this.page === 'servers' ? serversHTML(this.status) : behavioursHTML(this.system,this.library,m => this.memoryHTML(m),this.manifests,this.manifestID);
+    const html = this.page === 'servers' ? serversHTML(this.status) : behavioursHTML(this.system,this.library,m => this.memoryHTML(m),this.manifests,this.manifestID,this.scheduleRuns);
     if(this.pageHTML !== html) {
       if(panel.dataset.refreshPage !== this.page) { panel.replaceChildren(); panel.dataset.refreshPage = this.page; }
       patchHTML(panel,html); this.pageHTML = html;

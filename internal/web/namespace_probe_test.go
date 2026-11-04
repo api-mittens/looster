@@ -4,6 +4,55 @@ package web
 const namespaceProbe = `import {behavioursHTML,ruleLabel} from './static/views.mjs';
 import {layout} from './static/workflow.mjs';
 
+test('active schedules have separate stable rule controls even for one agent',()=>{
+  const rules=[{id:42,trigger:'every',target:'coder',interval_seconds:60,prompt:'<script>bad</script>'},{id:43,trigger:'every',target:'coder',interval_seconds:120},{id:44,trigger:'todo',target:'coder'}];
+  const html=behavioursHTML({behaviours:rules},{},()=>'',[],undefined,{42:{message:'Queued for coder.'},43:{blocked:true,message:'Blocked: Permission denied'}});
+  assert.match(html,/Rule #42/); assert.match(html,/Rule #43/);
+  assert.match(html,/data-run-schedule="42"/); assert.match(html,/data-run-schedule="43"/);
+  assert.ok(!html.includes('data-run-schedule="44"'));
+  assert.match(html,/Queued for coder/);assert.match(html,/Blocked: Permission denied/);
+  assert.ok(html.includes('&lt;script&gt;bad&lt;/script&gt;'));
+  const pending=behavioursHTML({behaviours:rules},{},()=>'',[],undefined,{42:{pending:true}});
+  assert.match(pending,/data-run-schedule="42" disabled/);
+  assert.match(behavioursHTML({}, {},()=>''),/No active schedules/);
+});
+
+test('manual runs post scoped rule IDs and display queued, duplicate and blocked results',async()=>{
+  const requests=[];
+  let status='queued',fail=false;
+  const board=boardHarness(async(url,options)=>{
+    requests.push({url,options});
+    return {ok:!fail,json:async()=>({rule_id:42,status,agent_name:'coder'}),text:async()=>JSON.stringify({error:'Permission denied'})};
+  });
+  board.renderPage=()=>{};
+  await board.runSchedule(42);
+  assert.equal(requests[0].url.searchParams.get('namespace'),'alpha');
+  assert.match(requests[0].url.href,/\/api\/behaviours\/42\/run/);
+  assert.equal(requests[0].options.method,'POST');assert.equal(requests[0].options.body,'{}');
+  assert.match(board.scheduleRuns[42].message,/Queued for coder/);
+  status='already_active';await board.runSchedule(42);
+  assert.match(board.scheduleRuns[42].message,/Already active/);
+  fail=true;await board.runSchedule(43);
+  assert.equal(board.scheduleRuns[43].blocked,true);assert.equal(board.scheduleRuns[43].message,'Blocked: Permission denied');
+  assert.match(board.scheduleRuns[42].message,/Already active/);
+});
+
+test('in-flight manual runs cannot duplicate or leak status across namespaces',async()=>{
+  let resolve,calls=0;
+  const board=boardHarness(()=>{calls++;return new Promise(r=>{resolve=r;});});
+  board.renderPage=()=>{};
+  const first=board.runSchedule(42);await board.runSchedule(42);assert.equal(calls,1);
+  board.namespace='beta';board.generation++;board.scheduleRuns={};
+  resolve({ok:true,json:async()=>({rule_id:42,status:'queued',agent_name:'coder'})});
+  await first;assert.equal(Object.keys(board.scheduleRuns).length,0);
+});
+
+test('task comments explain registered mention and ignored unknown name semantics',()=>{
+  const source=readFileSync(new URL('./static/app.js','file:./probe'),'utf8');
+  assert.ok(source.includes('aria-describedby="comment-mention-hint"'));
+  assert.ok(source.includes('Mention @registered-agent to request a run on this task. Unknown agent names are ignored.'));
+});
+
 function boardHarness(fetch, globals={}) {
   const classes = new Map();
   const context = vm.createContext({HTMLElement:class {},customElements:{define:(name,type) => classes.set(name,type)},URL,AbortController,DOMException,location:{origin:'http://localhost'},fetch,queueMicrotask,...globals});
