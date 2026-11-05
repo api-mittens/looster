@@ -1,9 +1,10 @@
+import {chronologicalEntries,sessionLogHTML} from './session-logs.mjs';
 import {appendOutput} from './output.mjs';
 import {patchHTML} from './refresh.mjs';
 import {renderMarkdown} from './markdown.mjs';
 import {serversHTML,behavioursHTML,ruleLabel} from './views.mjs';
 import {searchItems} from './search.mjs';
-import {sortTasksByLatestActivity,taskCardHTML,sessionCardHTML,boardAgentNames,activeTasklessSessions,isTasklessSession,taskSessionCardHTML} from './board.mjs';
+import {sortTasksForColumn,sortTasksByLatestActivity,taskCardHTML,sessionCardHTML,boardAgentNames,activeTasklessSessions,isTasklessSession,taskSessionCardHTML} from './board.mjs';
 import {attachmentsHTML,attachmentUploadHTML} from './attachments.mjs';
 import {runHistoryHTML,runDetailHTML} from './agent-runs.mjs';
 import './workflow.js';
@@ -206,7 +207,7 @@ class LoosterBoard extends HTMLElement {
     const focused = this.board.contains(document.activeElement), q = this.search.value.toLowerCase().trim();
     const tasks = sortTasksByLatestActivity(this.data.tasks.filter(t => [t.name,t.description,t.status,`TSK-${t.id}`,...(t.tags || []),...this.data.sessions.filter(s => s.task_id === t.id).map(s => s.agent)].join(' ').toLowerCase().includes(q)));
     const names = boardAgentNames(this.data.agents,this.data.sessions);
-    const cols = [...(this.stagesCollapsed ? [] : stages.map(s => ({key:s,label:s[0].toUpperCase()+s.slice(1),rows:tasks.filter(t => t.status === s).map(task => ({task}))}))),...names.map(n => ({key:'agent:'+n,label:'@ '+n,agent:true,online:(this.status?.workers || []).some(w => w.agents.includes(n)),rows:tasks.flatMap(task => this.data.sessions.filter(s => s.task_id === task.id && s.agent === n && s.status === 'running').map(session => ({task,session})))}))];
+    const cols = [...(this.stagesCollapsed ? [] : stages.map(s => ({key:s,label:s[0].toUpperCase()+s.slice(1),rows:sortTasksForColumn(tasks.filter(t => t.status === s),s).map(task => ({task}))}))),...names.map(n => ({key:'agent:'+n,label:'@ '+n,agent:true,online:(this.status?.workers || []).some(w => w.agents.includes(n)),rows:sortTasksForColumn(tasks,'agent').flatMap(task => this.data.sessions.filter(s => s.task_id === task.id && s.agent === n && s.status === 'running').map(session => ({task,session})))}))];
     cols.push({key:'other-sessions',label:'Other sessions',rows:activeTasklessSessions(this.data.sessions).map(session => ({session}))});
     this.querySelector('#summary').textContent = `${tasks.length} tasks · ${this.data.sessions.filter(s => s.status === 'running').length} running`;
     patchHTML(this.board,cols.filter(col => !col.agent || col.online || !this.offlineAgentsCollapsed).map(col => `<section data-refresh-key="${esc(col.key)}" class="column${col.agent ? ' agent' : ''}"><h2><span class="dot ${col.agent && !col.online ? 'offline' : ''}"></span>${esc(col.label)}${col.agent ? `<span class="muted">${col.online ? 'online' : 'offline'}</span>` : ''}<span class="count">${col.rows.length}</span></h2><div class="cards">${col.rows.map(row => `<task-card ${row.task ? `data-id="${esc(row.task.id)}"` : ''}${row.session?.job_id != null ? ` data-job-id="${esc(row.session.job_id)}"` : ''} data-key="${esc(col.key+'/'+(row.session?.job_id != null ? 'job:'+row.session.job_id : row.task.id))}">${row.task ? taskCardHTML(row.task,row.session) : sessionCardHTML(row.session)}</task-card>`).join('') || '<div class="empty">No tasks here</div>'}</div></section>`).join(''));
@@ -252,9 +253,17 @@ class LoosterBoard extends HTMLElement {
       await this.loadAttachments(id,generation);
       if(this.outputs !== generation || this.detailID !== id || !this.dialog.open) return;
       const commentBox = this.panel.querySelector('#task-comments');
-      if(this.comments.size) commentBox.querySelector('.no-comments')?.remove();
+      const entries = chronologicalEntries([...this.comments.values()],d.session_logs || d.task.session_logs || []);
+      if(entries.length) commentBox.querySelector('.no-comments')?.remove();
       else if(!commentBox.firstChild) commentBox.innerHTML = '<p class="muted no-comments">No comments yet.</p>';
-      for(const c of this.comments.values()) {
+      let entryIndex = 0;
+      const placeEntry = article => { const current = commentBox.children[entryIndex++]; if(current !== article) commentBox.insertBefore(article,current || null); };
+      for(const c of entries) {
+        if(c.entryType === 'log') {
+          let logArticle = commentBox.querySelector(`[data-log-id="${Number(c.id)}"]`);
+          if(!logArticle) { logArticle = document.createElement('div'); logArticle.dataset.logId = c.id; }
+          patchHTML(logArticle,sessionLogHTML(c)); placeEntry(logArticle); continue;
+        }
         let article = commentBox.querySelector(`[data-comment-id="${c.id}"]`);
         if(!article) {
           article = document.createElement('article'); article.className = 'comment'; article.dataset.commentId = c.id;
@@ -265,6 +274,7 @@ class LoosterBoard extends HTMLElement {
         patchHTML(article.querySelector('.comment-content'),content);
         const files = attachmentsHTML(this.attachments,id,c.id,this.namespace);
         patchHTML(article.querySelector('.comment-attachments'),files);
+        placeEntry(article);
       }
     } catch(e) { if (this.outputs === generation && this.detailID === id) { const note = this.panel.querySelector('#output-note'); if(note) note.textContent = e.message; else this.panel.textContent = e.message; } }
     finally { if(this.detailBusy === generation) { this.detailBusy = null; if(this.detailQueued) { this.detailQueued=false; queueMicrotask(() => this.loadDetail(id)); } } }

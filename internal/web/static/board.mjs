@@ -30,7 +30,22 @@ export function sortTasksByLatestActivity(tasks) {
   return [...tasks].sort((a,b) => activityTime(b)-activityTime(a) || a.id-b.id);
 }
 
-export function taskCardHTML(t,s) {
+export function taskSignals(task) {
+  const logs = task.session_logs || [];
+  return {blocker:logs.some(log => log.kind === 'blocker'),question:logs.some(log => log.kind === 'question')};
+}
+export function sortTasksForColumn(tasks, column) {
+  const promote = column === 'agent' || column.startsWith('agent:') || ['planning','todo'].includes(column);
+  const priority = task => { const flags = taskSignals(task); return flags.blocker ? 2 : flags.question ? 1 : 0; };
+  return sortTasksByLatestActivity(tasks).sort((a,b) => promote ? priority(b)-priority(a) : 0);
+}
+export function taskCardAge(task, now = Date.now()) {
+  const age = (now-activityTime(task))/86400000;
+  const inactive = ['closed','validated'].includes(task.status) && Number.isFinite(age);
+  return {faded:inactive && age > 1,compact:inactive && age > 3};
+}
+export function taskCardHTML(t,s,now = Date.now()) {
   const statuses = t.status_changes ?? 0, comments = t.comment_count ?? 0;
-  return `<button tabindex="-1"><div class="card-top"><span class="ref">TSK-${esc(t.id)}</span><div class="task-counters"><span class="activity-count" title="Status changes (including initial status)" aria-label="${esc(statuses)} status changes including initial status">Status ${esc(statuses)}</span><span class="activity-count" title="Comments" aria-label="${esc(comments)} comments">Comments ${esc(comments)}</span></div></div><h3>${esc(t.name)}</h3><div class="badges"><span class="badge ${s?.status === 'running' ? 'running' : ''}">${esc(s?.status || t.status)}</span>${(t.tags || []).map(tag => `<span class="badge">${esc(tag)}</span>`).join('')}</div></button>`;
+  const flags = taskSignals(t), age = taskCardAge(t,now);
+  return `<button tabindex="-1" class="${flags.blocker ? 'task-blocked ' : ''}${age.faded ? 'task-faded ' : ''}${age.compact ? 'task-compact' : ''}"${age.compact ? ` aria-label="TSK-${esc(t.id)}: ${esc(t.name)}, ${esc(t.status)}${flags.blocker ? ', historical blocker log' : ''}${flags.question ? ', historical question log' : ''}" title="${esc(t.name)}"` : ''}><div class="card-top"><span class="ref">TSK-${esc(t.id)}</span><div class="task-counters"><span class="activity-count" title="Status changes (including initial status)" aria-label="${esc(statuses)} status changes including initial status">Status ${esc(statuses)}</span><span class="activity-count" title="Comments" aria-label="${esc(comments)} comments">Comments ${esc(comments)}</span></div></div><h3>${esc(t.name)}</h3><div class="badges">${flags.blocker ? '<span class="badge signal-badge blocker-badge" aria-label="Historical blocker log"><span aria-hidden="true">⚠️</span><span class="signal-label"> Blocker</span></span>' : ''}${flags.question ? '<span class="badge signal-badge question-badge" aria-label="Historical question log"><span aria-hidden="true">❓</span><span class="signal-label"> Question</span></span>' : ''}<span class="badge ${s?.status === 'running' ? 'running' : ''}">${esc(s?.status || t.status)}</span>${(t.tags || []).map(tag => `<span class="badge">${esc(tag)}</span>`).join('')}</div></button>`;
 }

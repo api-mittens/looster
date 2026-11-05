@@ -3,7 +3,7 @@ package web
 // Behavioral probes execute only through their Go test entrypoints.
 const namespaceProbe = `import {behavioursHTML,ruleLabel} from './static/views.mjs';
 import {layout} from './static/workflow.mjs';
-import {sortTasksByLatestActivity,taskCardHTML,isTasklessSession,boardAgentNames,activeTasklessSessions,sessionCardHTML} from './static/board.mjs';
+import {sortTasksForColumn,sortTasksByLatestActivity,taskCardHTML,isTasklessSession,boardAgentNames,activeTasklessSessions,sessionCardHTML} from './static/board.mjs';
 
 test('active schedules have separate stable rule controls even for one agent',()=>{
   const rules=[{id:42,trigger:'every',target:'coder',interval_seconds:60,prompt:'<script>bad</script>'},{id:43,trigger:'every',target:'coder',interval_seconds:120},{id:44,trigger:'todo',target:'coder'}];
@@ -56,7 +56,7 @@ test('task comments explain registered mention and ignored unknown name semantic
 
 function boardHarness(fetch, globals={}) {
   const classes = new Map();
-  const context = vm.createContext({isTasklessSession,boardAgentNames,activeTasklessSessions,sessionCardHTML,HTMLElement:class {},customElements:{define:(name,type) => classes.set(name,type)},URL,AbortController,DOMException,location:{origin:'http://localhost'},fetch,queueMicrotask,...globals});
+  const context = vm.createContext({sortTasksForColumn,isTasklessSession,boardAgentNames,activeTasklessSessions,sessionCardHTML,HTMLElement:class {},customElements:{define:(name,type) => classes.set(name,type)},URL,AbortController,DOMException,location:{origin:'http://localhost'},fetch,queueMicrotask,...globals});
   vm.runInContext(readFileSync(new URL('./static/app.js','file:./probe'),'utf8').replace(/^import .*;\n/gm,''),context);
   const board = new (classes.get('looster-board'))();
   Object.assign(board,{namespace:'alpha',generation:0,controller:new AbortController()});
