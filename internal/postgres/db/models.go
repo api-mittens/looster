@@ -13,6 +13,20 @@ type Agent struct {
 	Description string
 }
 
+type AgentSessionRun struct {
+	JobID         int64
+	TaskID        int64
+	ContextTaskID int64
+	AgentName     string
+	SessionID     string
+	StartedAt     pgtype.Timestamptz
+	FinishedAt    pgtype.Timestamptz
+	Outcome       string
+	Summary       string
+	SummaryStatus string
+	Error         string
+}
+
 type Attachment struct {
 	ID        int64
 	TaskID    int64
@@ -42,6 +56,7 @@ type Event struct {
 	Body       string
 	CreatedAt  pgtype.Timestamptz
 	ActorAgent string
+	JobID      pgtype.Int8
 }
 
 type Job struct {
@@ -58,6 +73,8 @@ type Job struct {
 	ScheduleRuleID pgtype.Int8
 	ContextTaskID  pgtype.Int8
 	Notification   bool
+	StartedAt      pgtype.Timestamptz
+	Summary        string
 }
 
 type Memory struct {

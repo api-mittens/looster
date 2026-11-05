@@ -31,7 +31,9 @@ func TestSessionLiveness(t *testing.T) {
 	_, err = pool.Exec(ctx, `CREATE TEMP TABLE workers(id text,agents text[],last_seen timestamptz);
  CREATE TEMP TABLE jobs(id bigint,task_id bigint,context_task_id bigint,agent_name text,session_id text,state text);
  CREATE TEMP TABLE sessions(task_id bigint,agent_name text,session_id text,status text,PRIMARY KEY(task_id,agent_name));
- INSERT INTO sessions VALUES(987654321,'looster_liveness_test','','running');`)
+ INSERT INTO sessions VALUES(987654321,'looster_liveness_test','','running');
+ ALTER TABLE jobs ADD COLUMN summary text DEFAULT '', ADD COLUMN error text DEFAULT '';
+ CREATE TEMP TABLE agent_session_runs(job_id bigint,task_id bigint,agent_name text,session_id text,summary text,summary_status text,error text);`)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -7,6 +7,13 @@ export function boardAgentNames(agents, sessions) {
   const taskAgents = new Set(sessions.filter(s => !isTasklessSession(s)).map(s => s.agent));
   return [...new Set([...agents.map(a => a.name), ...sessions.map(s => s.agent)])].filter(n => n && (!standalone.has(n) || taskAgents.has(n))).sort();
 }
+export function taskSessionCardHTML(s) {
+  const outcome = s.status || s.outcome;
+  const state = s.summary_status || (outcome === 'running' ? 'pending' : ['failed','interrupted'].includes(outcome) ? outcome : 'missing');
+  const summary = s.short_summary || (s.summary ? String(s.summary).slice(0,280) : '') || ({pending:'Summary pending.',missing:'No summary recorded.',error:'Summary unavailable due to an error.',failed:'Run failed. No summary recorded.',interrupted:'Run interrupted. No summary recorded.'}[state]) || 'No summary recorded.';
+  return `<button type="button" class="session" data-refresh-key="job:${esc(s.job_id)}" data-task-session-job="${esc(s.job_id)}" data-session-agent="${esc(s.agent)}" data-session-status="${esc(s.status || s.outcome)}"${!Number.isSafeInteger(Number(s.job_id)) || Number(s.job_id) < 1 ? ' disabled' : ''} aria-label="Inspect ${esc(s.agent)} run ${esc(s.job_id)}"><strong>${esc(s.agent)}</strong><span class="badge ${s.status === 'running' ? 'running' : ''}">${esc(s.status || s.outcome)}</span><code>Run ${esc(s.job_id)} · ${esc(s.session_id || 'Not started')}</code><span class="muted">${esc(state)}</span><span class="task-session-summary">${esc(summary)}</span></button>`;
+}
+
 export function sessionCardHTML(s) {
   return `<button tabindex="-1" type="button" data-session-agent="${esc(s.agent)}" data-session-job="${esc(s.job_id || '')}" aria-label="Inspect ${esc(s.agent)} session"><div class="card-top"><span class="ref">Other session</span></div><h3>${esc(s.agent)}</h3><div class="badges"><span class="badge running">${esc(s.status)}</span></div><code>${esc(s.session_id || s.job_id)}</code></button>`;
 }

@@ -2,8 +2,10 @@ package agent
 
 import "time"
 
-// SessionRun is a durable, immutable result of one queued job. It is independent
-// of the mutable session binding, and survives task or agent removal.
+// SessionRun describes one queued job. Completed results are durable and
+// immutable, independent of the mutable session binding. Detail lookups can also
+// return live jobs with outcome pending/running/archiving, summary_status pending
+// until captured, and zero FinishedAt (and zero StartedAt before execution).
 type SessionRun struct {
 	JobID         int64     `json:"job_id"`
 	TaskID        int64     `json:"task_id"`

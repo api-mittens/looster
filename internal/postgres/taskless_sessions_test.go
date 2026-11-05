@@ -46,7 +46,9 @@ func TestTasklessSessions(t *testing.T) {
  (103,NULL,NULL,'coder','pending','pending'),
  (104,NULL,NULL,'coder','done','done'),
  (105,NULL,NULL,'coder','failed','failed'),
- (106,42,NULL,'coder','task-session','running');`)
+ (106,42,NULL,'coder','task-session','running');
+ ALTER TABLE jobs ADD COLUMN summary text DEFAULT '', ADD COLUMN error text DEFAULT '';
+ CREATE TEMP TABLE agent_session_runs(job_id bigint,task_id bigint,agent_name text,session_id text,summary text,summary_status text,error text);`)
 	owner, err := pgx.ConnectConfig(ctx, cfg.ConnConfig)
 	if err != nil {
 		t.Fatal(err)
@@ -83,7 +85,7 @@ func TestTasklessSessions(t *testing.T) {
 	if got[0].SessionID != "" || got[1].SessionID != "" {
 		t.Fatal("test requires concurrent runs before harness identity exists")
 	}
-	if got[3].TaskID != 42 || got[3].JobID != 0 || got[3].Status != "idle" {
+	if got[3].TaskID != 42 || got[3].JobID != 106 || got[3].Status != "idle" {
 		t.Fatalf("task session changed: %+v", got[3])
 	}
 	if filtered, err := store.Sessions(ctx, "other"); err != nil || len(filtered) != 0 {

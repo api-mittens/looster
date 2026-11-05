@@ -37,7 +37,16 @@ func (s *Store) SessionHistory(ctx context.Context, name string, taskID, beforeJ
 }
 
 func (s *Store) SessionRun(ctx context.Context, jobID int64) (agent.SessionRun, error) {
-	r, err := scanSessionRun(s.Pool.QueryRow(ctx, `SELECT `+sessionRunColumns+` FROM agent_session_runs WHERE job_id=$1`, jobID))
+	// Prefer the immutable result. Live jobs expose only inspector metadata, never
+	// prompts, archive bytes or arbitrary subprocess output. A single statement
+	// gives a consistent snapshot across completion's transactional handoff.
+	r, err := scanSessionRun(s.Pool.QueryRow(ctx, `SELECT `+sessionRunColumns+` FROM agent_session_runs WHERE job_id=$1
+ UNION ALL
+ SELECT id,coalesce(task_id,0),coalesce(context_task_id,0),agent_name,session_id,
+ coalesce(started_at,'0001-01-01 00:00:00+00'::timestamptz),'0001-01-01 00:00:00+00'::timestamptz,state,summary,
+ CASE WHEN summary<>'' THEN 'available' ELSE 'pending' END,error
+ FROM jobs WHERE id=$1 AND state IN ('pending','running','archiving')
+ AND NOT EXISTS (SELECT FROM agent_session_runs WHERE job_id=$1)`, jobID))
 	return r, repositoryError(err)
 }
 

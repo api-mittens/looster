@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/api-mittens/looster/internal/app"
@@ -22,8 +21,11 @@ func TestSessionHistoryInterruptedExecutionResumesWithoutStaleSummary(t *testing
 		t.Fatal(err)
 	}
 	l.Close()
-	if _, err := s.SessionRun(ctx, id); !errors.Is(err, app.ErrNotFound) {
-		t.Fatalf("interruption finalized job: %v", err)
+	if r, err := s.SessionRun(ctx, id); err != nil || r.Outcome != "pending" || !r.FinishedAt.IsZero() {
+		t.Fatalf("interrupted live detail: %+v %v", r, err)
+	}
+	if runs, err := s.SessionHistory(ctx, "queue_test", 0, 0, 10); err != nil || len(runs) != 0 {
+		t.Fatalf("interruption finalized job: %+v %v", runs, err)
 	}
 	if _, err := s.Pool.Exec(ctx, `UPDATE jobs SET available_at=now() WHERE id=$1`, id); err != nil {
 		t.Fatal(err)
