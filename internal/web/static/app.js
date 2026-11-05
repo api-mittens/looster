@@ -404,13 +404,13 @@ class LoosterBoard extends HTMLElement {
       const run = await this.api(`/api/agents/${encodeURIComponent(inspection.name)}/runs/${encodeURIComponent(id)}`);
       if((inspection.target ? this.sessionInspection !== inspection : this.agentInspection !== inspection) || inspection.runRequest !== request || !target.isConnected) return;
       target.innerHTML = runDetailHTML(run);
-      target.querySelector('[data-run-task]')?.addEventListener('click',() => { if(inspection.target) this.sessionDialog.close(); this.open(run.task_id); });
+      target.querySelector('[data-run-task]')?.addEventListener('click',() => { if(inspection.target) { this.sessionDialog.close(); if(this.detailID === run.task_id) return; } this.open(run.task_id); });
     } catch(err) {
       if((inspection.target ? this.sessionInspection !== inspection : this.agentInspection !== inspection) || inspection.runRequest !== request || !target.isConnected) return;
       const live = this.data?.sessions?.find(s => s.agent === inspection.name && String(s.job_id) === String(id) && s.status === 'running');
       target.innerHTML = err.status === 404 && live ? runDetailHTML({...live,outcome:'running',summary_status:'pending',summary:'This run is still running. Its final summary will be available after completion.'}) : '';
       if(!target.innerHTML) target.textContent = 'Run unavailable. '+err.message;
-      else target.querySelector('[data-run-task]')?.addEventListener('click',() => this.open(live.task_id));
+      else target.querySelector('[data-run-task]')?.addEventListener('click',() => { if(inspection.target) { this.sessionDialog.close(); if(this.detailID === live.task_id) return; } this.open(live.task_id); });
     }
   }
   memoryHTML(memories) {
