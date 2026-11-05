@@ -6,104 +6,149 @@ import {attachmentsHTML,attachmentURL,attachmentUploadHTML} from './attachments.
 
 function harness(fetch) {
   const classes = new Map();
-  const context = vm.createContext({HTMLElement:class {},customElements:{define:(name,type) => classes.set(name,type)},URL,AbortController,DOMException,FormData,location:{origin:'http://localhost'},fetch,queueMicrotask,attachmentsHTML,patchHTML:(root,html) => { root.innerHTML = html; }});
+  const context = vm.createContext({document:{activeElement:null},HTMLElement:class {},customElements:{define:(name,type) => classes.set(name,type)},URL,AbortController,DOMException,FormData,location:{origin:'http://localhost'},fetch,queueMicrotask,attachmentsHTML,patchHTML:(root,html) => { root.innerHTML = html; }});
   vm.runInContext(readFileSync(new URL('./app.js',import.meta.url),'utf8').replace(/^import .*;\n/gm,''),context);
   const board = new (classes.get('looster-board'))();
   Object.assign(board,{namespace:'alpha /&',generation:0,controller:new AbortController(),detailID:33});
   board.loadDetail = async id => { board.refreshed = id; };
   return board;
 }
-function uploadForm(eventId, count = 2) {
+function form(count = 2) {
   const input = {files:Array.from({length:count},(_,i) => new File([`body ${i}`],`${i}.txt`)),disabled:false};
-  const button = {disabled:false}, result = {textContent:''};
-  return {elements:{files:input},dataset:eventId ? {eventId:String(eventId)} : {},isConnected:true,
-    querySelector:selector => selector === 'button' ? button : result,
+  const button = {disabled:false,textContent:'Post comment',type:'submit'}, result = {textContent:''};
+  const elements = [input,button]; elements.files=input;
+  return {id:'comment-form',elements,isConnected:true,querySelector:s => s === '[type="submit"]' ? button : result,
     reset(){this.wasReset=true;},button,result};
 }
 
-test('attachments belong below description or their exact comment, never both',() => {
-  const files = [{id:1,name:'description.pdf',size:10},{id:2,event_id:12,name:'comment.png',size:20,previewable:true},{id:3,event_id:13,name:'other.txt',size:30}];
+test('saved attachments retain isolated grouping, safe previews and downloads',() => {
+  const files = [{id:1,name:'description.pdf',size:10},{id:2,event_id:12,name:'<comment>.png',size:20,previewable:true},{id:3,event_id:13,name:'other.txt',size:30}];
   assert.match(attachmentsHTML(files,33,null),/description.pdf/);
-  assert.doesNotMatch(attachmentsHTML(files,33,null),/comment.png|other.txt/);
+  assert.doesNotMatch(attachmentsHTML(files,33,null),/comment|other.txt/);
   const html = attachmentsHTML(files,33,12,'team /&');
-  assert.match(html,/comment.png/);
+  assert.match(html,/&lt;comment&gt;.png/);
   assert.doesNotMatch(html,/description.pdf|other.txt/);
-  assert.match(html,/attachments\/2\/preview\?namespace=team%20%2F%26/);
-  assert.match(html,/attachments\/2\/download\?namespace=team%20%2F%26/);
+  for(const action of ['preview','download']) assert.ok(html.includes(attachmentURL(33,2,action,'team /&')));
   assert.equal(attachmentsHTML(files,33,14),'');
+  assert.doesNotMatch(attachmentsHTML([{id:1,key:'https://evil.test',name:'fake.png'}],33,null),/<img|evil.test/);
+  assert.match(attachmentUploadHTML(),/multiple/);
+  assert.doesNotMatch(attachmentUploadHTML(),/required|<form|data-event-id/);
 });
 
-test('only validated backend preview route is used and all files have downloads',() => {
-  const html = attachmentsHTML([{id:1,name:'fake.png',key:'https://evil.test/file',preview_url:'https://evil.test/preview',size:1},{id:2,name:'<img src=x onerror="alert(1)">',size:2,previewable:true}],33,null);
-  assert.equal((html.match(/<img /g) || []).length,1);
-  assert.equal((html.match(/ download>/g) || []).length,2);
-  assert.doesNotMatch(html,/evil.test|<img src=x/);
-  assert.match(html,/&lt;img/);
-  assert.equal(attachmentURL(33,2,'download','a&b'),'/api/tasks/TSK-33/attachments/2/download?namespace=a%26b');
-  assert.doesNotMatch(attachmentUploadHTML(),/data-event-id/);
-  assert.match(attachmentUploadHTML(12),/data-event-id="12"/);
-});
-
-test('upload sends each file with exact comment event and namespace',async () => {
-  const calls = [];
-  const board = harness(async (url,options) => {calls.push({url,options});return {ok:true};});
-  const form = uploadForm(12);
-  await board.uploadAttachments(form);
+test('creation precedes multiple uploads using returned IDs and exact namespace',async () => {
+  const calls=[];
+  let created=false;
+  const board=harness(async (url,options) => {assert.ok(created);calls.push({url,options});return {ok:true};});
+  const f=form();
+  const saved=await board.saveCreation(f,async () => {created=true;return {taskID:77,eventID:123};});
+  assert.equal(saved.taskID,77);
   assert.equal(calls.length,2);
   for(const {url,options} of calls) {
+    assert.equal(url.pathname,'/api/tasks/TSK-77/attachments');
     assert.equal(url.searchParams.get('namespace'),'alpha /&');
-    assert.equal(options.method,'POST');
-    assert.equal(options.body.get('event_id'),'12');
+    assert.equal(options.body.get('event_id'),'123');
     assert.ok(options.body.get('file') instanceof File);
-    assert.equal(options.headers,undefined,'browser must generate multipart boundary');
+    assert.equal(options.headers,undefined);
   }
-  assert.match(form.result.textContent,/Uploaded 2 files/);
-  assert.equal(form.wasReset,true);
-  assert.equal(form.button.disabled,false);
-  assert.equal(board.refreshed,33);
+  assert.equal(f.wasReset,true);
+  assert.equal(f.button.disabled,false);
+  assert.equal(f.creation,undefined);
 });
 
-test('partial upload is explicit and retains selections, saved files refresh',async () => {
-  let calls = 0;
-  const board = harness(async () => ++calls === 1 ? {ok:true} : {ok:false,text:async () => 'S3 upload unavailable'});
-  const form = uploadForm(null,3);
-  await board.uploadAttachments(form);
-  assert.equal(calls,2,'stop instead of sending later files after failure');
-  assert.match(form.result.textContent,/Partial upload: 1 of 3 files uploaded/);
-  assert.match(form.result.textContent,/S3 upload unavailable/);
-  assert.match(form.result.textContent,/Select only the remaining files/);
-  assert.equal(form.wasReset,undefined);
-  assert.equal(board.refreshed,33);
-  assert.equal(form.elements.files.disabled,false);
+test('partial failure retries only remaining files without duplicate creation',async () => {
+  const names=[]; let creates=0, fail=true;
+  const board=harness(async (url,options) => {
+    const name=options.body.get('file').name; names.push(name);
+    return name === '1.txt' && fail ? {ok:false,text:async () => 'S3 unavailable'} : {ok:true};
+  });
+  const f=form(3), create=async () => {creates++;return {taskID:77,eventID:12};};
+  assert.equal(await board.saveCreation(f,create),false);
+  assert.match(f.result.textContent,/1 of 3.*S3 unavailable.*Retry remaining files/);
+  assert.equal(f.elements.files.disabled,true);
+  assert.equal(board.refreshed,77);
+  assert.equal(f.wasReset,undefined);
+  fail=false;
+  assert.ok(await board.saveCreation(f,create));
+  assert.equal(creates,1);
+  assert.deepEqual(names,['0.txt','1.txt','1.txt','2.txt']);
+  assert.equal(f.elements.files.disabled,false);
 });
 
-test('missing S3 failure is visible and does not clear selected files',async () => {
-  const board = harness(async () => ({ok:false,text:async () => 'S3 is not configured'}));
-  const form = uploadForm(null,1);
-  await board.uploadAttachments(form);
-  assert.match(form.result.textContent,/Upload failed.*S3 is not configured/);
-  assert.equal(form.wasReset,undefined);
-  assert.equal(board.refreshed,undefined);
+test('optional files create without upload and creation errors allow retry',async () => {
+  const board=harness(() => assert.fail('no upload expected')), f=form(0);
+  assert.equal(await board.saveCreation(f,async () => {throw Error('Invalid task');}),false);
+  assert.match(f.result.textContent,/Invalid task/);
+  assert.equal(f.button.disabled,false);
+  assert.ok(await board.saveCreation(f,async () => ({taskID:88})));
 });
 
-test('namespace switch during upload stops further files and discards stale UI result',async () => {
-  let resolve, calls = 0;
-  const board = harness(() => {calls++;return new Promise(r => {resolve=r;});});
-  const form = uploadForm(12);
-  const pending = board.uploadAttachments(form);
-  board.generation++; board.namespace = 'beta';
-  resolve({ok:true});
+test('task attachments omit event ID and storage errors retain resumable state',async () => {
+  const board=harness(async (url,options) => {
+    assert.equal(options.body.get('event_id'),null);
+    return {ok:false,text:async () => 'S3 is not configured'};
+  }), f=form(1);
+  await board.saveCreation(f,async () => ({taskID:77}));
+  assert.match(f.result.textContent,/Saved.*0 of 1.*S3 is not configured.*Retry/);
+  assert.equal(f.creation.taskID,77);
+  assert.equal(f.wasReset,undefined);
+});
+
+test('namespace switch during upload stops later files and stale UI writes',async () => {
+  let resolve, calls=0;
+  const board=harness(() => {calls++;return new Promise(r => {resolve=r;});}), f=form();
+  const pending=board.saveCreation(f,async () => ({taskID:77,eventID:12}));
+  await new Promise(setImmediate);
+  board.generation++; board.namespace='beta'; resolve({ok:true});
   await pending;
   assert.equal(calls,1);
-  assert.equal(form.wasReset,undefined);
+  assert.equal(f.wasReset,undefined);
   assert.equal(board.refreshed,undefined);
 });
 
-test('attachment read errors retain explicit backend S3 diagnostics',async () => {
-  const board = harness(async () => ({ok:false,text:async () => 'Attachment storage unavailable: S3 is not configured'}));
-  board.outputs = new Map(); board.dialog = {open:true};
-  const notice = {textContent:''};
-  board.panel = {querySelector:() => notice};
+test('duplicate submissions while creation is pending are ignored',async () => {
+  let resolve, creates=0;
+  const board=harness(async () => ({ok:true})), f=form(0);
+  const create=() => {creates++; return new Promise(r => {resolve=r;});};
+  const pending=board.saveCreation(f,create);
+  assert.equal(await board.saveCreation(f,create),false);
+  resolve({taskID:77}); await pending;
+  assert.equal(creates,1);
+});
+
+test('closing prior detail while task creation resolves does not discard saved ID',async () => {
+  let resolve;
+  const board=harness(async () => ({ok:true})), f=form(1);
+  f.id='create-form';
+  const pending=board.saveCreation(f,() => new Promise(r => {resolve=r;}));
+  board.detailID=null;
+  resolve({taskID:77});
+  assert.equal((await pending).taskID,77);
+  assert.equal(f.button.disabled,false);
+  assert.equal(f.wasReset,true);
+});
+
+test('reopening pending creation preserves selections and disabled submit',async () => {
+  let resolve;
+  const board=harness(async () => ({ok:true})), f=form(1);
+  f.id='create-form';
+  board.dialog={open:false};
+  board.querySelector=() => f;
+  board.createDialog={showModal(){this.open=true;}};
+  const pending=board.saveCreation(f,() => new Promise(r => {resolve=r;}));
+  board.openCreate('task');
+  assert.equal(board.createDialog.open,true);
+  assert.equal(f.wasReset,undefined);
+  assert.equal(f.saving,true);
+  assert.equal(f.button.disabled,true);
+  resolve({taskID:77});
+  await pending;
+  assert.equal(f.saving,undefined);
+});
+
+test('attachment read errors retain explicit backend diagnostics',async () => {
+  const board=harness(async () => ({ok:false,text:async () => 'S3 is not configured'}));
+  board.outputs=new Map(); board.dialog={open:true};
+  const notice={textContent:''}; board.panel={querySelector:() => notice};
   await board.loadAttachments(33,board.outputs);
   assert.match(notice.textContent,/Could not load attachments:.*S3 is not configured/);
 });

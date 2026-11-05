@@ -180,6 +180,8 @@ test('namespace switch clears all cached data, dialogs, cursors, search and form
   const board=boardHarness(async()=>{});
   const controls=new Map();
   const control=selector => {if(!controls.has(selector)) controls.set(selector,{value:'old',textContent:'old',replaceChildren(){this.cleared=true;},reset(){this.resetCalled=true;}});return controls.get(selector);};
+  control('#create-form').elements=[{disabled:true}];
+  control('#create-form').creation={taskID:9};
   board.querySelector=control; board.palette={querySelector:control};
   let closed=false;
   board.querySelectorAll=()=>[{open:true,close(){closed=true;}}];
@@ -195,6 +197,8 @@ test('namespace switch clears all cached data, dialogs, cursors, search and form
   assert.equal(board.outputs.size,0); assert.equal(board.comments.size,0);
   assert.equal(board.search.value,''); assert.equal(board.paletteInput.value,'');
   assert.ok(control('#page').cleared); assert.ok(control('#create-form').resetCalled);
+  assert.equal(control('#create-form').creation,undefined);
+  assert.equal(control('#create-form').elements[0].disabled,false);
   assert.equal(board.graphStatuses,undefined);
 });
 

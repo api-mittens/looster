@@ -25,7 +25,7 @@ class LoosterBoard extends HTMLElement {
   connectedCallback() {
     this.innerHTML = `<header><img class="logo" src="/logo.svg" alt="Looster" width="30" height="30"><strong>looster</strong><span>/ Workspace</span><div class="spacer"></div><button id="help">Shortcuts <kbd>?</kbd></button></header><main><h1>Task list</h1><p>Follow tasks from planning through closure.</p><div class="toolbar"><input type="search" aria-label="Search tasks" placeholder="Search tasks, tags, agents… /"><span id="summary" class="muted"></span><div class="spacer"></div><span id="sync" class="muted"></span><button id="refresh" title="Refresh (r)">Refresh <kbd>r</kbd></button></div><div id="notice" class="notice" role="status"></div><div class="board" aria-label="Task list"></div><div class="footer"><span><kbd>h</kbd> <kbd>l</kbd> columns</span><span><kbd>j</kbd> <kbd>k</kbd> tasks</span><span><kbd>Enter</kbd> details</span><span><kbd>/</kbd> search</span><span><kbd>n</kbd> new task</span><span>Hover or focus to trace a task across columns</span></div></main><dialog aria-labelledby="dialog-title"><div class="dialog-head"><h2 id="dialog-title"></h2><div class="spacer"></div><button id="close">Close <kbd>Esc</kbd></button></div><div class="detail" tabindex="0"></div></dialog>`;
     this.board = this.querySelector('.board'); this.search = this.querySelector('input'); this.dialog = this.querySelector('dialog'); this.panel = this.querySelector('.detail');
-    this.insertAdjacentHTML('beforeend',`<dialog id="palette" class="palette" aria-label="Search everything"><div class="palette-search"><input type="search" aria-label="Search everything" placeholder="Search tasks, agents, tags, workflows…" autocomplete="off"><kbd>Esc</kbd></div><div class="palette-results" role="listbox"></div><div class="palette-foot">↑ ↓ select · Enter open</div></dialog><dialog id="create-dialog" aria-labelledby="create-title"><form id="create-form"><div class="dialog-head"><h2 id="create-title"></h2><div class="spacer"></div><button type="button" id="create-close">Close</button></div><div class="form-body"><label>Name <input name="name" required></label><label>Description <textarea name="description" rows="5"></textarea></label><div id="task-fields"><label>Status <select name="status"><option value="planning">Planning</option><option value="todo">Todo</option><option value="validated">Validated</option><option value="closed">Closed</option></select></label><fieldset><legend>Tags</legend><div id="task-tags"></div></fieldset></div><p class="form-error" role="alert"></p><button type="submit">Create</button></div></form></dialog>`);
+    this.insertAdjacentHTML('beforeend',`<dialog id="palette" class="palette" aria-label="Search everything"><div class="palette-search"><input type="search" aria-label="Search everything" placeholder="Search tasks, agents, tags, workflows…" autocomplete="off"><kbd>Esc</kbd></div><div class="palette-results" role="listbox"></div><div class="palette-foot">↑ ↓ select · Enter open</div></dialog><dialog id="create-dialog" aria-labelledby="create-title"><form id="create-form"><div class="dialog-head"><h2 id="create-title"></h2><div class="spacer"></div><button type="button" id="create-close">Close</button></div><div class="form-body"><label>Name <input name="name" required></label><label>Description <textarea name="description" rows="5"></textarea></label>${attachmentUploadHTML()}<div id="task-fields"><label>Status <select name="status"><option value="planning">Planning</option><option value="todo">Todo</option><option value="validated">Validated</option><option value="closed">Closed</option></select></label><fieldset><legend>Tags</legend><div id="task-tags"></div></fieldset></div><p class="form-error" role="alert"></p><button type="submit">Create</button></div></form></dialog>`);
     this.palette = this.querySelector('#palette'); this.paletteInput = this.palette.querySelector('input'); this.createDialog = this.querySelector('#create-dialog');
     this.querySelector('.toolbar').insertAdjacentHTML('beforeend','<button id="new-task" title="New task (n)">New task <kbd>n</kbd></button>');
     this.querySelector('#new-task').onclick = () => this.openCreate('task');
@@ -62,12 +62,9 @@ class LoosterBoard extends HTMLElement {
     this.querySelector('#page').addEventListener('click',e => { if(e.target.closest('#activate-manifest')) this.activateManifest(); const run=e.target.closest('[data-run-schedule]'); if(run) this.runSchedule(Number(run.dataset.runSchedule)); });
     this.panel.onchange = e => { if(e.target.id === 'log-agent') { this.logAgent = e.target.value; this.paintOutput(); } else if(e.target.id === 'task-status') this.changeStatus(e.target); };
     this.panel.onsubmit = async e => {
-      if(e.target.matches('.attachment-upload')) { e.preventDefault(); await this.uploadAttachments(e.target); return; }
       if(e.target.id !== 'comment-form') return;
-      e.preventDefault(); const generation=this.generation, form=e.target, button=form.querySelector('button'); button.disabled=true;
-      try { await this.post(`/api/tasks/TSK-${this.detailID}/comments`,{body:form.elements.body.value}); form.reset(); form.querySelector('.form-error').textContent=''; await this.loadDetail(this.detailID); }
-      catch(err) { if(generation === this.generation && err.name !== 'AbortError') form.querySelector('.form-error').textContent=err.message; }
-      finally { button.disabled=false; }
+      e.preventDefault(); const form=e.target, id=this.detailID;
+      if(await this.saveCreation(form,async () => ({taskID:id,eventID:(await this.post(`/api/tasks/TSK-${id}/comments`,{body:form.elements.body.value})).event_id}))) await this.loadDetail(id);
     };
     this.search.oninput = () => this.render();
     this.querySelector('#refresh').onclick = () => this.refresh();
@@ -123,7 +120,10 @@ class LoosterBoard extends HTMLElement {
     this.graphStatuses = undefined;
     this.pageHTML = null; this.paletteItems = []; this.panel.replaceChildren(); this.board.replaceChildren();
     this.querySelector('#page').replaceChildren(); this.search.value = ''; this.paletteInput.value = '';
-    this.querySelector('#create-form').reset(); this.querySelector('#task-tags').replaceChildren();
+    const createForm = this.querySelector('#create-form');
+    createForm.reset(); delete createForm.creation; delete createForm.saving;
+    for(const field of createForm.elements) field.disabled = false;
+    this.querySelector('#task-tags').replaceChildren();
     this.querySelector('#summary').textContent = ''; this.querySelector('#sync').textContent = '';
     this.palette.querySelector('.palette-results').replaceChildren(); this.returnFocus = null; this.paletteReturnFocus = null; this.createReturnFocus = null;
     this.querySelector('#notice').textContent = 'Loading namespace…'; this.refresh();
@@ -225,10 +225,9 @@ class LoosterBoard extends HTMLElement {
       if (this.outputs !== generation || this.detailID !== id || !this.dialog.open) return;
       const title = `TSK-${id} · ${d.task.name}`;
       patchHTML(this.querySelector('#dialog-title'),esc(title));
-      if (!this.panel.querySelector('#session-output')) this.panel.innerHTML = '<div class="task-status-control"><label for="task-status">Status</label><select id="task-status" aria-label="Task status"><option value="planning">Planning</option><option value="todo">Todo</option><option value="validated">Validated</option><option value="closed">Closed</option></select><span id="status-error" class="form-error" role="alert"></span></div><div class="description markdown-body" id="task-description"></div><div id="description-attachments"></div><div id="description-upload"></div><p id="attachment-notice" class="form-error" role="status"></p><div id="tag-context"></div><h3>Comments</h3><div id="task-comments"></div><form id="comment-form"><label>Add comment <textarea name="body" rows="3" required aria-describedby="comment-mention-hint"></textarea></label><p id="comment-mention-hint" class="muted">Mention @registered-agent to request a run on this task. Unknown agent names are ignored.</p><p class="form-error" role="alert"></p><button type="submit">Post comment</button></form><h3>Sessions</h3><div id="sessions"></div><div class="output-heading"><h3>Session output</h3><label>Agent <select id="log-agent" aria-label="Session output agent"></select></label></div><pre id="session-output" class="session-output" tabindex="0" aria-label="Session output"></pre><p id="output-note" class="muted" role="status"></p>';
+      if (!this.panel.querySelector('#session-output')) this.panel.innerHTML = '<div class="task-status-control"><label for="task-status">Status</label><select id="task-status" aria-label="Task status"><option value="planning">Planning</option><option value="todo">Todo</option><option value="validated">Validated</option><option value="closed">Closed</option></select><span id="status-error" class="form-error" role="alert"></span></div><div class="description markdown-body" id="task-description"></div><div id="description-attachments"></div><p id="attachment-notice" class="form-error" role="status"></p><div id="tag-context"></div><h3>Comments</h3><div id="task-comments"></div><form id="comment-form"><label>Add comment <textarea name="body" rows="3" required aria-describedby="comment-mention-hint"></textarea></label><p id="comment-mention-hint" class="muted">Mention @registered-agent to request a run on this task. Unknown agent names are ignored.</p>'+attachmentUploadHTML()+'<p class="form-error" role="alert"></p><button type="submit">Post comment</button></form><h3>Sessions</h3><div id="sessions"></div><div class="output-heading"><h3>Session output</h3><label>Agent <select id="log-agent" aria-label="Session output agent"></select></label></div><pre id="session-output" class="session-output" tabindex="0" aria-label="Session output"></pre><p id="output-note" class="muted" role="status"></p>';
       if(!this.panel.querySelector('#task-status').disabled) this.panel.querySelector('#task-status').value = d.task.status;
       patchHTML(this.panel.querySelector('#task-description'),renderMarkdown(d.task.description || 'No description.'));
-      if(!this.panel.querySelector('#description-upload').firstChild) this.panel.querySelector('#description-upload').innerHTML = attachmentUploadHTML();
       const contextHTML = (d.context?.tags || []).map(t => `<details class="context-card" data-refresh-key="${esc(t.id ?? t.name)}"><summary>Tag: ${esc(t.name)} · ${(t.memories || []).length} memories</summary><pre>${esc(t.description)}</pre>${this.memoryHTML(t.memories)}</details>`).join('');
       patchHTML(this.panel.querySelector('#tag-context'),contextHTML);
       patchHTML(this.panel.querySelector('#sessions'),(d.sessions || []).map(s => `<div class="session" data-refresh-key="${esc(s.agent)}"><strong>${esc(s.agent)}</strong><span class="badge ${s.status === 'running' ? 'running' : ''}">${esc(s.status)}</span><code>${esc(s.session_id || 'Not started')}</code></div>`).join('') || '<p>No sessions yet.</p>');
@@ -248,7 +247,7 @@ class LoosterBoard extends HTMLElement {
         let article = commentBox.querySelector(`[data-comment-id="${c.id}"]`);
         if(!article) {
           article = document.createElement('article'); article.className = 'comment'; article.dataset.commentId = c.id;
-          article.innerHTML = '<div class="comment-content"></div><div class="comment-attachments"></div>'+attachmentUploadHTML(c.id);
+          article.innerHTML = '<div class="comment-content"></div><div class="comment-attachments"></div>';
           commentBox.append(article);
         }
         const content = `<span class="muted">${esc(c.actor_agent || c.agent || 'human')} · ${esc(new Date(c.created_at).toLocaleString())}</span><div class="description markdown-body">${renderMarkdown(c.body)}</div>`;
@@ -288,32 +287,52 @@ class LoosterBoard extends HTMLElement {
       if(current() && error.name !== 'AbortError') this.panel.querySelector('#attachment-notice').textContent = `Could not load attachments: ${error.message}`;
     }
   }
-  async uploadAttachments(form) {
-    const id = this.detailID, generation = this.generation, namespace = this.namespace;
-    const files = [...form.elements.files.files], button = form.querySelector('button'), input = form.elements.files, result = form.querySelector('.attachment-result');
-    if(!files.length || button.disabled) return;
-    const current = () => generation === this.generation && this.detailID === id && form.isConnected;
-    button.disabled = true; input.disabled = true; result.textContent = 'Uploading files…';
-    let uploaded = 0;
+  async saveCreation(form, create) {
+    const generation = this.generation, namespace = this.namespace, detailID = this.detailID;
+    const button = form.querySelector('[type="submit"]'), result = form.querySelector('.form-error');
+    if(button.disabled) return false;
+    const current = () => generation === this.generation && (form.id !== 'comment-form' || this.detailID === detailID) && form.isConnected;
+    const label = button.textContent;
+    button.disabled = true;
+    form.saving = true;
+    result.textContent = '';
     try {
-      for(const file of files) {
+      if(form.creation && form.creation.generation !== generation) delete form.creation;
+      if(!form.creation) {
+        const files = [...form.elements.files.files];
+        const target = await create();
+        if(!current()) return false;
+        form.creation = {...target,files,uploaded:0,generation};
+      }
+      const state = form.creation;
+      // Once saved, editing fields would misleadingly imply another creation.
+      for(const field of form.elements) if(field !== button && field.type !== 'button') field.disabled = true;
+      while(state.uploaded < state.files.length) {
+        if(!current()) return false;
+        const file = state.files[state.uploaded];
         const body = new FormData(); body.append('file',file);
-        if(form.dataset.eventId) body.append('event_id',form.dataset.eventId);
-        const url = new URL(`/api/tasks/TSK-${id}/attachments`,location.origin);
+        if(state.eventID != null) body.append('event_id',state.eventID);
+        const url = new URL(`/api/tasks/TSK-${state.taskID}/attachments`,location.origin);
         if(namespace) url.searchParams.set('namespace',namespace);
         const response = await fetch(url,{method:'POST',body,signal:this.controller.signal});
         if(!response.ok) throw Error((await response.text()).trim() || 'Could not upload file');
-        uploaded++;
-        if(!current()) return;
+        state.uploaded++;
+        if(!current()) return false;
       }
-      if(current()) { form.reset(); result.textContent = `Uploaded ${uploaded} file${uploaded === 1 ? '' : 's'}.`; }
+      form.reset(); delete form.creation;
+      for(const field of form.elements) field.disabled = false;
+      button.textContent = form.id === 'comment-form' ? 'Post comment' : 'Create';
+      return state;
     } catch(error) {
-      if(current() && error.name !== 'AbortError') result.textContent = `${uploaded ? `Partial upload: ${uploaded} of ${files.length} files uploaded. ` : 'Upload failed. '}${error.message}${uploaded ? ' Successful files are saved. Select only the remaining files before retrying.' : ''}`;
-    } finally {
-      if(current()) {
-        button.disabled = false; input.disabled = false;
-        if(uploaded) await this.loadDetail(id);
+      if(current() && error.name !== 'AbortError') {
+        const state = form.creation;
+        result.textContent = state ? `Saved. ${state.uploaded} of ${state.files.length} files uploaded. ${error.message} Click Retry remaining files to resume without creating another task or comment.` : error.message;
+        button.textContent = state ? 'Retry remaining files' : label;
+        if(state?.eventID != null) await this.loadDetail(state.taskID);
       }
+      return false;
+    } finally {
+      if(current()) { button.disabled = false; delete form.saving; }
     }
   }
   async changeStatus(select) {
@@ -398,23 +417,25 @@ class LoosterBoard extends HTMLElement {
     if(kind !== 'task') return;
     if(this.dialog.open) this.dialog.close();
     this.createKind=kind; this.createReturnFocus=document.activeElement;
-    const form=this.querySelector('#create-form'); form.reset(); form.querySelector('.form-error').textContent='';
+    const form=this.querySelector('#create-form');
+    if(form.saving || form.creation?.generation === this.generation) { this.createDialog.showModal(); return; }
+    form.reset(); delete form.creation; for(const field of form.elements) field.disabled=false; form.querySelector('[type="submit"]').textContent='Create'; form.querySelector('.form-error').textContent='';
     this.querySelector('#create-title').textContent=kind === 'task' ? 'New task' : 'New tag';
     this.querySelector('#task-fields').hidden=kind !== 'task';
     this.querySelector('#task-tags').innerHTML=(this.library?.tags || []).map(t => `<label class="tag-choice"><input type="checkbox" name="tag" value="${esc(t.name)}"> ${esc(t.name)}</label>`).join('') || '<span class="muted">No tags yet.</span>';
     this.createDialog.showModal(); form.elements.name.focus();
   }
   async submitCreate(e) {
-    e.preventDefault(); const generation=this.generation, form=e.currentTarget, button=form.querySelector('[type="submit"]'); button.disabled=true;
-    try {
+    e.preventDefault(); const generation=this.generation, form=e.currentTarget;
+    const saved = await this.saveCreation(form,async () => {
       const name=form.elements.name.value.trim(), description=form.elements.description.value;
       if(this.createKind === 'task') {
         const tags=[...form.querySelectorAll('[name="tag"]:checked')].map(c => c.value);
         const created=await this.post('/api/tasks',{name,description,status:form.elements.status.value,tags});
-        this.createDialog.close(); location.hash='board'; await this.refresh(); if(generation === this.generation) this.open(created.id);
+        return {taskID:created.id};
       }
-    } catch(err) { if(generation === this.generation && err.name !== 'AbortError') form.querySelector('.form-error').textContent=err.message; }
-    finally { button.disabled=false; }
+    });
+    if(saved && generation === this.generation) { this.createDialog.close(); location.hash='board'; await this.refresh(); if(generation === this.generation) this.open(saved.taskID); }
   }
   scrollMotion(e,box) {
     if (!['j','k','g','G'].includes(e.key)) return false;
