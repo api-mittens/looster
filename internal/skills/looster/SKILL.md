@@ -55,8 +55,39 @@ printf '%s\n' 'Implemented the change; checks passed; ready for review.' | loost
 
 Entering `todo` can dispatch agents through behaviour rules. Do not toggle a task
 out of and back into `todo` merely to refresh it: this schedules additional work.
-Comment on blockers and failed checks so the next agent can act on them. Avoid
-putting transient progress in durable memories.
+Record questions and blockers as session logs using the guidance below, including
+failed checks that prevent progress. Avoid putting transient progress in durable memories.
+
+## Record session questions and blockers
+
+Use `looster task log` when this run needs a human decision (`question`) or cannot
+accomplish its intended work because of a limitation (`blocker`). State the exact
+question or limitation, what you tried, and the action needed to proceed. Routine
+progress and final review handoffs still belong in task comments, not special logs.
+
+```bash
+looster task log question 'Which supported browser versions should this change target?'
+looster task log blocker 'Cannot publish the PR: GitHub authentication is unavailable; please sign in.'
+```
+
+Managed runs supply `LOOSTER_JOB_ID`, `LOOSTER_AGENT`, and, when available,
+`LOOSTER_SESSION_ID`. The command uses the exact queued job to derive the real
+session, agent, and task attribution. Never invent a job or session ID or log against
+another agent's run. If the current run has not yet acquired a real session binding,
+wait for that binding rather than assigning the note to an unrelated session.
+For explicit attribution, use the actual values with `--job JOB_ID`,
+`--agent AGENT_NAME`, and optionally `--session SESSION_ID` and `--task TSK-n`.
+
+Logs are historical, append-only records, not a separate task-resolution workflow.
+They appear in run history and, for task-attached runs, interleaved with task comments
+with agent attribution. A human can answer a question by posting an ordinary task
+comment; existing task notifications deliver that answer without an @mention.
+Do not assume that a reply removes historical question or blocker badges.
+
+The same command works for taskless runs without `--task` or `LOOSTER_TASK_ID`:
+the log belongs to that run's session and appears in its run history. There is no
+task comment thread for these runs, so ask the operator to update the agent prompt
+or relevant memories instead. Do not create an unrelated task just to log a note.
 
 Descriptions and comments come from stdin. When task creation is part of the
 assignment, use existing tags and an explicit status:
