@@ -295,6 +295,11 @@ class LoosterBoard extends HTMLElement {
       this.panel.querySelector('#attachment-notice').textContent = '';
       const html = attachmentsHTML(this.attachments,id,null,this.namespace), box = this.panel.querySelector('#description-attachments');
       patchHTML(box,html);
+      // Attachment refreshes also run independently of comment pagination. Reconcile
+      // every mounted owner, including empty lists after an attachment is removed.
+      for(const article of this.panel.querySelectorAll('[data-comment-id]')) {
+        patchHTML(article.querySelector('.comment-attachments'),attachmentsHTML(this.attachments,id,article.dataset.commentId,this.namespace));
+      }
     } catch(error) {
       if(current() && error.name !== 'AbortError') this.panel.querySelector('#attachment-notice').textContent = `Could not load attachments: ${error.message}`;
     }
