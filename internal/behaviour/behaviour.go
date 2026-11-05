@@ -16,6 +16,7 @@ import (
 const MaxIntervalSeconds = int64((1<<63 - 1) / time.Second)
 
 type Rule struct {
+	ID              int64  `json:"id,omitempty"`
 	Trigger         string `json:"trigger"`
 	Source          string `json:"source,omitempty"`
 	Target          string `json:"target"`
