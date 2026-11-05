@@ -19,6 +19,23 @@ namespace has migration `018_agent_session_runs.sql`. The base branch already
 renumbered this migration from the conflicting 017 version. This task does not
 apply migrations to a live service or change its configuration.
 
+## Lazy session output
+
+Task dialogs show escaped summary previews and state labels, not transcripts.
+Clicking a valid run card opens a second dialog and only then requests the run
+metadata and paginated output. Back or Escape returns to the task without
+losing an unsent comment. Agent history also offers a session-output action for
+scheduled runs without tasks. Output polling stops when the session dialog
+closes and is scoped to its selected namespace and job ID.
+
+Migration `019_session_run_output.sql` adds nullable event job attribution and a
+partial paging index. Newly captured output is attributed to its exact job.
+Pre-migration output cannot safely be assigned to a run by task, agent, or a
+reused session ID, so it is intentionally not backfilled. Older summaries remain
+reviewable and the output pane explains when correlated output is unavailable.
+Apply embedded migrations through the normal operator-controlled upgrade process
+before running the new binary. No live database is migrated by this change.
+
 ## Analyst screenshot verification memory
 
 The agent is named **analyst**, not analyser. The coder role is intentionally
