@@ -77,6 +77,14 @@ func TestSessionRunOutputExactIdentity(t *testing.T) {
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("legacy attribution: %+v %v", rows, err)
 	}
+	// The store bounds oversized requests to the API's 200 rows plus lookahead.
+	if _, err := s.Pool.Exec(ctx, `INSERT INTO events(kind,agent_name,body,job_id) SELECT 'agent_output','queue_test','bounded output',$1 FROM generate_series(1,202)`, legacy); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = s.SessionRunOutput(ctx, legacy, 0, 10000)
+	if err != nil || len(rows) != 201 {
+		t.Fatalf("output cap: count=%d err=%v", len(rows), err)
+	}
 	_, other := queuePerformanceStore(t)
 	otherID := queuePerformanceJob(t, ctx, other, nil, nil, "queue_test", "pending", nil)
 	if otherID != ids[0] {

@@ -17,9 +17,9 @@ func (s *Store) SessionRunOutput(ctx context.Context, jobID, after int64, limit 
 	if limit <= 0 {
 		limit = 100
 	}
-	// One extra row supports the API's has_more lookahead for 1000-row pages.
-	if limit > 1001 {
-		limit = 1001
+	// One extra row supports the API's has_more lookahead for 200-row pages.
+	if limit > 201 {
+		limit = 201
 	}
 	rows, err := s.Pool.Query(ctx, `SELECT id,task_id,kind,agent_name,body,created_at,actor_agent FROM events WHERE job_id=$1 AND kind='agent_output' AND id>$2 ORDER BY id LIMIT $3`, jobID, after, limit)
 	if err != nil {
