@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/api-mittens/looster/internal/agent"
 )
 
 type Status string
@@ -43,15 +45,16 @@ func ParsePrettyID(s, prefix string) (int64, error) {
 }
 
 type Task struct {
-	ID             int64     `json:"id"`
-	Name           string    `json:"name"`
-	Description    string    `json:"description"`
-	Status         Status    `json:"status"`
-	Tags           []string  `json:"tags"`
-	CreatedAt      time.Time `json:"created_at"`
-	LastActivityAt time.Time `json:"last_activity_at"`
-	StatusChanges  int64     `json:"status_changes"`
-	CommentCount   int64     `json:"comment_count"`
+	SessionLogs    []agent.SessionLog `json:"session_logs"`
+	ID             int64              `json:"id"`
+	Name           string             `json:"name"`
+	Description    string             `json:"description"`
+	Status         Status             `json:"status"`
+	Tags           []string           `json:"tags"`
+	CreatedAt      time.Time          `json:"created_at"`
+	LastActivityAt time.Time          `json:"last_activity_at"`
+	StatusChanges  int64              `json:"status_changes"`
+	CommentCount   int64              `json:"comment_count"`
 }
 type Attachment struct {
 	ID      int64  `json:"id"`
