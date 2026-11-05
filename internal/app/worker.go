@@ -284,7 +284,7 @@ func (s *Service) process(ctx context.Context, c WorkerConfig, lease Lease) {
 			close(watchDone)
 		}
 		var result Result
-		result, err = s.Harness.Run(watchCtx, Run{Namespace: c.Namespace, Agent: j.Agent, Task: t, SessionID: j.SessionID, Workdir: workdir, Prompt: prompt, ArchivePrefix: prefix}, func(o Output) error { return lease.Capture(watchCtx, o) })
+		result, err = s.Harness.Run(watchCtx, Run{JobID: j.ID, Namespace: c.Namespace, Agent: j.Agent, Task: t, SessionID: j.SessionID, Workdir: workdir, Prompt: prompt, ArchivePrefix: prefix}, func(o Output) error { return lease.Capture(watchCtx, o) })
 		cause := context.Cause(watchCtx)
 		stopWatch(nil)
 		<-watchDone

@@ -33,7 +33,22 @@ func (s *Store) SessionHistory(ctx context.Context, name string, taskID, beforeJ
 		}
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	ids := make([]int64, len(out))
+	for i := range out {
+		ids[i] = out[i].JobID
+	}
+	logs, err := s.sessionLogsForIDs(ctx, "job_id", ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Logs = logs[out[i].JobID]
+	}
+	return out, nil
 }
 
 func (s *Store) SessionRun(ctx context.Context, jobID int64) (agent.SessionRun, error) {
@@ -47,7 +62,11 @@ func (s *Store) SessionRun(ctx context.Context, jobID int64) (agent.SessionRun, 
  CASE WHEN summary<>'' THEN 'available' ELSE 'pending' END,error
  FROM jobs WHERE id=$1 AND state IN ('pending','running','archiving')
  AND NOT EXISTS (SELECT FROM agent_session_runs WHERE job_id=$1)`, jobID))
-	return r, repositoryError(err)
+	if err != nil {
+		return r, repositoryError(err)
+	}
+	r.Logs, err = s.RunSessionLogs(ctx, jobID)
+	return r, err
 }
 
 func scanSessionRun(row pgx.Row) (agent.SessionRun, error) {

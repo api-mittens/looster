@@ -59,6 +59,17 @@ func (s *Store) Tasks(ctx context.Context) ([]task.Task, error) {
 	for _, r := range rows {
 		out = append(out, task.Task{ID: r.ID, Name: r.Name, Description: r.Description, Status: task.Status(r.Status), Tags: r.Tags, CreatedAt: r.CreatedAt.Time, LastActivityAt: r.LastActivityAt.Time, StatusChanges: r.StatusChanges, CommentCount: r.CommentCount})
 	}
+	ids := make([]int64, len(out))
+	for i := range out {
+		ids[i] = out[i].ID
+	}
+	logs, e := s.sessionLogsForIDs(ctx, "task_id", ids)
+	if e != nil {
+		return nil, e
+	}
+	for i := range out {
+		out[i].SessionLogs = logs[out[i].ID]
+	}
 	return out, nil
 }
 func (s *Store) Task(ctx context.Context, id int64) (task.Task, error) {
@@ -80,7 +91,12 @@ func (s *Store) Task(ctx context.Context, id int64) (task.Task, error) {
 		}
 		t.Tags = append(t.Tags, name)
 	}
-	return t, rows.Err()
+	if e = rows.Err(); e != nil {
+		return t, e
+	}
+	rows.Close()
+	t.SessionLogs, e = s.TaskSessionLogs(ctx, id)
+	return t, e
 }
 func (s *Store) CreateTask(ctx context.Context, name, desc string, status task.Status, tags []string) (task.Task, error) {
 	if strings.TrimSpace(name) == "" {

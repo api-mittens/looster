@@ -122,12 +122,12 @@ func (h *Harness) Run(ctx context.Context, r app.Run, emit func(app.Output) erro
 	for _, v := range os.Environ() {
 		key, _, _ := strings.Cut(v, "=")
 		_, replaced := h.Environment[key]
-		if key != "LOOSTER_NAMESPACE" && key != "LOOSTER_DATABASE_URL" && key != "PATH" && key != "LOOSTER_ROLE" && key != "LOOSTER_AGENT" && key != "LOOSTER_TASK_ID" && !strings.HasPrefix(key, "LOOSTER_AGENT_DATABASE_URLS_") && !replaced {
+		if key != "LOOSTER_NAMESPACE" && key != "LOOSTER_DATABASE_URL" && key != "PATH" && key != "LOOSTER_ROLE" && key != "LOOSTER_AGENT" && key != "LOOSTER_TASK_ID" && key != "LOOSTER_JOB_ID" && key != "LOOSTER_SESSION_ID" && !strings.HasPrefix(key, "LOOSTER_AGENT_DATABASE_URLS_") && !replaced {
 			cmd.Env = append(cmd.Env, v)
 		}
 	}
 	for key, value := range h.Environment {
-		if key == "LOOSTER_NAMESPACE" || key == "LOOSTER_ROLE" || key == "LOOSTER_AGENT" || key == "LOOSTER_TASK_ID" || key == "LOOSTER_DATABASE_URL" || strings.HasPrefix(key, "LOOSTER_AGENT_DATABASE_URLS_") {
+		if key == "LOOSTER_NAMESPACE" || key == "LOOSTER_ROLE" || key == "LOOSTER_AGENT" || key == "LOOSTER_TASK_ID" || key == "LOOSTER_JOB_ID" || key == "LOOSTER_SESSION_ID" || key == "LOOSTER_DATABASE_URL" || strings.HasPrefix(key, "LOOSTER_AGENT_DATABASE_URLS_") {
 			continue
 		}
 		cmd.Env = append(cmd.Env, key+"="+value)
@@ -137,6 +137,10 @@ func (h *Harness) Run(ctx context.Context, r app.Run, emit func(app.Output) erro
 		return app.Result{}, e
 	}
 	cmd.Env = append(cmd.Env, "PATH="+filepath.Dir(executable)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	cmd.Env = append(cmd.Env, "LOOSTER_JOB_ID="+fmt.Sprint(r.JobID))
+	if r.SessionID != "" {
+		cmd.Env = append(cmd.Env, "LOOSTER_SESSION_ID="+r.SessionID)
+	}
 	cmd.Env = append(cmd.Env, "LOOSTER_NAMESPACE="+r.Namespace, "LOOSTER_DATABASE_URL="+h.DatabaseURL, "LOOSTER_ROLE=agent", "LOOSTER_AGENT="+r.Agent)
 	if r.Task.ID > 0 {
 		cmd.Env = append(cmd.Env, "LOOSTER_TASK_ID="+fmt.Sprintf("TSK-%d", r.Task.ID))

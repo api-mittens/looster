@@ -61,6 +61,7 @@ type Objects interface {
 	Get(context.Context, string) (io.ReadCloser, error)
 }
 type Run struct {
+	JobID         int64
 	Namespace     string
 	Agent         string
 	Task          task.Task

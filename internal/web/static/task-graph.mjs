@@ -1,4 +1,4 @@
-import {isTasklessSession} from './board.mjs';
+import {isTasklessSession,taskSignals} from './board.mjs';
 import {forceSimulation,forceLink,forceManyBody,forceCollide,forceX,forceY} from './d3-force-adapter.mjs';
 // Model/render helpers and deterministic D3 layout. No DOM dependencies.
 export const escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -40,7 +40,7 @@ export function buildGraph({tasks = [], agents = [], sessions = [], workers = []
   for (const task of tasks) {
     if (!TASK_STATUSES.includes(task.status) || !selectedStatuses.includes(task.status) || task.id == null || taskKeys.has(String(task.id))) continue;
     taskKeys.add(String(task.id));
-    nodes.push({key:`task:${task.id}`, kind:'task', id:task.id, label:String(task.name ?? `TSK-${task.id}`), status:task.status, working:running.has(String(task.id)), ...activity(task),...taskRecency(task,{now,active:running.has(String(task.id))})});
+    nodes.push({key:`task:${task.id}`, kind:'task', id:task.id, label:String(task.name ?? `TSK-${task.id}`), status:task.status, working:running.has(String(task.id)), ...taskSignals(task), ...activity(task),...taskRecency(task,{now,active:running.has(String(task.id))})});
   }
   for (const session of sessions) if ((taskKeys.has(String(session.task_id)) || (isTasklessSession(session) && session.status === 'running')) && session.agent) agentNames.add(String(session.agent));
   const online = new Set(workers.flatMap(w => Array.isArray(w.agents) ? w.agents : []));
@@ -130,16 +130,21 @@ export function renderProgressRing(status, radius=30) {
     return `<path class="tg-progress-segment" data-segment="${i+1}" data-filled="${i<filled}" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" d="M ${point(a)} A ${r} ${r} 0 0 1 ${point(b)}"/>`;
   }).join('')}</g>`;
 }
+export function renderTaskSignals(task, radius = 30) {
+  if(!task.blocker && !task.question) return '';
+  const edge=radius/Math.sqrt(2),label=[task.blocker?'Historical blocker log':'',task.question?'Historical question log':''].filter(Boolean).join(' and ');
+  return `<text class="tg-task-signal" x="${edge}" y="${-edge}" text-anchor="middle" dominant-baseline="central" role="img" aria-label="${label}"><title>${label}</title>${task.blocker?'⚠️':''}${task.question?'❓':''}</text>`;
+}
 export function renderGraph(graph) {
   const esc=escapeHTML, byKey=new Map(graph.nodes.map(n=>[n.key,n]));
   return `<svg viewBox="0 0 ${graph.width} ${graph.height}" role="group" aria-label="Task and agent graph. Select nodes to open details. Drag background to pan, scroll to zoom."><title>Task and agent graph</title><g class="tg-viewport">${graph.edges.map(e=>{
     const a=byKey.get(e.source),b=byKey.get(e.target); if(!a || !b) return '';
     return `<line class="tg-edge${e.active?' tg-active':''}" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"><title>${esc(a.label)} to ${esc(b.label)}: ${e.active?'running':'historical idle'}, ${e.count} sessions</title></line>`;
   }).join('')}${graph.nodes.map(n=>{
-    const info=n.kind==='task'?`TSK-${n.id}: ${n.label}, ${n.status}, progress ${progressSegments(n.status)} of 3, ${n.comments} comments, ${n.changes} status changes, ${n.total} activity, ${n.ageDays} days since last activity`:`${n.name}, ${n.online?'online':'offline'}`;
+    const info=n.kind==='task'?`TSK-${n.id}: ${n.label}, ${n.status}, progress ${progressSegments(n.status)} of 3, ${n.comments} comments, ${n.changes} status changes, ${n.total} activity, ${n.ageDays} days since last activity${n.blocker?', historical blocker log':''}${n.question?', historical question log':''}`:`${n.name}, ${n.online?'online':'offline'}`;
     const label=n.kind==='task'?`TSK-${n.id}`:n.label;
     const radius=n.kind==='task'?30:22,scale=n.kind==='task'?(n.radius??30)/30:1,counters=n.kind==='task'?`${compactCount(n.comments)}/${compactCount(n.changes)}`:'@';
     const countSize=Math.min(15,(radius*2-6)/Math.max(1,counters.length*.62));
-    return `<g class="tg-node tg-${n.kind}${graph.heatmap&&n.kind==='task'?` tg-heat-${n.level}`:''}${n.online?' tg-online':''}${n.working?' tg-working':''}" data-key="${esc(n.key)}" role="button" tabindex="0" aria-label="${esc(info)}" transform="translate(${n.x},${n.y})"><title>${esc(info)}</title><g class="tg-node-content" style="--tg-node-scale:${scale}"><circle class="tg-body" r="${radius}"${graph.heatmap&&n.kind==='task'?` style="stroke:${activityColor(n.total)};fill:${activityColor(n.total)};fill-opacity:.25"`:''}/>${n.kind==='task'?renderProgressRing(n.status,radius):''}<text class="tg-count" text-anchor="middle" y="${countSize*.34}" style="font-size:${countSize.toFixed(2)}px">${counters}</text><text class="${n.kind==='task'?'tg-ref':'tg-label'}" text-anchor="middle" y="${n.kind==='task'?radius+23:49}">${esc(label.length>30?label.slice(0,29)+'…':label)}</text>${n.kind==='agent'?`<text class="tg-state" text-anchor="middle" y="66">${n.online?'online':'offline'}</text>`:''}${graph.showTitles&&n.kind==='task'?`<text class="tg-task-title" text-anchor="middle" y="${radius+43}">${esc(n.label.length>30?n.label.slice(0,29)+'…':n.label)}</text>`:''}</g></g>`;
+    return `<g class="tg-node tg-${n.kind}${graph.heatmap&&n.kind==='task'?` tg-heat-${n.level}`:''}${n.online?' tg-online':''}${n.working?' tg-working':''}" data-key="${esc(n.key)}" role="button" tabindex="0" aria-label="${esc(info)}" transform="translate(${n.x},${n.y})"><title>${esc(info)}</title><g class="tg-node-content" style="--tg-node-scale:${scale}"><circle class="tg-body" r="${radius}"${graph.heatmap&&n.kind==='task'?` style="stroke:${activityColor(n.total)};fill:${activityColor(n.total)};fill-opacity:.25"`:''}/>${n.kind==='task'?renderProgressRing(n.status,radius)+renderTaskSignals(n,radius):''}<text class="tg-count" text-anchor="middle" y="${countSize*.34}" style="font-size:${countSize.toFixed(2)}px">${counters}</text><text class="${n.kind==='task'?'tg-ref':'tg-label'}" text-anchor="middle" y="${n.kind==='task'?radius+23:49}">${esc(label.length>30?label.slice(0,29)+'…':label)}</text>${n.kind==='agent'?`<text class="tg-state" text-anchor="middle" y="66">${n.online?'online':'offline'}</text>`:''}${graph.showTitles&&n.kind==='task'?`<text class="tg-task-title" text-anchor="middle" y="${radius+43}">${esc(n.label.length>30?n.label.slice(0,29)+'…':n.label)}</text>`:''}</g></g>`;
   }).join('')}</g></svg>`;
 }

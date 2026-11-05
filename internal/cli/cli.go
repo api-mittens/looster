@@ -287,6 +287,7 @@ func (a *application) taskCommand() *cobra.Command {
 		}
 		return output(c, map[string]any{"event_id": eid})
 	}})
+	cmd.AddCommand(a.sessionLogCommand())
 	var bindTask string
 	bind := &cobra.Command{Use: "bind AGENT_NAME SESSION_ID", Short: "Bind a harness session to --task (or LOOSTER_TASK_ID)", Args: cobra.ExactArgs(2), RunE: func(c *cobra.Command, args []string) error {
 		id, e := task.ParseID(bindTask)

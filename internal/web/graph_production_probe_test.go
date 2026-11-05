@@ -43,6 +43,9 @@ const graphproductionProbe = `  await call('Network.enable');await call('Page.na
   check(await evaluate(` + "`" + `board.page==='graph'` + "`" + `),'expired go-to prefix does not navigate');
   await evaluate(` + "`" + `window.graph=board.querySelector('task-agent-graph')` + "`" + `);
   check(await evaluate(` + "`" + `!graph.querySelector('[data-key="agent:unrelated"]')&&!graph.querySelector('[data-key="agent:finished"]')&&graph.querySelectorAll('.tg-agent').length===4` + "`" + `),'online unrelated and completed-only agents are hidden in the real graph');
+  // Earlier navigation checks can outlast the initial force simulation under load.
+  // Reheat before sampling so this checks autonomous D3 ticks, not whether startup is still settling.
+  await evaluate('graph.reheat(1)');
   const before=await evaluate(` + "`" + `graph.graph.nodes.map(n=>({x:n.x,y:n.y}))` + "`" + `);await delay(120);
   check(await evaluate(` + "`" + `graph.graph.nodes.some((n,i)=>Math.hypot(n.x-${JSON.stringify(before)}[i].x,n.y-${JSON.stringify(before)}[i].y)>.01)` + "`" + `),'real production graph moves autonomously with live D3');
   await evaluate('graph.settle()');

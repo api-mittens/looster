@@ -4,8 +4,35 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestGeneratedSkillSessionLogGuidance(t *testing.T) {
+	path, err := Generate(t.TempDir(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, required := range []string{
+		"looster task log question", "looster task log blocker",
+		"LOOSTER_JOB_ID", "LOOSTER_SESSION_ID", "--job JOB_ID",
+		"historical, append-only", "ordinary task", "without an @mention",
+		"taskless runs", "update the agent prompt", "relevant memories",
+		"Never invent a job or session ID",
+	} {
+		if !strings.Contains(text, required) {
+			t.Errorf("generated skill missing session log guidance %q", required)
+		}
+	}
+	if strings.Contains(text, "Comment on blockers and failed checks") {
+		t.Error("generated skill retains superseded comment-only blocker guidance")
+	}
+}
 
 func TestGenerate(t *testing.T) {
 	for _, tc := range []struct {
