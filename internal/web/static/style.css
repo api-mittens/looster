@@ -75,6 +75,9 @@ header{position:sticky;top:0;z-index:50;display:grid;grid-template-columns:minma
 @media(prefers-color-scheme:dark){.attachments li{border-color:#596272}.attachments a{color:#93c5fd}}
 .markdown-body hr{border:0;border-top:1px solid #d4d4d8;margin:1.5em 0}
 .run-list{display:grid;gap:.5rem}
+#sessions .session{width:100%;text-align:left;align-items:center}
+.task-session-summary{flex-basis:100%;white-space:pre-wrap;overflow-wrap:anywhere}
+#session-dialog .detail{min-height:120px}
 .run-list button{text-align:left;overflow-wrap:anywhere}
 .run-pagination{display:flex;gap:.5rem;margin:1rem 0}
 .run-summary{white-space:pre-wrap;overflow-wrap:anywhere}

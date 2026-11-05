@@ -1,9 +1,8 @@
 import {patchHTML} from './refresh.mjs';
 import {renderMarkdown} from './markdown.mjs';
 import {serversHTML,behavioursHTML,ruleLabel} from './views.mjs';
-import {appendOutput} from './output.mjs';
 import {searchItems} from './search.mjs';
-import {sortTasksByLatestActivity,taskCardHTML,sessionCardHTML,boardAgentNames,activeTasklessSessions,isTasklessSession} from './board.mjs';
+import {sortTasksByLatestActivity,taskCardHTML,sessionCardHTML,boardAgentNames,activeTasklessSessions,isTasklessSession,taskSessionCardHTML} from './board.mjs';
 import {attachmentsHTML,attachmentUploadHTML} from './attachments.mjs';
 import {runHistoryHTML,runDetailHTML} from './agent-runs.mjs';
 import './workflow.js';
@@ -61,7 +60,12 @@ class LoosterBoard extends HTMLElement {
     this.querySelector('#page').addEventListener('task-open',e => this.open(e.detail.id));
     this.querySelector('#page').addEventListener('change',e => { if(e.target.id === 'manifest-version') { this.manifestID = Number(e.target.value); this.renderPage(); } });
     this.querySelector('#page').addEventListener('click',e => { if(e.target.closest('#activate-manifest')) this.activateManifest(); const run=e.target.closest('[data-run-schedule]'); if(run) this.runSchedule(Number(run.dataset.runSchedule)); });
-    this.panel.onchange = e => { if(e.target.id === 'log-agent') { this.logAgent = e.target.value; this.paintOutput(); } else if(e.target.id === 'task-status') this.changeStatus(e.target); };
+    this.insertAdjacentHTML('beforeend','<dialog id="session-dialog" aria-labelledby="session-title"><div class="dialog-head"><h2 id="session-title"></h2><div class="spacer"></div><button type="button" id="session-back">Back <kbd>Esc</kbd></button></div><div class="detail" tabindex="0"><section id="selected-run" aria-live="polite"></section></div></dialog>');
+    this.sessionDialog = this.querySelector('#session-dialog');
+    this.querySelector('#session-back').onclick = () => this.sessionDialog.close();
+    this.sessionDialog.onclose = () => { if(this.sessionDialog.open) return; this.sessionInspection = null; this.lastG = 0; if(this.sessionReturnFocus?.isConnected) this.sessionReturnFocus.focus({preventScroll:true}); };
+    this.panel.onclick = e => { const card = e.target.closest('[data-task-session-job]'); if(card) this.openTaskSession(card.dataset.sessionAgent,card.dataset.taskSessionJob,card); };
+    this.panel.onchange = e => { if(e.target.id === 'task-status') this.changeStatus(e.target); };
     this.panel.onsubmit = async e => {
       if(e.target.id !== 'comment-form') return;
       e.preventDefault(); const form=e.target, id=this.detailID;
@@ -111,7 +115,7 @@ class LoosterBoard extends HTMLElement {
   }
   post(path, data) { return this.api(path,data); }
   switchNamespace(namespace) {
-    this.agentInspection = null;
+    this.agentInspection = null; this.sessionInspection = null;
     this.controller.abort(); this.controller = new AbortController(); this.generation++;
     this.namespace = namespace; this.goPrefix = 0; this.scheduleRuns = {};
     for(const dialog of this.querySelectorAll('dialog')) if(dialog.open) dialog.close();
@@ -227,13 +231,12 @@ class LoosterBoard extends HTMLElement {
       if (this.outputs !== generation || this.detailID !== id || !this.dialog.open) return;
       const title = `TSK-${id} · ${d.task.name}`;
       patchHTML(this.querySelector('#dialog-title'),esc(title));
-      if (!this.panel.querySelector('#session-output')) this.panel.innerHTML = '<div class="task-status-control"><label for="task-status">Status</label><select id="task-status" aria-label="Task status"><option value="planning">Planning</option><option value="todo">Todo</option><option value="validated">Validated</option><option value="closed">Closed</option></select><span id="status-error" class="form-error" role="alert"></span></div><div class="description markdown-body" id="task-description"></div><div id="description-attachments"></div><p id="attachment-notice" class="form-error" role="status"></p><div id="tag-context"></div><h3>Comments</h3><div id="task-comments"></div><form id="comment-form"><label>Add comment <textarea name="body" rows="3" required aria-describedby="comment-mention-hint"></textarea></label><p id="comment-mention-hint" class="muted">Mention @registered-agent to request a run on this task. Unknown agent names are ignored.</p>'+attachmentUploadHTML()+'<p class="form-error" role="alert"></p><button type="submit">Post comment</button></form><h3>Sessions</h3><div id="sessions"></div><div class="output-heading"><h3>Session output</h3><label>Agent <select id="log-agent" aria-label="Session output agent"></select></label></div><pre id="session-output" class="session-output" tabindex="0" aria-label="Session output"></pre><p id="output-note" class="muted" role="status"></p>';
+      if (!this.panel.querySelector('#task-status')) this.panel.innerHTML = '<div class="task-status-control"><label for="task-status">Status</label><select id="task-status" aria-label="Task status"><option value="planning">Planning</option><option value="todo">Todo</option><option value="validated">Validated</option><option value="closed">Closed</option></select><span id="status-error" class="form-error" role="alert"></span></div><div class="description markdown-body" id="task-description"></div><div id="description-attachments"></div><p id="attachment-notice" class="form-error" role="status"></p><div id="tag-context"></div><h3>Comments</h3><div id="task-comments"></div><form id="comment-form"><label>Add comment <textarea name="body" rows="3" required aria-describedby="comment-mention-hint"></textarea></label><p id="comment-mention-hint" class="muted">Mention @registered-agent to request a run on this task. Unknown agent names are ignored.</p>'+attachmentUploadHTML()+'<p class="form-error" role="alert"></p><button type="submit">Post comment</button></form><h3>Sessions</h3><div id="sessions"></div>';
       if(!this.panel.querySelector('#task-status').disabled) this.panel.querySelector('#task-status').value = d.task.status;
       patchHTML(this.panel.querySelector('#task-description'),renderMarkdown(d.task.description || 'No description.'));
       const contextHTML = (d.context?.tags || []).map(t => `<details class="context-card" data-refresh-key="${esc(t.id ?? t.name)}"><summary>Tag: ${esc(t.name)} · ${(t.memories || []).length} memories</summary><pre>${esc(t.description)}</pre>${this.memoryHTML(t.memories)}</details>`).join('');
       patchHTML(this.panel.querySelector('#tag-context'),contextHTML);
-      patchHTML(this.panel.querySelector('#sessions'),(d.sessions || []).map(s => `<div class="session" data-refresh-key="${esc(s.agent)}"><strong>${esc(s.agent)}</strong><span class="badge ${s.status === 'running' ? 'running' : ''}">${esc(s.status)}</span><code>${esc(s.session_id || 'Not started')}</code></div>`).join('') || '<p>No sessions yet.</p>');
-      for (const s of d.sessions || []) if (!this.outputs.has(s.agent)) this.outputs.set(s.agent,{text:''});
+      patchHTML(this.panel.querySelector('#sessions'),(d.sessions || []).map(taskSessionCardHTML).join('') || '<p>No sessions yet.</p>');
       for(let page=0;page<10;page++) {
         const comments = await this.api(`/api/tasks/TSK-${id}/events?kind=comment&after=${this.commentCursor}`) || [];
         if(this.outputs !== generation || this.detailID !== id || !this.dialog.open) return;
@@ -257,22 +260,6 @@ class LoosterBoard extends HTMLElement {
         const files = attachmentsHTML(this.attachments,id,c.id,this.namespace);
         patchHTML(article.querySelector('.comment-attachments'),files);
       }
-      let pages = 0, more = true;
-      while (more && pages++ < 10) {
-        const events = await this.api(`/api/tasks/TSK-${id}/events?after=${this.cursor}`) || [];
-        if (this.outputs !== generation || this.detailID !== id || !this.dialog.open) return;
-        for (const event of events) {
-          if (event.agent && event.kind === 'agent_output') { const state = this.outputs.get(event.agent) || {text:''}; appendOutput(state,event.body); this.outputs.set(event.agent,state); }
-          this.cursor = Math.max(this.cursor,event.id);
-        }
-        more = events.length === 200;
-      }
-      const select = this.panel.querySelector('#log-agent'), agents = [...this.outputs.keys()].sort();
-      const options = agents.map(a => `<option value="${esc(a)}">${esc(a)}</option>`).join('');
-      patchHTML(select,options);
-      if (!agents.includes(this.logAgent)) this.logAgent = agents[0] || '';
-      select.value = this.logAgent; select.disabled = !agents.length;
-      this.paintOutput(); this.panel.querySelector('#output-note').textContent = more ? 'Loading output in batches…' : 'Updates every 5 seconds. Scroll up to pause following output.';
     } catch(e) { if (this.outputs === generation && this.detailID === id) { const note = this.panel.querySelector('#output-note'); if(note) note.textContent = e.message; else this.panel.textContent = e.message; } }
     finally { if(this.detailBusy === generation) { this.detailBusy = null; if(this.detailQueued) { this.detailQueued=false; queueMicrotask(() => this.loadDetail(id)); } } }
   }
@@ -344,13 +331,6 @@ class LoosterBoard extends HTMLElement {
     catch(err) { if(err.name !== 'AbortError' && select.isConnected) { select.value = previous; this.panel.querySelector('#status-error').textContent = err.message; } }
     finally { select.disabled = false; }
   }
-  paintOutput() {
-    const box = this.panel.querySelector('#session-output'); if (!box) return;
-    const follow = box.dataset.agent !== this.logAgent || box.scrollHeight-box.scrollTop-box.clientHeight < 40;
-    const text = this.outputs.get(this.logAgent)?.text || 'No output yet.';
-    if (box.textContent !== text) patchHTML(box,esc(text));
-    box.dataset.agent = this.logAgent; if(follow) box.scrollTop = box.scrollHeight;
-  }
   renderPage() {
     const panel = this.querySelector('#page');
     if(this.page === 'graph') {
@@ -378,7 +358,16 @@ class LoosterBoard extends HTMLElement {
     }
     if(this.page === 'system') panel.querySelector('workflow-graph').rules = this.system?.behaviours || [];
   }
+  openTaskSession(name,id,card) {
+    this.sessionReturnFocus = card || document.activeElement;
+    const inspection = this.sessionInspection = {name,jobID:id,target:this.sessionDialog.querySelector('#selected-run')};
+    this.querySelector('#session-title').textContent = `@ ${name} · Run ${id}`;
+    this.lastG = 0;
+    if(!this.sessionDialog.open) this.sessionDialog.showModal();
+    this.loadAgentRun(inspection,id);
+  }
   openAgent(name,jobID) {
+    if(this.sessionDialog?.open) this.sessionDialog.close();
     const agent = this.library?.agents?.find(a => a.name === name);
     const inspection = this.agentInspection = {name,jobID,cursors:[0]};
     if(!this.dialog.open) this.returnFocus = document.activeElement; this.detailID = null; this.lastG = 0;
@@ -406,18 +395,18 @@ class LoosterBoard extends HTMLElement {
     } catch(err) { if(this.agentInspection === inspection && inspection.historyRequest === request) target.textContent = 'Run history unavailable. '+err.message; }
   }
   async loadAgentRun(inspection,id) {
-    const target = this.panel.querySelector('#selected-run');
+    const target = inspection.target || this.panel.querySelector('#selected-run');
     if(!target) return;
     const request = inspection.runRequest = {};
     inspection.jobID = id;
     target.textContent = 'Loading run…';
     try {
       const run = await this.api(`/api/agents/${encodeURIComponent(inspection.name)}/runs/${encodeURIComponent(id)}`);
-      if(this.agentInspection !== inspection || inspection.runRequest !== request || !target.isConnected) return;
+      if((inspection.target ? this.sessionInspection !== inspection : this.agentInspection !== inspection) || inspection.runRequest !== request || !target.isConnected) return;
       target.innerHTML = runDetailHTML(run);
-      target.querySelector('[data-run-task]')?.addEventListener('click',() => this.open(run.task_id));
+      target.querySelector('[data-run-task]')?.addEventListener('click',() => { if(inspection.target) this.sessionDialog.close(); this.open(run.task_id); });
     } catch(err) {
-      if(this.agentInspection !== inspection || inspection.runRequest !== request || !target.isConnected) return;
+      if((inspection.target ? this.sessionInspection !== inspection : this.agentInspection !== inspection) || inspection.runRequest !== request || !target.isConnected) return;
       const live = this.data?.sessions?.find(s => s.agent === inspection.name && String(s.job_id) === String(id) && s.status === 'running');
       target.innerHTML = err.status === 404 && live ? runDetailHTML({...live,outcome:'running',summary_status:'pending',summary:'This run is still running. Its final summary will be available after completion.'}) : '';
       if(!target.innerHTML) target.textContent = 'Run unavailable. '+err.message;
@@ -495,7 +484,8 @@ class LoosterBoard extends HTMLElement {
     if(this.palette.open || this.createDialog.open) { this.goPrefix = 0; return; }
     if(this.dialog.open || e.target.matches('input,textarea,select,[contenteditable]')) this.goPrefix = 0;
     if(e.key === ':' && !e.target.matches('input,textarea,select,[contenteditable]')) { e.preventDefault(); this.openPalette(); return; }
-    if (this.dialog.open) { if(e.target.matches('select,input,textarea,[contenteditable]')) return; const box = e.target.closest('#session-output') || this.panel; this.scrollMotion(e,box); return; }
+    if(this.sessionDialog?.open) { if(e.target.matches('select,input,textarea,[contenteditable]')) return; this.scrollMotion(e,this.sessionDialog.querySelector('.detail')); return; }
+    if (this.dialog.open) { if(e.target.matches('select,input,textarea,[contenteditable]')) return; this.scrollMotion(e,this.panel); return; }
     if (e.target.matches('select')) return;
     if (e.target.matches('input,textarea,[contenteditable]')) { if (e.key === 'Escape') { e.preventDefault(); this.search.value = ''; this.render(); this.focus(); } if (e.key === 'Enter') { e.preventDefault(); this.focus(); } return; }
     if(e.repeat && (e.key === 'g' || this.goPrefix)) { e.preventDefault(); return; }
