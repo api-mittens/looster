@@ -5,19 +5,32 @@ import (
 	"fmt"
 	"net/http/httptest"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/api-mittens/looster/internal/agent"
 	"github.com/api-mittens/looster/internal/app"
 	"github.com/api-mittens/looster/internal/behaviour"
+	"github.com/api-mittens/looster/internal/event"
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
 )
 
-type inspectorBrowserRepo struct{ testRepo }
+type inspectorBrowserRepo struct {
+	testRepo
+	outputRequests atomic.Int32
+}
+
+func (r *inspectorBrowserRepo) SessionRunOutput(_ context.Context, id, after int64, _ int) ([]event.Event, error) {
+	r.outputRequests.Add(1)
+	if after > 0 {
+		return []event.Event{}, nil
+	}
+	return []event.Event{{ID: 1, Kind: "agent_output", Body: fmt.Sprintf(`{"type":"text_delta","text":"Taskless transcript %d"}`, id)}}, nil
+}
 
 func (*inspectorBrowserRepo) Agents(context.Context) ([]agent.Agent, error) {
 	return []agent.Agent{{Name: "solo", Description: "Standalone prompt", TasklessOnly: true}}, nil
@@ -64,7 +77,8 @@ func TestAgentInspectorBrowser(t *testing.T) {
 	if os.Getenv("LOOSTER_BROWSER_TEST") != "1" {
 		t.Skip("set LOOSTER_BROWSER_TEST=1 to run Chromium acceptance")
 	}
-	server := httptest.NewServer(Handler(&inspectorBrowserRepo{}))
+	repo := &inspectorBrowserRepo{}
+	server := httptest.NewServer(Handler(repo))
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
@@ -82,7 +96,38 @@ func TestAgentInspectorBrowser(t *testing.T) {
 		chromedp.Poll(`document.querySelector('#selected-run').textContent.includes('pending') && document.querySelector('#selected-run').textContent.includes('live-session')`, nil),
 		chromedp.Click(`[data-run="23"]`),
 		chromedp.Poll(`document.querySelector('#selected-run').textContent.includes('Summary 23 <safe>')`, nil),
+		chromedp.ActionFunc(func(context.Context) error {
+			if repo.outputRequests.Load() != 0 {
+				return fmt.Errorf("history browsing eagerly fetched output")
+			}
+			return nil
+		}),
+		checkpoint("opening transcript"),
+		chromedp.Click(`#selected-run [data-open-session-output]`),
+		chromedp.Poll(`document.querySelector('#task-session-output').textContent==='Taskless transcript 23' && document.querySelector('#task-session-run').textContent.includes('No task')`, nil),
+		checkpoint("taskless transcript rendered"),
+		chromedp.Click(`#session-back`),
+		chromedp.Poll(`!document.querySelector('#session-dialog').open`, nil),
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			var restored bool
+			if err := chromedp.Evaluate(`document.querySelector('looster-board').agentInspection?.name==='solo' && document.activeElement.matches('[data-open-session-output]')`, &restored).Do(ctx); err != nil {
+				return err
+			}
+			if !restored {
+				return fmt.Errorf("session back did not preserve inspector and restore focus")
+			}
+			return nil
+		}),
+		checkpoint("taskless transcript closed and focus restored"),
 		chromedp.Click(`[data-run-before]`), chromedp.WaitVisible(`[data-run="3"]`),
+		checkpoint("older history page loaded"),
+		chromedp.Click(`[data-run="3"]`),
+		chromedp.Poll(`document.querySelector('#selected-run').textContent.includes('Summary 3 <safe>')`, nil),
+		checkpoint("opening transcript"),
+		chromedp.Click(`#selected-run [data-open-session-output]`),
+		chromedp.Poll(`document.querySelector('#task-session-output').textContent==='Taskless transcript 3'`, nil),
+		chromedp.KeyEvent(kb.Escape),
+		chromedp.Poll(`!document.querySelector('#session-dialog').open && document.querySelector('#selected-run').textContent.includes('Summary 3 <safe>')`, nil),
 		chromedp.Click(`[data-run-previous]`), chromedp.WaitVisible(`[data-run="23"]`),
 		chromedp.Click(`#close`),
 		chromedp.Poll(`!document.querySelector('dialog').open`, nil),
@@ -104,7 +149,7 @@ func TestAgentInspectorBrowser(t *testing.T) {
 		chromedp.Poll(`document.body.dataset.inspectorReopened==='true' && document.querySelector('dialog').open && document.querySelector('#selected-run')?.textContent.includes('Summary 23 <safe>')`, nil, chromedp.WithPollingInterval(50*time.Millisecond)),
 	); err != nil {
 		var state string
-		_ = chromedp.Run(tab, chromedp.Evaluate(`JSON.stringify({open:document.querySelector('dialog').open,inspection:document.querySelector('looster-board').agentInspection?.name,history:document.querySelector('#agent-history')?.textContent,selected:document.querySelector('#selected-run')?.textContent})`, &state))
+		_ = chromedp.Run(tab, chromedp.Evaluate(`JSON.stringify({output:document.querySelector('#task-session-output')?.textContent,outputStatus:document.querySelector('#session-output-status')?.textContent,sessionOpen:document.querySelector('#session-dialog').open,focus:document.activeElement.outerHTML,open:document.querySelector('dialog').open,inspection:document.querySelector('looster-board').agentInspection?.name,history:document.querySelector('#agent-history')?.textContent,selected:document.querySelector('#selected-run')?.textContent})`, &state))
 		t.Fatalf("%v: %s", err, state)
 	}
 }

@@ -100,7 +100,7 @@ func TestTaskSessionLazyBrowser(t *testing.T) {
 			t.Fatal(expression)
 		}
 	}
-	if err := chromedp.Run(tab, emulation.SetDeviceMetricsOverride(1280, 1200, 1, false), chromedp.Navigate(server.URL+"/#board"), chromedp.WaitVisible("looster-board"), chromedp.Evaluate(`document.querySelector('looster-board').open(1)`, nil), chromedp.WaitVisible(`[data-task-session-job="12"]`), chromedp.Evaluate(`document.querySelector('looster-board').loadDetail(1)`, nil)); err != nil {
+	if err := chromedp.Run(tab, emulation.SetDeviceMetricsOverride(1280, 1600, 1, false), chromedp.Navigate(server.URL+"/#board"), chromedp.WaitVisible("looster-board"), chromedp.Evaluate(`document.querySelector('looster-board').open(1)`, nil), chromedp.WaitVisible(`[data-task-session-job="12"]`), chromedp.Evaluate(`document.querySelector('looster-board').loadDetail(1)`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	check(`document.querySelectorAll('#sessions button').length===2 && !document.querySelector('#sessions script') && document.querySelector('#sessions').textContent.includes('First <script>bad</script>') && !document.querySelector('#session-output')`)
@@ -111,11 +111,11 @@ func TestTaskSessionLazyBrowser(t *testing.T) {
 		t.Fatal(err)
 	}
 	screenshot("task-session-cards")
-	if err := chromedp.Run(tab, chromedp.Evaluate(`document.querySelector('#comment-form textarea').value='Unsaved draft'`, nil), chromedp.Click(`[data-task-session-job="11"]`), chromedp.Poll(`document.querySelector('#task-session-output').textContent==='Hello <safe>' && !document.querySelector('#task-session-output safe')`, nil)); err != nil {
+	if err := chromedp.Run(tab, chromedp.Evaluate(`document.querySelector('#comment-form textarea').value='Unsaved draft'`, nil), chromedp.Click(`[data-task-session-job="11"]`), chromedp.Poll(`document.querySelector('#task-session-output').textContent==='Hello <safe>' && document.querySelector('#task-session-run').textContent.includes('/11') && !document.querySelector('#task-session-output safe')`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	screenshot("task-session-detail")
-	if err := chromedp.Run(tab, chromedp.Evaluate(`document.querySelector('#task-session-output').scrollIntoView({block:'center'})`, nil)); err != nil {
+	if err := chromedp.Run(tab, chromedp.Evaluate(`document.querySelector('#session-dialog .detail').scrollTop=0`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	screenshot("task-session-transcript")

@@ -18,6 +18,9 @@ test('run detail renders outcome summary task session and timestamps without HTM
  const html=runDetailHTML({job_id:7,status:'done',task_id:42,session_id:'session-7',outcome:'success',summary:'<img src=x onerror=alert(1)>',created_at:'2026-11-04T10:00:00Z',started_at:'2026-11-04T10:01:00Z',finished_at:'2026-11-04T10:02:00Z'});
  for(const label of ['Outcome','success','Summary','Session','session-7','Started','Finished','data-run-task="42"'])assert.ok(html.includes(label));
  assert.doesNotMatch(html,/<img/);assert.match(html,/&lt;img/);
+ assert.doesNotMatch(html,/data-open-session-output/);
+ assert.match(runDetailHTML({job_id:7,error:'<failed>'},true),/data-open-session-output/);
+ assert.match(runDetailHTML({job_id:7,error:'<failed>'},true),/&lt;failed&gt;/);
  const taskless=runDetailHTML({job_id:8,task_id:0});assert.match(taskless,/No task/);assert.doesNotMatch(taskless,/data-run-task/);assert.match(taskless,/Not assigned/);assert.match(taskless,/No summary recorded/);
 });
 test('taskless card has a native keyboard accessible inspector button and stable run metadata',()=>{

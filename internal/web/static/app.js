@@ -369,6 +369,7 @@ class LoosterBoard extends HTMLElement {
     this.sessionDialog.querySelector('#session-output-status').textContent = 'Loading session output…';
     this.sessionDialog.querySelector('#session-output-more').textContent = 'Load more output';
     this.sessionDialog.querySelector('#session-output-more').hidden = true;
+    this.sessionDialog.querySelector('.detail').scrollTop = 0;
     this.querySelector('#session-title').textContent = `@ ${name} · Run ${id}`;
     this.lastG = 0;
     if(!this.sessionDialog.open) this.sessionDialog.showModal();
@@ -440,15 +441,18 @@ class LoosterBoard extends HTMLElement {
       const run = await this.api(`/api/agents/${encodeURIComponent(inspection.name)}/runs/${encodeURIComponent(id)}`);
       if((inspection.target ? this.sessionInspection !== inspection : this.agentInspection !== inspection) || inspection.runRequest !== request || !target.isConnected) return;
       if(inspection.target) inspection.status = run.outcome || run.status || inspection.status;
-      target.innerHTML = runDetailHTML(run);
+      const detail = inspection.target && this.sessionDialog?.querySelector('.detail'), atTop = detail?.scrollTop === 0;
+      target.innerHTML = runDetailHTML(run,!inspection.target);
+      if(atTop) detail.scrollTop = 0;
       target.querySelector('[data-run-task]')?.addEventListener('click',() => { if(inspection.target) { this.sessionDialog.close(); if(this.detailID === run.task_id) return; } this.open(run.task_id); });
     } catch(err) {
       if((inspection.target ? this.sessionInspection !== inspection : this.agentInspection !== inspection) || inspection.runRequest !== request || !target.isConnected) return;
       const live = this.data?.sessions?.find(s => s.agent === inspection.name && String(s.job_id) === String(id) && s.status === 'running');
-      target.innerHTML = err.status === 404 && live ? runDetailHTML({...live,outcome:'running',summary_status:'pending',summary:'This run is still running. Its final summary will be available after completion.'}) : '';
+      target.innerHTML = err.status === 404 && live ? runDetailHTML({...live,outcome:'running',summary_status:'pending',summary:'This run is still running. Its final summary will be available after completion.'},!inspection.target) : '';
       if(!target.innerHTML) target.textContent = 'Run unavailable. '+err.message;
       else target.querySelector('[data-run-task]')?.addEventListener('click',() => { if(inspection.target) { this.sessionDialog.close(); if(this.detailID === live.task_id) return; } this.open(live.task_id); });
     }
+    target.querySelector('[data-open-session-output]')?.addEventListener('click',e => this.openTaskSession(inspection.name,id,e.currentTarget));
   }
   memoryHTML(memories) {
     return (memories || []).map(m => `<div class="memory" data-refresh-key="memory:${esc(m.id)}"><span class="muted">MEM-${m.id}${m.created_at ? ' · '+esc(new Date(m.created_at).toLocaleString()) : ''}</span><pre>${esc(m.body)}</pre></div>`).join('') || '<p class="muted">No memories yet.</p>';
