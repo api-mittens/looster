@@ -182,7 +182,7 @@ func (l *lease) Started(ctx context.Context) error {
 				return app.ErrTaskPingStopped
 			}
 		}
-		if _, e := tx.Exec(ctx, `UPDATE jobs SET state='running',error='' WHERE id=$1`, l.job.ID); e != nil {
+		if _, e := tx.Exec(ctx, `UPDATE jobs SET state='running',error='',summary='',started_at=coalesce(started_at,now()) WHERE id=$1`, l.job.ID); e != nil {
 			return e
 		}
 		if l.job.TaskID > 0 {
@@ -195,18 +195,25 @@ func (l *lease) Started(ctx context.Context) error {
 	})
 }
 func (l *lease) Capture(ctx context.Context, out app.Output) error {
-	if out.SessionID != "" {
-		if _, e := l.conn.Exec(ctx, `UPDATE jobs SET session_id=$2 WHERE id=$1`, l.job.ID, out.SessionID); e != nil {
-			return e
-		}
-		if l.job.TaskID > 0 {
-			if _, e := l.conn.Exec(ctx, `UPDATE sessions SET session_id=$3 WHERE task_id=$1 AND agent_name=$2`, l.job.TaskID, l.job.Agent, out.SessionID); e != nil {
-				return e
+	return l.transaction(ctx, func(tx pgx.Tx) error {
+		if summary := capturedSummary(out.Text); summary != "" {
+			if _, err := tx.Exec(ctx, `UPDATE jobs SET summary=$2 WHERE id=$1`, l.job.ID, summary); err != nil {
+				return err
 			}
 		}
-	}
-	_, e := l.conn.Exec(ctx, `INSERT INTO events(task_id,kind,agent_name,body) VALUES($1,'agent_output',$2,$3)`, l.eventTask(), l.job.Agent, out.Text)
-	return e
+		if out.SessionID != "" {
+			if _, e := tx.Exec(ctx, `UPDATE jobs SET session_id=$2 WHERE id=$1`, l.job.ID, out.SessionID); e != nil {
+				return e
+			}
+			if l.job.TaskID > 0 {
+				if _, e := tx.Exec(ctx, `UPDATE sessions SET session_id=$3 WHERE task_id=$1 AND agent_name=$2`, l.job.TaskID, l.job.Agent, out.SessionID); e != nil {
+					return e
+				}
+			}
+		}
+		_, e := tx.Exec(ctx, `INSERT INTO events(task_id,kind,agent_name,body) VALUES($1,'agent_output',$2,$3)`, l.eventTask(), l.job.Agent, out.Text)
+		return e
+	})
 }
 func (l *lease) Archive(ctx context.Context, r app.Result) error {
 	e := l.transaction(ctx, func(tx pgx.Tx) error {
@@ -234,6 +241,9 @@ func (l *lease) Complete(ctx context.Context) error {
 				return e
 			}
 			closed = status == task.Closed
+		}
+		if err := l.recordSessionRun(ctx, tx, "done", ""); err != nil {
+			return err
 		}
 		if _, e := tx.Exec(ctx, `UPDATE jobs SET state='done',history=NULL,error='' WHERE id=$1`, l.job.ID); e != nil {
 			return e
@@ -264,6 +274,15 @@ func (l *lease) Fail(ctx context.Context, cause error) error {
 			state = "archiving"
 		} else if errors.Is(cause, context.Canceled) {
 			state = "pending"
+		}
+		if state == "failed" {
+			outcome := "failed"
+			if kind == "agent_interrupted" {
+				outcome = "interrupted"
+			}
+			if err := l.recordSessionRun(ctx, tx, outcome, cause.Error()); err != nil {
+				return err
+			}
 		}
 		if _, e := tx.Exec(ctx, `UPDATE jobs SET state=$2,error=$3,available_at=now()+interval '10 seconds' WHERE id=$1`, l.job.ID, state, cause.Error()); e != nil {
 			return e

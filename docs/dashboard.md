@@ -86,6 +86,34 @@ survive polling in the current client, and reset on reload or namespace switch.
 Filtered tasks lose their links, and unrelated agents disappear too, except for
 agents with active taskless sessions.
 
+## Agent run history
+
+Click an agent in Graph or the Behaviours workflow, or an **Other sessions**
+card in List, to open the shared agent inspector. Native buttons also support
+keyboard activation. The inspector retains the agent prompt and memories and
+adds paginated run history with individual run summaries, outcomes, task and
+session identities, start/finish times, and errors. History does not require a
+task and is scoped to the selected namespace.
+
+Every new agent execution, including taskless and resumed executions, is asked
+to finish with a 4-5 sentence summary covering attempted work, outcomes,
+verification, blockers, and unfinished work. The final structured harness
+response is saved as the summary, not arbitrary intermediate output. Missing
+summaries are shown explicitly rather than inferred as success. Failed and
+terminally interrupted jobs retain their outcome and error even without a
+summary.
+
+History is append-only and keyed by queued job, so successive scheduled jobs
+retain separate records even if they share a session identity. Records become
+available when a job reaches a terminal outcome. Worker cancellation and archive
+upload failures leave the same job resumable and do not prematurely finalize its
+history. Existing jobs completed before this feature are not backfilled. Apply
+database migration 017 before running upgraded workers.
+
+The read-only endpoints are `GET /api/agents/{name}/runs` (with `limit` and
+`before_job_id` pagination) and `GET /api/agents/{name}/runs/{jobID}`. They use the
+same namespace selection and trusted-local-only security model as the dashboard.
+
 ## Other sessions in List
 
 The far-right **Other sessions** column shows running sessions without a task

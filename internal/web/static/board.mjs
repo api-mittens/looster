@@ -8,7 +8,7 @@ export function boardAgentNames(agents, sessions) {
   return [...new Set([...agents.map(a => a.name), ...sessions.map(s => s.agent)])].filter(n => n && (!standalone.has(n) || taskAgents.has(n))).sort();
 }
 export function sessionCardHTML(s) {
-  return `<button tabindex="-1" type="button"><div class="card-top"><span class="ref">Other session</span></div><h3>${esc(s.agent)}</h3><div class="badges"><span class="badge running">${esc(s.status)}</span></div><code>${esc(s.session_id || s.job_id)}</code></button>`;
+  return `<button tabindex="-1" type="button" data-session-agent="${esc(s.agent)}" data-session-job="${esc(s.job_id || '')}" aria-label="Inspect ${esc(s.agent)} session"><div class="card-top"><span class="ref">Other session</span></div><h3>${esc(s.agent)}</h3><div class="badges"><span class="badge running">${esc(s.status)}</span></div><code>${esc(s.session_id || s.job_id)}</code></button>`;
 }
 
 // Fall back to creation when activity is unavailable, and put undated tasks last.

@@ -5,6 +5,7 @@ import {appendOutput} from './output.mjs';
 import {searchItems} from './search.mjs';
 import {sortTasksByLatestActivity,taskCardHTML,sessionCardHTML,boardAgentNames,activeTasklessSessions,isTasklessSession} from './board.mjs';
 import {attachmentsHTML,attachmentUploadHTML} from './attachments.mjs';
+import {runHistoryHTML,runDetailHTML} from './agent-runs.mjs';
 import './workflow.js';
 import './task-graph.js';
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -70,8 +71,8 @@ class LoosterBoard extends HTMLElement {
     this.querySelector('#refresh').onclick = () => this.refresh();
     this.querySelector('#close').onclick = () => this.dialog.close();
     this.querySelector('#help').onclick = () => this.showHelp();
-    this.dialog.onclose = () => { this.detailID = null; if(this.page === 'board') this.focus(); else if(this.returnFocus?.isConnected) this.returnFocus.focus(); };
-    this.board.onclick = e => { const card = e.target.closest('task-card'); if (card?.dataset.id) this.open(Number(card.dataset.id),card.dataset.key.startsWith('agent:') ? card.dataset.key.slice(6).split('/')[0] : ''); };
+    this.dialog.onclose = () => { if(this.dialog.open) return; this.agentInspection = null; this.detailID = null; if(this.page === 'board') this.focus(); else if(this.returnFocus?.isConnected) this.returnFocus.focus(); };
+    this.board.onclick = e => { const card = e.target.closest('task-card'); if(card && !card.dataset.id) { const button = card.querySelector('[data-session-agent]'); if(button) this.openAgent(button.dataset.sessionAgent,button.dataset.sessionJob); } else if (card?.dataset.id) this.open(Number(card.dataset.id),card.dataset.key.startsWith('agent:') ? card.dataset.key.slice(6).split('/')[0] : ''); };
     this.board.onpointerover = e => this.highlight(e.target.closest('task-card')?.dataset.id);
     this.board.onpointerleave = () => this.highlight(document.activeElement.closest('task-card')?.dataset.id);
     this.board.addEventListener('focusin',e => { const c = e.target.closest('task-card'); if (c) { this.selected = c.dataset.key; this.highlight(c.dataset.id); this.roving(c); } });
@@ -103,13 +104,14 @@ class LoosterBoard extends HTMLElement {
     const options = {signal:this.controller.signal};
     if(data !== undefined) Object.assign(options,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
     const response = await fetch(url,options);
-    if(!response.ok) throw Error(data === undefined && !explicitErrors ? 'Could not load data. Retrying automatically.' : (await response.text()).trim() || 'Could not save');
+    if(!response.ok) { const error = Error(data === undefined && !explicitErrors ? 'Could not load data. Retrying automatically.' : (await response.text()).trim() || 'Could not save'); error.status = response.status; throw error; }
     const value = await response.json();
     if(generation !== this.generation) throw new DOMException('Namespace changed','AbortError');
     return value;
   }
   post(path, data) { return this.api(path,data); }
   switchNamespace(namespace) {
+    this.agentInspection = null;
     this.controller.abort(); this.controller = new AbortController(); this.generation++;
     this.namespace = namespace; this.goPrefix = 0; this.scheduleRuns = {};
     for(const dialog of this.querySelectorAll('dialog')) if(dialog.open) dialog.close();
@@ -214,8 +216,8 @@ class LoosterBoard extends HTMLElement {
   }
   focus() { const c = [...this.board.querySelectorAll('task-card')].find(c => c.dataset.key === this.selected); c?.querySelector('button').focus({preventScroll:true}); c?.scrollIntoView({block:'nearest',inline:'nearest'}); }
   highlight(id) { this.board.querySelectorAll('task-card').forEach(c => c.classList.toggle('linked',!!id && c.dataset.id === id)); }
-  showHelp() { this.detailID = null; this.lastG = 0; this.querySelector('#dialog-title').textContent = 'Keyboard shortcuts'; this.panel.innerHTML = '<p><kbd>h</kbd> / <kbd>l</kbd> or left / right: list columns</p><p><kbd>j</kbd> / <kbd>k</kbd> or down / up: tasks; scroll pages and dialogs</p><p><kbd>gg</kbd>: Graph · <kbd>gl</kbd>: List · <kbd>gs</kbd>: Servers · <kbd>gb</kbd>: Behaviours</p><p><kbd>G</kbd>: last task / bottom of page; <kbd>gg</kbd> / <kbd>G</kbd> inside dialogs: top / bottom</p><p><kbd>Enter</kbd>: open task</p><p><kbd>n</kbd>: new task on List or Graph</p><p><kbd>:</kbd>: search everything · <kbd>/</kbd>: filter list or graph · <kbd>r</kbd>: refresh · <kbd>?</kbd>: help</p><p><kbd>Esc</kbd>: close details or clear search</p><p><kbd>Tab</kbd>: move through controls</p>'; this.dialog.showModal(); }
-  async open(id,agent = '') { this.returnFocus = document.activeElement; this.detailID = id; this.attachments = []; this.lastG = 0; this.cursor = 0; this.commentCursor = 0; this.comments = new Map(); this.outputs = new Map(); this.logAgent = agent; this.querySelector('#dialog-title').textContent = 'Loading…'; this.panel.textContent = ''; this.dialog.showModal(); await this.loadDetail(id); }
+  showHelp() { this.agentInspection = null; this.detailID = null; this.lastG = 0; this.querySelector('#dialog-title').textContent = 'Keyboard shortcuts'; this.panel.innerHTML = '<p><kbd>h</kbd> / <kbd>l</kbd> or left / right: list columns</p><p><kbd>j</kbd> / <kbd>k</kbd> or down / up: tasks; scroll pages and dialogs</p><p><kbd>gg</kbd>: Graph · <kbd>gl</kbd>: List · <kbd>gs</kbd>: Servers · <kbd>gb</kbd>: Behaviours</p><p><kbd>G</kbd>: last task / bottom of page; <kbd>gg</kbd> / <kbd>G</kbd> inside dialogs: top / bottom</p><p><kbd>Enter</kbd>: open task</p><p><kbd>n</kbd>: new task on List or Graph</p><p><kbd>:</kbd>: search everything · <kbd>/</kbd>: filter list or graph · <kbd>r</kbd>: refresh · <kbd>?</kbd>: help</p><p><kbd>Esc</kbd>: close details or clear search</p><p><kbd>Tab</kbd>: move through controls</p>'; this.dialog.showModal(); }
+  async open(id,agent = '') { this.agentInspection = null; if(!this.dialog.open) this.returnFocus = document.activeElement; this.detailID = id; this.attachments = []; this.lastG = 0; this.cursor = 0; this.commentCursor = 0; this.comments = new Map(); this.outputs = new Map(); this.logAgent = agent; this.querySelector('#dialog-title').textContent = 'Loading…'; this.panel.textContent = ''; if(!this.dialog.open) this.dialog.showModal(); await this.loadDetail(id); }
   async loadDetail(id) {
     const generation = this.outputs;
     if (this.detailBusy === generation) { this.detailQueued = true; return; }
@@ -376,13 +378,51 @@ class LoosterBoard extends HTMLElement {
     }
     if(this.page === 'system') panel.querySelector('workflow-graph').rules = this.system?.behaviours || [];
   }
-  openAgent(name) {
+  openAgent(name,jobID) {
     const agent = this.library?.agents?.find(a => a.name === name);
-    this.returnFocus = document.activeElement; this.detailID = null; this.lastG = 0;
+    const inspection = this.agentInspection = {name,jobID,cursors:[0]};
+    if(!this.dialog.open) this.returnFocus = document.activeElement; this.detailID = null; this.lastG = 0;
     this.querySelector('#dialog-title').textContent = '@ '+name;
-    this.panel.innerHTML = '<h3>Prompt</h3><div class="description"></div><h3>Memories</h3>'+this.memoryHTML(agent?.memories);
+    this.panel.innerHTML = '<h3>Prompt</h3><div class="description"></div><h3>Memories</h3>'+this.memoryHTML(agent?.memories)+'<section id="agent-history" aria-live="polite">Loading run history…</section>';
     this.panel.querySelector('.description').textContent = agent ? agent.description || 'No prompt.' : 'Agent context is unavailable. Refresh and try again.';
-    this.dialog.showModal();
+    if(!this.dialog.open) this.dialog.showModal();
+    this.loadAgentRuns(inspection);
+  }
+  async loadAgentRuns(inspection,before = 0) {
+    const target = this.panel.querySelector('#agent-history');
+    const request = inspection.historyRequest = {};
+    const restoreFocus = target.contains(document.activeElement);
+    target.textContent = 'Loading run history…';
+    try {
+      const page = await this.api(`/api/agents/${encodeURIComponent(inspection.name)}/runs?limit=20${before ? '&before_job_id='+before : ''}`);
+      if(this.agentInspection !== inspection || inspection.historyRequest !== request) return;
+      target.innerHTML = runHistoryHTML(page,inspection.cursors.length > 1);
+      target.querySelectorAll('[data-run]').forEach(button => button.onclick = () => this.loadAgentRun(inspection,button.dataset.run));
+      target.querySelector('[data-run-before]')?.addEventListener('click',() => { inspection.jobID = null; inspection.cursors.push(page.next_before_job_id); this.loadAgentRuns(inspection,page.next_before_job_id); });
+      target.querySelector('[data-run-previous]')?.addEventListener('click',() => { inspection.jobID = null; inspection.cursors.pop(); this.loadAgentRuns(inspection,inspection.cursors.at(-1)); });
+      if(restoreFocus) target.querySelector('[data-run]')?.focus({preventScroll:true});
+      const selected = inspection.jobID || page.runs?.[0]?.job_id;
+      if(selected) await this.loadAgentRun(inspection,selected);
+    } catch(err) { if(this.agentInspection === inspection && inspection.historyRequest === request) target.textContent = 'Run history unavailable. '+err.message; }
+  }
+  async loadAgentRun(inspection,id) {
+    const target = this.panel.querySelector('#selected-run');
+    if(!target) return;
+    const request = inspection.runRequest = {};
+    inspection.jobID = id;
+    target.textContent = 'Loading run…';
+    try {
+      const run = await this.api(`/api/agents/${encodeURIComponent(inspection.name)}/runs/${encodeURIComponent(id)}`);
+      if(this.agentInspection !== inspection || inspection.runRequest !== request || !target.isConnected) return;
+      target.innerHTML = runDetailHTML(run);
+      target.querySelector('[data-run-task]')?.addEventListener('click',() => this.open(run.task_id));
+    } catch(err) {
+      if(this.agentInspection !== inspection || inspection.runRequest !== request || !target.isConnected) return;
+      const live = this.data?.sessions?.find(s => s.agent === inspection.name && String(s.job_id) === String(id) && s.status === 'running');
+      target.innerHTML = err.status === 404 && live ? runDetailHTML({...live,outcome:'running',summary_status:'pending',summary:'This run is still running. Its final summary will be available after completion.'}) : '';
+      if(!target.innerHTML) target.textContent = 'Run unavailable. '+err.message;
+      else target.querySelector('[data-run-task]')?.addEventListener('click',() => this.open(live.task_id));
+    }
   }
   memoryHTML(memories) {
     return (memories || []).map(m => `<div class="memory" data-refresh-key="memory:${esc(m.id)}"><span class="muted">MEM-${m.id}${m.created_at ? ' · '+esc(new Date(m.created_at).toLocaleString()) : ''}</span><pre>${esc(m.body)}</pre></div>`).join('') || '<p class="muted">No memories yet.</p>';

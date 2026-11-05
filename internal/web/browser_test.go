@@ -60,6 +60,17 @@ func TestGraphBrowser(t *testing.T) {
 			case "/api/system":
 				data = map[string]interface{}{"behaviours": []interface{}{}}
 			default:
+				if strings.HasPrefix(r.URL.Path, "/api/agents/") {
+					if strings.HasSuffix(r.URL.Path, "/runs") {
+						id := 101
+						if r.URL.Query().Get("before_job_id") == "101" {
+							id = 81
+						}
+						data = map[string]interface{}{"runs": []interface{}{map[string]interface{}{"job_id": id, "agent": "solo", "status": "done"}}, "has_more": id == 101, "next_before_job_id": 101}
+					} else {
+						data = map[string]interface{}{"job_id": 101, "agent": "solo", "status": "done", "summary": "Run summary <safe>", "outcome": "success", "session_id": "session-101", "started_at": "2026-11-04T10:00:00Z"}
+					}
+				}
 				if regexp.MustCompile(`^/api/tasks/TSK-\d+$`).MatchString(r.URL.Path) {
 					var ts []json.RawMessage
 					json.Unmarshal(scoped, &ts)
