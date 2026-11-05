@@ -30,7 +30,9 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (int64, 
 
 const getTask = `-- name: GetTask :one
 SELECT tasks.id, tasks.name, tasks.description, tasks.status, tasks.created_at,
- COALESCE((SELECT max(e.created_at) FROM events e WHERE e.task_id=tasks.id), tasks.created_at)::timestamptz AS last_activity_at
+ GREATEST(tasks.created_at,
+  (SELECT max(e.created_at) FROM events e WHERE e.task_id=tasks.id),
+  (SELECT max(l.created_at) FROM session_logs l WHERE l.task_id=tasks.id))::timestamptz AS last_activity_at
 FROM tasks WHERE tasks.id = $1
 `
 
@@ -62,7 +64,9 @@ SELECT tasks.id, tasks.name, tasks.description, tasks.status, tasks.created_at,
  ARRAY(SELECT tags.name FROM tags JOIN task_tags ON tags.id=task_tags.tag_id
        WHERE task_tags.task_id=tasks.id ORDER BY tags.name)::text[] AS tags,
  activity.status_changes, activity.comment_count,
- COALESCE((SELECT max(e.created_at) FROM events e WHERE e.task_id=tasks.id), tasks.created_at)::timestamptz AS last_activity_at
+ GREATEST(tasks.created_at,
+  (SELECT max(e.created_at) FROM events e WHERE e.task_id=tasks.id),
+  (SELECT max(l.created_at) FROM session_logs l WHERE l.task_id=tasks.id))::timestamptz AS last_activity_at
 FROM tasks
 LEFT JOIN LATERAL (
  SELECT count(*) FILTER (WHERE kind='status_changed') AS status_changes,
