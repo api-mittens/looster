@@ -211,7 +211,7 @@ func (l *lease) Capture(ctx context.Context, out app.Output) error {
 				}
 			}
 		}
-		_, e := tx.Exec(ctx, `INSERT INTO events(task_id,kind,agent_name,body) VALUES($1,'agent_output',$2,$3)`, l.eventTask(), l.job.Agent, out.Text)
+		_, e := tx.Exec(ctx, `INSERT INTO events(task_id,kind,agent_name,body,job_id) VALUES($1,'agent_output',$2,$3,$4)`, l.eventTask(), l.job.Agent, out.Text, l.job.ID)
 		return e
 	})
 }

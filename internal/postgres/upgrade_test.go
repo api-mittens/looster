@@ -106,8 +106,12 @@ func TestUpgradeExistingDatabasePreservesFactoryData(t *testing.T) {
 			var body string
 			projection := "to_jsonb(x)"
 			if table == "jobs" {
-				// Migration 017 adds nullable/default-only staging metadata.
+				// Migration 018 adds nullable/default-only staging metadata.
 				projection = "(to_jsonb(x)-'started_at'-'summary')"
+			}
+			if table == "events" {
+				// Migration 019 adds nullable run attribution, without changing old rows.
+				projection = "(to_jsonb(x)-'job_id')"
 			}
 			query := "SELECT coalesce(jsonb_agg(" + projection + " ORDER BY " + projection + "::text),'[]'::jsonb)::text FROM " + table + " x"
 			if err := old.QueryRow(ctx, query).Scan(&body); err != nil {
@@ -125,6 +129,10 @@ func TestUpgradeExistingDatabasePreservesFactoryData(t *testing.T) {
 		t.Fatalf("idempotent migrate: %v", err)
 	}
 	after := snapshot()
+	var attributed int
+	if err := old.QueryRow(ctx, `SELECT count(*) FROM events WHERE job_id IS NOT NULL`).Scan(&attributed); err != nil || attributed != 0 {
+		t.Fatalf("upgrade attributed legacy events: count=%d err=%v", attributed, err)
+	}
 	if !reflect.DeepEqual(before, after) {
 		t.Fatalf("upgrade changed historical or active factory data\nbefore=%v\nafter=%v", before, after)
 	}
