@@ -56,6 +56,15 @@ test('run selection ignores older responses and responses after inspector naviga
  pending.get('/api/agents/solo/runs/3')({job_id:3,summary:'wrong agent'});await third;
  assert.doesNotMatch(target.innerHTML,/wrong agent/);
 });
+test('same-job metadata refresh does not overlap and clears busy state after completion',async()=>{
+ const board=inspectorHarness(),target={isConnected:true,querySelector:()=>null};let resolve,calls=0;
+ board.panel={querySelector:()=>target};board.api=()=>{calls++;return new Promise(r=>resolve=r);};
+ const inspection=board.agentInspection={name:'solo'};
+ const first=board.loadAgentRun(inspection,7);await board.loadAgentRun(inspection,7);assert.equal(calls,1);
+ resolve({job_id:7,summary_status:'pending'});await first;assert.equal(inspection.runPending,null);
+ board.api=async()=>{calls++;return {job_id:7,summary_status:'available',summary:'Finished summary'};};
+ await board.loadAgentRun(inspection,7);assert.equal(calls,2);assert.match(target.innerHTML,/Finished summary/);
+});
 test('separate task session inspector ignores responses after back or a different job selection',async()=>{
  const board=inspectorHarness(),target={isConnected:true,querySelector:()=>null},pending=new Map();
  board.api=path=>new Promise(resolve=>pending.set(path,resolve));

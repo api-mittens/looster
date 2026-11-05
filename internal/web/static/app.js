@@ -180,7 +180,10 @@ class LoosterBoard extends HTMLElement {
       if(this.palette.open) this.renderPalette();
       this.querySelector('#notice').textContent = failures.join(' · ');
       this.querySelector('#sync').textContent = 'Updated ' + new Date().toLocaleTimeString();
-      if(this.sessionDialog?.open && this.sessionInspection) await this.loadSessionOutput(this.sessionInspection);
+      if(this.sessionDialog?.open && this.sessionInspection) {
+        const inspection = this.sessionInspection;
+        await Promise.all([this.loadAgentRun(inspection,inspection.jobID),this.loadSessionOutput(inspection)]);
+      }
       if (this.detailID) await this.loadDetail(this.detailID);
     }
     catch (e) { if(generation === this.generation) this.querySelector('#notice').textContent = e.message; }
@@ -433,16 +436,20 @@ class LoosterBoard extends HTMLElement {
   }
   async loadAgentRun(inspection,id) {
     const target = inspection.target || this.panel.querySelector('#selected-run');
-    if(!target) return;
+    if(!target || inspection.runPending?.id === String(id) || (inspection.target && this.sessionInspection !== inspection)) return;
     const request = inspection.runRequest = {};
+    inspection.runPending = {id:String(id),request};
     inspection.jobID = id;
-    target.textContent = 'Loading run…';
+    if(inspection.loadedJobID !== String(id)) target.textContent = 'Loading run…';
     try {
       const run = await this.api(`/api/agents/${encodeURIComponent(inspection.name)}/runs/${encodeURIComponent(id)}`);
       if((inspection.target ? this.sessionInspection !== inspection : this.agentInspection !== inspection) || inspection.runRequest !== request || !target.isConnected) return;
       if(inspection.target) inspection.status = run.outcome || run.status || inspection.status;
       const detail = inspection.target && this.sessionDialog?.querySelector('.detail'), atTop = detail?.scrollTop === 0;
-      target.innerHTML = runDetailHTML(run,!inspection.target);
+      const html = runDetailHTML(run,!inspection.target);
+      inspection.loadedJobID = String(id);
+      if(target.innerHTML === html) return;
+      target.innerHTML = html;
       if(atTop) detail.scrollTop = 0;
       target.querySelector('[data-run-task]')?.addEventListener('click',() => { if(inspection.target) { this.sessionDialog.close(); if(this.detailID === run.task_id) return; } this.open(run.task_id); });
     } catch(err) {
@@ -451,6 +458,8 @@ class LoosterBoard extends HTMLElement {
       target.innerHTML = err.status === 404 && live ? runDetailHTML({...live,outcome:'running',summary_status:'pending',summary:'This run is still running. Its final summary will be available after completion.'},!inspection.target) : '';
       if(!target.innerHTML) target.textContent = 'Run unavailable. '+err.message;
       else target.querySelector('[data-run-task]')?.addEventListener('click',() => { if(inspection.target) { this.sessionDialog.close(); if(this.detailID === live.task_id) return; } this.open(live.task_id); });
+    } finally {
+      if(inspection.runPending?.request === request) inspection.runPending = null;
     }
     target.querySelector('[data-open-session-output]')?.addEventListener('click',e => this.openTaskSession(inspection.name,id,e.currentTarget));
   }

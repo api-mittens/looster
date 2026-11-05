@@ -21,6 +21,7 @@ func TestTaskSessionLazyBrowser(t *testing.T) {
 	if os.Getenv("LOOSTER_BROWSER_TEST") != "1" {
 		t.Skip("set LOOSTER_BROWSER_TEST=1")
 	}
+	var completed atomic.Bool
 	var detailRequests, outputRequests, taskOutputRequests atomic.Int32
 	handler := Handler(&testRepo{})
 	task := map[string]any{"id": 1, "name": "Session review", "status": "todo"}
@@ -32,6 +33,9 @@ func TestTaskSessionLazyBrowser(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		var data any = []any{}
 		switch r.URL.Path {
+		case "/api/test/complete":
+			completed.Store(true)
+			data = map[string]any{}
 		case "/api/board":
 			data = map[string]any{"tasks": []any{task}, "agents": []any{}, "sessions": []any{}}
 		case "/api/status", "/api/system", "/api/library":
@@ -62,7 +66,10 @@ func TestTaskSessionLazyBrowser(t *testing.T) {
 			if strings.HasSuffix(r.URL.Path, "/12") {
 				id = 12
 			}
-			data = map[string]any{"job_id": id, "agent": "coder", "task_id": 1, "outcome": "done", "summary": "Full summary for " + r.URL.Path}
+			data = map[string]any{"job_id": id, "agent": "coder", "task_id": 1, "outcome": "done", "summary_status": "available", "summary": "Full summary for " + r.URL.Path}
+			if id == 12 && !completed.Load() {
+				data = map[string]any{"job_id": id, "agent": "coder", "task_id": 1, "outcome": "running", "summary_status": "pending", "summary": "Pending summary for " + r.URL.Path}
+			}
 		}
 		json.NewEncoder(w).Encode(data)
 	}))
@@ -123,10 +130,13 @@ func TestTaskSessionLazyBrowser(t *testing.T) {
 		t.Fatal(err)
 	}
 	check(`document.querySelector('looster-board').detailID===1 && document.querySelector('looster-board').dialog.open && document.querySelector('#comment-form textarea').value==='Unsaved draft' && document.activeElement.dataset.taskSessionJob==='11'`)
-	if err := chromedp.Run(tab, chromedp.Focus(`[data-task-session-job="12"]`), chromedp.KeyEvent(kb.Enter), chromedp.Poll(`document.querySelector('#session-dialog #task-session-run').textContent.includes('/12')`, nil), chromedp.Poll(`document.querySelector('#task-session-output').textContent==='Different job 12'`, nil), chromedp.Click("#session-back"), chromedp.Poll(`!document.querySelector('#session-dialog').open`, nil)); err != nil {
+	if err := chromedp.Run(tab, chromedp.Focus(`[data-task-session-job="12"]`), chromedp.KeyEvent(kb.Enter), chromedp.Poll(`document.querySelector('#session-dialog #task-session-run').textContent.includes('/12')`, nil), chromedp.Poll(`document.querySelector('#task-session-output').textContent==='Different job 12' && document.querySelector('#task-session-run').textContent.includes('pending')`, nil),
+		chromedp.Evaluate(`window.sessionBeforeRefresh=document.querySelector('looster-board').sessionInspection;(async()=>{await fetch('/api/test/complete');await document.querySelector('looster-board').refresh();})()`, nil),
+		chromedp.Poll(`document.querySelector('#task-session-run').textContent.includes('available') && document.querySelector('#task-session-run').textContent.includes('Full summary for /api/agents/coder/runs/12') && document.querySelector('#session-dialog').open && document.querySelector('looster-board').sessionInspection===window.sessionBeforeRefresh`, nil),
+		chromedp.Click("#session-back"), chromedp.Poll(`!document.querySelector('#session-dialog').open`, nil)); err != nil {
 		t.Fatal(err)
 	}
-	if detailRequests.Load() != 2 || outputRequests.Load() < 3 || taskOutputRequests.Load() != 0 {
+	if detailRequests.Load() < 3 || outputRequests.Load() < 3 || taskOutputRequests.Load() != 0 {
 		t.Fatalf("detail=%d output=%d taskOutput=%d", detailRequests.Load(), outputRequests.Load(), taskOutputRequests.Load())
 	}
 }
