@@ -17,7 +17,6 @@ export function attachmentsHTML(attachments, taskID, eventID, namespace = '') {
   }).join('')}</ul>`;
 }
 
-export function attachmentUploadHTML(eventID = null) {
-  const target = eventID == null ? 'description' : `comment ${eventID}`;
-  return `<form class="attachment-upload"${eventID == null ? '' : ` data-event-id="${esc(eventID)}"`}><label>Attach files to ${esc(target)} <input type="file" name="files" multiple required></label><button type="submit">Upload files</button><p class="attachment-result form-error" role="status" aria-live="polite"></p></form>`;
+export function attachmentUploadHTML() {
+  return '<label class="attachment-picker">Attach files (optional) <input type="file" name="files" multiple></label>';
 }

@@ -24,10 +24,22 @@ type browserAttachmentRepo struct {
 	files []task.Attachment
 }
 
-func (r *browserAttachmentRepo) Attachments(context.Context, int64) ([]task.Attachment, error) {
+func (r *browserAttachmentRepo) Attachments(_ context.Context, id int64) ([]task.Attachment, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]task.Attachment(nil), r.files...), nil
+	var files []task.Attachment
+	for _, file := range r.files {
+		if file.TaskID == id {
+			files = append(files, file)
+		}
+	}
+	return files, nil
+}
+func (r *browserAttachmentRepo) Task(_ context.Context, id int64) (task.Task, error) {
+	return task.Task{ID: id, Name: "Upload task", Status: task.Todo}, nil
+}
+func (r *browserAttachmentRepo) Comment(context.Context, int64, string) (int64, error) {
+	return 42, nil
 }
 func (r *browserAttachmentRepo) AddAttachment(_ context.Context, a task.Attachment) (task.Attachment, error) {
 	r.mu.Lock()
@@ -89,25 +101,42 @@ func TestAttachmentBrowser(t *testing.T) {
 	wait := func(expression string) chromedp.Action {
 		return chromedp.Poll(expression, nil, chromedp.WithPollingTimeout(20*time.Second))
 	}
-	if err := chromedp.Run(tab,
-		chromedp.Navigate(server.URL+"/#board"),
+	actions := []chromedp.Action{
+		chromedp.Navigate(server.URL + "/#board"),
 		chromedp.Click("#toggle-stages"),
 		chromedp.WaitVisible("task-card"),
 		chromedp.Click("task-card"),
 		chromedp.WaitVisible("#description-attachments img"),
 		wait(`document.querySelector('#description-attachments img')?.naturalWidth === 3`),
-		chromedp.SetUploadFiles(`#description-upload input[type=file]`, []string{file}),
-		chromedp.Click("#description-upload button"),
-		wait(`document.querySelectorAll('#description-attachments li').length === 2`),
-		chromedp.SetUploadFiles(`[data-comment-id="42"] input[type=file]`, []string{file}),
-		chromedp.Click(`[data-comment-id="42"] .attachment-upload button`),
+		wait(`!document.querySelector('#description-upload') && !document.querySelector('[data-comment-id="42"] input[type=file]')`),
+		chromedp.SendKeys(`#comment-form textarea`, "New comment with files"),
+		chromedp.SetUploadFiles(`#comment-form input[type=file]`, []string{file}),
+		chromedp.Click(`#comment-form button`),
 		wait(`document.querySelector('[data-comment-id="42"] .comment-attachments img')?.naturalWidth === 3`),
-		wait(`document.querySelectorAll('#description-attachments li').length === 2 && document.querySelectorAll('[data-comment-id="42"] .comment-attachments li').length === 1`),
-	); err != nil {
-		t.Fatal(err)
+		wait(`document.querySelectorAll('#description-attachments li').length === 1 && document.querySelectorAll('[data-comment-id="42"] .comment-attachments li').length === 1`),
+		chromedp.Evaluate(`document.querySelector('#close').click()`, nil),
+		chromedp.Evaluate(`document.querySelector('#new-task').click()`, nil),
+		chromedp.WaitVisible(`#create-dialog[open]`),
+		chromedp.SendKeys(`#create-form input[name="name"]`, "Task with files"),
+		chromedp.SetUploadFiles(`#create-form input[type=file]`, []string{file}),
+		chromedp.Evaluate(`document.querySelector('#create-form').requestSubmit()`, nil),
+		wait(`document.querySelector('#description-attachments img')?.naturalWidth === 3 && document.querySelector('#dialog-title').textContent.startsWith('TSK-2')`),
+		wait(`document.querySelector('#description-attachments a[download]')?.href.includes('/TSK-2/attachments/')`),
+	}
+	for i, action := range actions {
+		if err := chromedp.Run(tab, action); err != nil {
+			var state string
+			_ = chromedp.Run(tab, chromedp.Evaluate(`JSON.stringify({detail:document.querySelector('looster-board').detailID,create:document.querySelector('#create-dialog').outerHTML,panel:document.querySelector('.detail').innerHTML})`, &state))
+			t.Log(state)
+			t.Fatalf("browser step %d: %v", i, err)
+		}
 	}
 	files, _ := repo.Attachments(ctx, 1)
-	if len(files) != 3 || files[2].EventID == nil || *files[2].EventID != 42 {
+	if len(files) != 2 || files[1].EventID == nil || *files[1].EventID != 42 {
 		t.Fatalf("wrong persisted grouping: %+v", files)
+	}
+	created, _ := repo.Attachments(ctx, 2)
+	if len(created) != 1 || created[0].EventID != nil {
+		t.Fatalf("wrong new-task grouping: %+v", created)
 	}
 }
