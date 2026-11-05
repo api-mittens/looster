@@ -4,7 +4,8 @@ import "testing"
 
 func TestAgentRunViews(t *testing.T) { runJSProbe(t, agentRunProbe) }
 
-const agentRunProbe = `import {runHistoryHTML,runDetailHTML} from './static/agent-runs.mjs';
+const agentRunProbe = `import {appendOutput} from './static/output.mjs';
+import {runHistoryHTML,runDetailHTML} from './static/agent-runs.mjs';
 import {sessionCardHTML,taskSessionCardHTML} from './static/board.mjs';
 test('run history supports empty, taskless, linked and paginated runs safely',()=>{
  assert.match(runHistoryHTML({runs:[]}),/No runs recorded/);
@@ -29,12 +30,13 @@ test('task session cards escape short summaries, preserve distinct jobs and show
  assert.match(first,/data-refresh-key="job:11"/);assert.match(second,/data-refresh-key="job:12"/);
  assert.match(first,/data-task-session-job="11"/);assert.match(second,/Summary pending/);
  assert.match(first,/&lt;img/);assert.doesNotMatch(first,/<img/);
- for(const state of ['missing','error']) assert.match(taskSessionCardHTML({job_id:13,agent:'coder',summary_status:state}),new RegExp(state));
+ for(const state of ['missing','error','failed','interrupted']) assert.match(taskSessionCardHTML({job_id:13,agent:'coder',summary_status:state}),new RegExp(state));
+ assert.match(taskSessionCardHTML({agent:'legacy',job_id:0}),/ disabled/);
  assert.match(taskSessionCardHTML({agent:'legacy'}),/ disabled/);
 });
 function inspectorHarness() {
  const classes=new Map();
- const context=vm.createContext({HTMLElement:class {},customElements:{define:(name,type)=>classes.set(name,type)},runHistoryHTML,runDetailHTML});
+ const context=vm.createContext({HTMLElement:class {},customElements:{define:(name,type)=>classes.set(name,type)},runHistoryHTML,runDetailHTML,appendOutput});
  vm.runInContext(readFileSync(new URL('./static/app.js','file:./probe'),'utf8').replace(/^import .*;\n/gm,''),context);
  return new (classes.get('looster-board'))();
 }
@@ -64,6 +66,24 @@ test('separate task session inspector ignores responses after back or a differen
  const c=board.loadAgentRun(second,13);board.sessionInspection=null;
  pending.get('/api/agents/coder/runs/13')({job_id:13,summary:'closed dialog'});await c;
  assert.doesNotMatch(target.innerHTML,/closed dialog/);
+});
+test('lazy session output paginates readable deltas and ignores responses after close',async()=>{
+ const board=inspectorHarness(),box={textContent:'',scrollHeight:0,scrollTop:0,clientHeight:0},note={},more={};
+ board.sessionDialog={open:true,querySelector:s=>s==='#task-session-output'?box:s==='#session-output-status'?note:more};
+ const inspection=board.sessionInspection={name:'coder',jobID:11,output:{text:''},after:0};const paths=[];
+ board.api=async path=>{paths.push(path);return paths.length===1?{events:[{body:'{"type":"text_delta","text":"Hello "}'}],has_more:true,next_after:1}:{events:[{body:'{"type":"text_delta","text":"world"}'},{body:'{"type":"done","text":"Hello world"}'}],has_more:false,next_after:3};};
+ await board.loadSessionOutput(inspection);assert.equal(box.textContent,'Hello world');assert.match(paths[1],/runs\/11\/output\?after=1/);assert.equal(inspection.after,3);
+ let resolve;board.api=()=>new Promise(r=>resolve=r);const pending=board.loadSessionOutput(inspection);board.sessionInspection=null;
+ resolve({events:[{body:'stale'}],next_after:4});await pending;assert.equal(box.textContent,'Hello world');
+});
+test('lazy output distinguishes pending missing and API errors',async()=>{
+ const board=inspectorHarness(),box={scrollHeight:0,scrollTop:0,clientHeight:0},note={},more={};
+ board.sessionDialog={open:true,querySelector:s=>s==='#task-session-output'?box:s==='#session-output-status'?note:more};
+ const inspection=board.sessionInspection={name:'coder',jobID:12,output:{text:''},after:0,status:'running'};
+ board.api=async()=>({events:[],has_more:false,next_after:0});await board.loadSessionOutput(inspection);assert.match(note.textContent,/pending/);
+ inspection.status='done';await board.loadSessionOutput(inspection);assert.match(note.textContent,/No output recorded/);
+ board.api=async()=>{throw Object.assign(new Error('missing'),{status:404});};await board.loadSessionOutput(inspection);assert.match(note.textContent,/Output missing/);
+ board.api=async()=>{throw new Error('offline');};await board.loadSessionOutput(inspection);assert.match(note.textContent,/Could not load session output: offline/);assert.equal(more.hidden,false);
 });
 test('unfinished live run has pending summary metadata but missing archived run stays an error',async()=>{
  const board=inspectorHarness(), target={isConnected:true,innerHTML:'',querySelector:()=>null};

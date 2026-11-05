@@ -1,3 +1,4 @@
+import {appendOutput} from './output.mjs';
 import {patchHTML} from './refresh.mjs';
 import {renderMarkdown} from './markdown.mjs';
 import {serversHTML,behavioursHTML,ruleLabel} from './views.mjs';
@@ -60,8 +61,9 @@ class LoosterBoard extends HTMLElement {
     this.querySelector('#page').addEventListener('task-open',e => this.open(e.detail.id));
     this.querySelector('#page').addEventListener('change',e => { if(e.target.id === 'manifest-version') { this.manifestID = Number(e.target.value); this.renderPage(); } });
     this.querySelector('#page').addEventListener('click',e => { if(e.target.closest('#activate-manifest')) this.activateManifest(); const run=e.target.closest('[data-run-schedule]'); if(run) this.runSchedule(Number(run.dataset.runSchedule)); });
-    this.insertAdjacentHTML('beforeend','<dialog id="session-dialog" aria-labelledby="session-title"><div class="dialog-head"><h2 id="session-title"></h2><div class="spacer"></div><button type="button" id="session-back">Back <kbd>Esc</kbd></button></div><div class="detail" tabindex="0"><section id="selected-run" aria-live="polite"></section></div></dialog>');
+    this.insertAdjacentHTML('beforeend','<dialog id="session-dialog" aria-labelledby="session-title"><div class="dialog-head"><h2 id="session-title"></h2><div class="spacer"></div><button type="button" id="session-back">Back <kbd>Esc</kbd></button></div><div class="detail" tabindex="0"><section id="task-session-run" aria-live="polite"></section><section aria-labelledby="session-output-title"><h3 id="session-output-title">Session output</h3><pre id="task-session-output" class="session-output" tabindex="0" aria-label="Session output"></pre><p id="session-output-status" class="muted" role="status"></p><button type="button" id="session-output-more" hidden>Load more output</button></section></div></dialog>');
     this.sessionDialog = this.querySelector('#session-dialog');
+    this.querySelector('#session-output-more').onclick = () => { if(this.sessionInspection) this.loadSessionOutput(this.sessionInspection); };
     this.querySelector('#session-back').onclick = () => this.sessionDialog.close();
     this.sessionDialog.onclose = () => { if(this.sessionDialog.open) return; this.sessionInspection = null; this.lastG = 0; if(this.sessionReturnFocus?.isConnected) this.sessionReturnFocus.focus({preventScroll:true}); };
     this.panel.onclick = e => { const card = e.target.closest('[data-task-session-job]'); if(card) this.openTaskSession(card.dataset.sessionAgent,card.dataset.taskSessionJob,card); };
@@ -178,6 +180,7 @@ class LoosterBoard extends HTMLElement {
       if(this.palette.open) this.renderPalette();
       this.querySelector('#notice').textContent = failures.join(' · ');
       this.querySelector('#sync').textContent = 'Updated ' + new Date().toLocaleTimeString();
+      if(this.sessionDialog?.open && this.sessionInspection) await this.loadSessionOutput(this.sessionInspection);
       if (this.detailID) await this.loadDetail(this.detailID);
     }
     catch (e) { if(generation === this.generation) this.querySelector('#notice').textContent = e.message; }
@@ -359,12 +362,45 @@ class LoosterBoard extends HTMLElement {
     if(this.page === 'system') panel.querySelector('workflow-graph').rules = this.system?.behaviours || [];
   }
   openTaskSession(name,id,card) {
+    if(!Number.isSafeInteger(Number(id)) || Number(id) < 1) return;
     this.sessionReturnFocus = card || document.activeElement;
-    const inspection = this.sessionInspection = {name,jobID:id,target:this.sessionDialog.querySelector('#selected-run')};
+    const inspection = this.sessionInspection = {name,jobID:id,target:this.sessionDialog.querySelector('#task-session-run'),output:{text:''},after:0,status:card?.dataset.sessionStatus};
+    this.sessionDialog.querySelector('#task-session-output').textContent = '';
+    this.sessionDialog.querySelector('#session-output-status').textContent = 'Loading session output…';
+    this.sessionDialog.querySelector('#session-output-more').textContent = 'Load more output';
+    this.sessionDialog.querySelector('#session-output-more').hidden = true;
     this.querySelector('#session-title').textContent = `@ ${name} · Run ${id}`;
     this.lastG = 0;
     if(!this.sessionDialog.open) this.sessionDialog.showModal();
     this.loadAgentRun(inspection,id);
+    this.loadSessionOutput(inspection);
+  }
+  async loadSessionOutput(inspection) {
+    if(inspection.outputBusy || this.sessionInspection !== inspection) return;
+    inspection.outputBusy = true;
+    const current = () => this.sessionInspection === inspection && this.sessionDialog.open;
+    const box = this.sessionDialog.querySelector('#task-session-output'), note = this.sessionDialog.querySelector('#session-output-status'), more = this.sessionDialog.querySelector('#session-output-more');
+    try {
+      for(let page=0;page<10;page++) {
+        const result = await this.api(`/api/agents/${encodeURIComponent(inspection.name)}/runs/${encodeURIComponent(inspection.jobID)}/output?after=${inspection.after}`,undefined,true);
+        if(!current()) return;
+        const follow = box.scrollHeight-box.scrollTop-box.clientHeight < 40;
+        const after = Number(result.next_after);
+        if((result.events?.length || result.has_more) && (!Number.isSafeInteger(after) || after <= inspection.after)) throw Error('Invalid output cursor');
+        for(const event of result.events || []) appendOutput(inspection.output,event.body || '');
+        if(Number.isSafeInteger(after) && after >= inspection.after) inspection.after = after;
+        box.textContent = inspection.output.text;
+        if(follow) box.scrollTop = box.scrollHeight;
+        more.textContent = 'Load more output';
+        more.hidden = !result.has_more;
+        const status = this.data?.sessions?.find(s => s.agent === inspection.name && String(s.job_id) === String(inspection.jobID))?.status || inspection.status;
+        note.textContent = result.has_more ? 'Loading output in batches…' : inspection.output.text ? 'Updates every 5 seconds while this session is open.' : status === 'running' || result.status === 'pending' ? 'Output pending. This run has not produced output yet.' : 'No output recorded for this run. Historical runs from before output attribution may have no correlated output.';
+        if(!result.has_more) return;
+      }
+      note.textContent = 'More output is available. Select Load more output to continue.';
+    } catch(error) {
+      if(current() && error.name !== 'AbortError') { note.textContent = error.status === 404 ? 'Output missing for this run.' : `Could not load session output: ${error.message}`; more.hidden = false; more.textContent = 'Retry output'; }
+    } finally { inspection.outputBusy = false; }
   }
   openAgent(name,jobID) {
     if(this.sessionDialog?.open) this.sessionDialog.close();
@@ -403,6 +439,7 @@ class LoosterBoard extends HTMLElement {
     try {
       const run = await this.api(`/api/agents/${encodeURIComponent(inspection.name)}/runs/${encodeURIComponent(id)}`);
       if((inspection.target ? this.sessionInspection !== inspection : this.agentInspection !== inspection) || inspection.runRequest !== request || !target.isConnected) return;
+      if(inspection.target) inspection.status = run.outcome || run.status || inspection.status;
       target.innerHTML = runDetailHTML(run);
       target.querySelector('[data-run-task]')?.addEventListener('click',() => { if(inspection.target) { this.sessionDialog.close(); if(this.detailID === run.task_id) return; } this.open(run.task_id); });
     } catch(err) {
@@ -484,7 +521,7 @@ class LoosterBoard extends HTMLElement {
     if(this.palette.open || this.createDialog.open) { this.goPrefix = 0; return; }
     if(this.dialog.open || e.target.matches('input,textarea,select,[contenteditable]')) this.goPrefix = 0;
     if(e.key === ':' && !e.target.matches('input,textarea,select,[contenteditable]')) { e.preventDefault(); this.openPalette(); return; }
-    if(this.sessionDialog?.open) { if(e.target.matches('select,input,textarea,[contenteditable]')) return; this.scrollMotion(e,this.sessionDialog.querySelector('.detail')); return; }
+    if(this.sessionDialog?.open) { if(e.target.matches('select,input,textarea,[contenteditable]')) return; this.scrollMotion(e,e.target.closest('#task-session-output') || this.sessionDialog.querySelector('.detail')); return; }
     if (this.dialog.open) { if(e.target.matches('select,input,textarea,[contenteditable]')) return; this.scrollMotion(e,this.panel); return; }
     if (e.target.matches('select')) return;
     if (e.target.matches('input,textarea,[contenteditable]')) { if (e.key === 'Escape') { e.preventDefault(); this.search.value = ''; this.render(); this.focus(); } if (e.key === 'Enter') { e.preventDefault(); this.focus(); } return; }

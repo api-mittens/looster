@@ -21,7 +21,7 @@ func TestTaskSessionLazyBrowser(t *testing.T) {
 	if os.Getenv("LOOSTER_BROWSER_TEST") != "1" {
 		t.Skip("set LOOSTER_BROWSER_TEST=1")
 	}
-	var detailRequests, outputRequests atomic.Int32
+	var detailRequests, outputRequests, taskOutputRequests atomic.Int32
 	handler := Handler(&testRepo{})
 	task := map[string]any{"id": 1, "name": "Session review", "status": "todo"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -43,7 +43,18 @@ func TestTaskSessionLazyBrowser(t *testing.T) {
 			}}
 		case "/api/tasks/TSK-1/events":
 			if r.URL.Query().Get("kind") != "comment" {
-				outputRequests.Add(1)
+				taskOutputRequests.Add(1)
+			}
+		case "/api/agents/coder/runs/11/output", "/api/agents/coder/runs/12/output":
+			outputRequests.Add(1)
+			if r.URL.Query().Get("after") == "3" || r.URL.Query().Get("after") == "9" {
+				data = map[string]any{"events": []any{}, "has_more": false, "next_after": map[string]int{"3": 3, "9": 9}[r.URL.Query().Get("after")]}
+			} else if strings.Contains(r.URL.Path, "/12/") {
+				data = map[string]any{"events": []any{map[string]any{"id": 9, "body": `{"type":"text_delta","text":"Different job 12"}`}}, "has_more": false, "next_after": 9}
+			} else if r.URL.Query().Get("after") == "0" {
+				data = map[string]any{"events": []any{map[string]any{"id": 1, "body": `{"type":"text_delta","text":"Hello "}`}}, "has_more": true, "next_after": 1}
+			} else {
+				data = map[string]any{"events": []any{map[string]any{"id": 2, "body": `{"type":"text_delta","text":"<safe>"}`}, map[string]any{"id": 3, "body": `{"type":"done","text":"Hello <safe>"}`}}, "has_more": false, "next_after": 3}
 			}
 		case "/api/agents/coder/runs/11", "/api/agents/coder/runs/12":
 			detailRequests.Add(1)
@@ -93,25 +104,29 @@ func TestTaskSessionLazyBrowser(t *testing.T) {
 		t.Fatal(err)
 	}
 	check(`document.querySelectorAll('#sessions button').length===2 && !document.querySelector('#sessions script') && document.querySelector('#sessions').textContent.includes('First <script>bad</script>') && !document.querySelector('#session-output')`)
-	if detailRequests.Load() != 0 || outputRequests.Load() != 0 {
+	if detailRequests.Load() != 0 || outputRequests.Load() != 0 || taskOutputRequests.Load() != 0 {
 		t.Fatal("task opening eagerly fetched session detail or output")
 	}
 	if err := chromedp.Run(tab, chromedp.Evaluate(`document.querySelector('#sessions').scrollIntoView({block:'end'})`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	screenshot("task-session-cards")
-	if err := chromedp.Run(tab, chromedp.Evaluate(`document.querySelector('#comment-form textarea').value='Unsaved draft'`, nil), chromedp.Click(`[data-task-session-job="11"]`), chromedp.Poll(`document.querySelector('#session-dialog #selected-run').textContent.includes('/11')`, nil)); err != nil {
+	if err := chromedp.Run(tab, chromedp.Evaluate(`document.querySelector('#comment-form textarea').value='Unsaved draft'`, nil), chromedp.Click(`[data-task-session-job="11"]`), chromedp.Poll(`document.querySelector('#task-session-output').textContent==='Hello <safe>' && !document.querySelector('#task-session-output safe')`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	screenshot("task-session-detail")
+	if err := chromedp.Run(tab, chromedp.Evaluate(`document.querySelector('#task-session-output').scrollIntoView({block:'center'})`, nil)); err != nil {
+		t.Fatal(err)
+	}
+	screenshot("task-session-transcript")
 	if err := chromedp.Run(tab, chromedp.KeyEvent(kb.Escape), chromedp.Poll(`!document.querySelector('#session-dialog').open`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	check(`document.querySelector('looster-board').detailID===1 && document.querySelector('looster-board').dialog.open && document.querySelector('#comment-form textarea').value==='Unsaved draft' && document.activeElement.dataset.taskSessionJob==='11'`)
-	if err := chromedp.Run(tab, chromedp.Focus(`[data-task-session-job="12"]`), chromedp.KeyEvent(kb.Enter), chromedp.Poll(`document.querySelector('#session-dialog #selected-run').textContent.includes('/12')`, nil), chromedp.Click("#session-back"), chromedp.Poll(`!document.querySelector('#session-dialog').open`, nil)); err != nil {
+	if err := chromedp.Run(tab, chromedp.Focus(`[data-task-session-job="12"]`), chromedp.KeyEvent(kb.Enter), chromedp.Poll(`document.querySelector('#session-dialog #task-session-run').textContent.includes('/12')`, nil), chromedp.Poll(`document.querySelector('#task-session-output').textContent==='Different job 12'`, nil), chromedp.Click("#session-back"), chromedp.Poll(`!document.querySelector('#session-dialog').open`, nil)); err != nil {
 		t.Fatal(err)
 	}
-	if detailRequests.Load() != 2 || outputRequests.Load() != 0 {
-		t.Fatalf("detail=%d output=%d", detailRequests.Load(), outputRequests.Load())
+	if detailRequests.Load() != 2 || outputRequests.Load() < 3 || taskOutputRequests.Load() != 0 {
+		t.Fatalf("detail=%d output=%d taskOutput=%d", detailRequests.Load(), outputRequests.Load(), taskOutputRequests.Load())
 	}
 }
