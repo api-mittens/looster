@@ -130,6 +130,12 @@ func TestTaskSessionLazyBrowser(t *testing.T) {
 		t.Fatal(err)
 	}
 	check(`document.querySelector('looster-board').detailID===1 && document.querySelector('looster-board').dialog.open && document.querySelector('#comment-form textarea').value==='Unsaved draft' && document.activeElement.dataset.taskSessionJob==='11'`)
+	// A native close notification may arrive after the user has already focused
+	// the next run. It must not move focus back to the previously inspected card.
+	if err := chromedp.Run(tab, chromedp.Focus(`[data-task-session-job="12"]`), chromedp.Evaluate(`document.querySelector('#session-dialog').dispatchEvent(new Event('close'))`, nil)); err != nil {
+		t.Fatal(err)
+	}
+	check(`document.activeElement.dataset.taskSessionJob==='12'`)
 	if err := chromedp.Run(tab, chromedp.Focus(`[data-task-session-job="12"]`), chromedp.KeyEvent(kb.Enter), chromedp.Poll(`document.querySelector('#session-dialog #task-session-run').textContent.includes('/12')`, nil), chromedp.Poll(`document.querySelector('#task-session-output').textContent==='Different job 12' && document.querySelector('#task-session-run').textContent.includes('pending')`, nil),
 		chromedp.Evaluate(`window.sessionBeforeRefresh=document.querySelector('looster-board').sessionInspection;(async()=>{await fetch('/api/test/complete');await document.querySelector('looster-board').refresh();})()`, nil),
 		chromedp.Poll(`document.querySelector('#task-session-run').textContent.includes('available') && document.querySelector('#task-session-run').textContent.includes('Full summary for /api/agents/coder/runs/12') && document.querySelector('#session-dialog').open && document.querySelector('looster-board').sessionInspection===window.sessionBeforeRefresh`, nil),

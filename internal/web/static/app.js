@@ -66,7 +66,14 @@ class LoosterBoard extends HTMLElement {
     this.sessionDialog = this.querySelector('#session-dialog');
     this.querySelector('#session-output-more').onclick = () => { if(this.sessionInspection) this.loadSessionOutput(this.sessionInspection); };
     this.querySelector('#session-back').onclick = () => this.sessionDialog.close();
-    this.sessionDialog.onclose = () => { if(this.sessionDialog.open) return; this.sessionInspection = null; this.lastG = 0; if(this.sessionReturnFocus?.isConnected) this.sessionReturnFocus.focus({preventScroll:true}); };
+    this.sessionDialog.onclose = () => {
+      if(this.sessionDialog.open) return;
+      this.sessionInspection = null; this.lastG = 0;
+      // Native dialog closing restores focus. A delayed close event must not
+      // override a newer user selection outside this inspector.
+      const active = document.activeElement;
+      if(this.sessionReturnFocus?.isConnected && (!active || active === document.body || this.sessionDialog.contains(active))) this.sessionReturnFocus.focus({preventScroll:true});
+    };
     this.panel.onclick = e => { const card = e.target.closest('[data-task-session-job]'); if(card) this.openTaskSession(card.dataset.sessionAgent,card.dataset.taskSessionJob,card); };
     this.panel.onchange = e => { if(e.target.id === 'task-status') this.changeStatus(e.target); };
     this.panel.onsubmit = async e => {
