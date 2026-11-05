@@ -118,6 +118,39 @@ to the remote event table; inspect the terminal or service manager output for
 that process. Existing `looster status` reports currently live worker heartbeats.
 No additional database migration is required for the log commands.
 
+## Session questions and blockers
+
+Session observations are separate from the system event stream above. After
+upgrading, run `looster db migrate` to create their append-only storage. In a
+managed agent run, record a question needing an answer or a limitation preventing
+progress with:
+
+```bash
+looster task log question 'Should the import accept legacy CSV headers?'
+looster task log blocker 'The fixture download is inaccessible; please provide a local copy.'
+```
+
+The command takes its body as an argument. It uses `LOOSTER_JOB_ID` and
+`LOOSTER_AGENT` to attribute the note to an exact queued run and its real session.
+An optional `LOOSTER_SESSION_ID` or `--session` is checked against that run.
+Explicit calls can use `--job JOB_ID --agent NAME`, with optional `--task TSK-n` as
+an attribution check. Agents can record only their own runs. Runs must already
+have a real session ID, so do not invent an ID before session initialization.
+Kinds are open-ended for future extensions, with `question` and `blocker` driving
+the dashboard's attention indicators.
+
+Logs appear in run history, including taskless runs, and in chronological order
+alongside task comments with agent and run attribution. Answer task questions by
+adding an ordinary task comment, which notifies attached sessions without an
+@mention. For taskless runs, update the agent prompt or relevant memories instead.
+Logs remain historical: there is no resolution flag or automatic clearing.
+
+The Graph and List show question and blocker badges. Only agent, planning and
+todo columns promote blocker tasks first, followed by question-only tasks, keeping
+recent-activity ordering within each group. Other columns retain recent-activity
+ordering. Closed and validated cards fade after more than one day of inactivity
+and become compact after more than three days, while still opening task details.
+
 ## Agent skills
 
 Generate the bundled agent skill into the default skills directory or a custom
