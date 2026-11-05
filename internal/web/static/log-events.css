@@ -14,5 +14,6 @@ task-card .task-compact h3{margin:0;min-width:0;overflow:hidden;text-overflow:el
 .question-badge{color:#1d4ed8;background:#eff6ff;border-color:#93c5fd}
 .run-history-card{border:1px solid #d4d4d8;border-radius:6px;padding:8px;min-width:0}
 .run-history-card>button{width:100%}
+.session-log .muted{overflow-wrap:anywhere}
 .session-log .log-body{color:inherit;margin:6px 0;white-space:pre-wrap;overflow-wrap:anywhere}
 @media(prefers-color-scheme:dark){.blocker-badge{color:#fcd34d;background:#422d13}.question-badge{color:#bfdbfe;background:#172b49}}
