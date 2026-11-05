@@ -32,7 +32,7 @@ func TestLogPriorityCompactBrowser(t *testing.T) {
 			if offset == 1 || offset == 2 {
 				logs = append(logs, map[string]any{"kind": "blocker", "agent": "coder"})
 			}
-			task := map[string]any{"id": id, "name": fmt.Sprintf("Full accessible task title %d", id), "status": status, "last_activity_at": now.Add(-time.Duration(age) * 24 * time.Hour).Format(time.RFC3339), "session_logs": logs}
+			task := map[string]any{"id": id, "name": fmt.Sprintf("Full accessible task title %d %s", id, strings.Repeat("long-title-without-breaks", 20)), "status": status, "last_activity_at": now.Add(-time.Duration(age) * 24 * time.Hour).Format(time.RFC3339), "session_logs": logs}
 			tasks = append(tasks, task)
 			sessions = append(sessions, map[string]any{"agent": "coder", "task_id": id, "job_id": id, "status": "running"})
 			details[fmt.Sprintf("/api/tasks/TSK-%d", id)] = map[string]any{"task": task, "sessions": []any{}}
@@ -77,6 +77,14 @@ func TestLogPriorityCompactBrowser(t *testing.T) {
 	}
 	if !valid {
 		t.Fatal("compact cards must retain readable inline signals and accessible identity")
+	}
+	for _, width := range []int64{1280, 390} {
+		if err := chromedp.Run(tab, chromedp.EmulateViewport(width, 900), chromedp.Evaluate(`(()=>{const columns=[...document.querySelectorAll('.board .column')];return columns.length>0&&columns.every(c=>{const width=c.getBoundingClientRect().width;return width<=(innerWidth<=650?260:276)+1&&[...c.querySelectorAll('task-card,task-card button')].every(card=>card.getBoundingClientRect().width<=width&&card.scrollWidth<=card.clientWidth+1);})&&[22,32].every(id=>{const card=document.querySelector('.column:not(.agent) task-card[data-id="'+id+'"] button'),title=card.querySelector('h3');return card.classList.contains('task-compact')&&card.getBoundingClientRect().height<60&&title.scrollWidth>title.clientWidth&&getComputedStyle(title).textOverflow==='ellipsis';})&&[21,31,24,34].every(id=>!document.querySelector('.column:not(.agent) task-card[data-id="'+id+'"] button').classList.contains('task-compact'));})()`, &valid)); err != nil {
+			t.Fatal(err)
+		}
+		if !valid {
+			t.Fatalf("board columns/cards overflow or inactivity compaction regressed at viewport %d", width)
+		}
 	}
 	if err := chromedp.Run(tab, chromedp.Focus(`.column[data-refresh-key="closed"] [data-id="22"] button`), chromedp.KeyEvent(kb.Enter), chromedp.WaitVisible(`#task-comments`), chromedp.Evaluate(`document.querySelector('looster-board').detailID===22&&document.querySelector('#dialog-title').textContent.includes('Full accessible task title 22')`, &valid)); err != nil {
 		t.Fatal(err)

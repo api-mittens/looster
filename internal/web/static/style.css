@@ -64,6 +64,7 @@ header{position:sticky;top:0;z-index:50;display:grid;grid-template-columns:minma
 .markdown-body th,.markdown-body td{padding:6px 12px;border:1px solid #d4d4d8;min-width:6em}
 .markdown-body th{background:#f4f4f5;font-weight:650}
 .markdown-body img{max-width:100%;height:auto}
+.column{min-width:0;max-width:276px}.cards{min-width:0;grid-template-columns:minmax(0,1fr)}task-card,task-card button{min-width:0;max-width:100%}task-card .badge{min-width:0;overflow-wrap:anywhere}@media(max-width:650px){.column{max-width:260px}}
 .attachments{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,180px),min(100%,240px)));gap:12px;list-style:none;padding:0;margin:12px 0;max-width:100%}
 .attachments li{display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-width:0;max-width:100%;padding:12px;border:1px solid #d4d4d8;border-radius:6px;overflow-wrap:anywhere}
 .attachments a{color:#1d4ed8;text-decoration:underline;max-width:100%;overflow-wrap:anywhere}
