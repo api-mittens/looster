@@ -134,7 +134,9 @@ func TestTaskSessionLazyBrowser(t *testing.T) {
 		chromedp.Evaluate(`window.sessionBeforeRefresh=document.querySelector('looster-board').sessionInspection;(async()=>{await fetch('/api/test/complete');await document.querySelector('looster-board').refresh();})()`, nil),
 		chromedp.Poll(`document.querySelector('#task-session-run').textContent.includes('available') && document.querySelector('#task-session-run').textContent.includes('Full summary for /api/agents/coder/runs/12') && document.querySelector('#session-dialog').open && document.querySelector('looster-board').sessionInspection===window.sessionBeforeRefresh`, nil),
 		chromedp.Click("#session-back"), chromedp.Poll(`!document.querySelector('#session-dialog').open`, nil)); err != nil {
-		t.Fatal(err)
+		var state string
+		_ = chromedp.Run(tab, chromedp.Evaluate(`JSON.stringify({dialog:document.querySelector('#session-dialog').open,detail:document.querySelector('#task-session-run').textContent,output:document.querySelector('#task-session-output').textContent,active:document.activeElement.outerHTML,inspection:document.querySelector('looster-board').sessionInspection?.jobID})`, &state))
+		t.Fatalf("session transition: %v\nstate: %s\nrequests: detail=%d output=%d", err, state, detailRequests.Load(), outputRequests.Load())
 	}
 	if detailRequests.Load() < 3 || outputRequests.Load() < 3 || taskOutputRequests.Load() != 0 {
 		t.Fatalf("detail=%d output=%d taskOutput=%d", detailRequests.Load(), outputRequests.Load(), taskOutputRequests.Load())
