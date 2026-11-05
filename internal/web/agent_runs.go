@@ -14,6 +14,7 @@ import (
 type sessionHistoryRepository = app.SessionHistoryRepository
 
 func registerAgentRuns(mux *http.ServeMux, repo Repository, write func(http.ResponseWriter, any, error)) {
+	registerAgentRunOutput(mux, repo, write)
 	mux.HandleFunc("GET /api/agents/{name}/runs", func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
 		if !agent.ValidName(name) {
