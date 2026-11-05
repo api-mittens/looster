@@ -6,11 +6,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
 )
@@ -58,6 +60,25 @@ func TestTaskSessionLazyBrowser(t *testing.T) {
 	defer cancel()
 	tab, shutdown := newTestBrowser(t, ctx)
 	defer shutdown()
+	screenshot := func(name string) {
+		t.Helper()
+		dir := os.Getenv("LOOSTER_TEST_SCREENSHOT_DIR")
+		if dir == "" {
+			return
+		}
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		var image []byte
+		if err := chromedp.Run(tab, chromedp.CaptureScreenshot(&image)); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(dir, name+".png")
+		if err := os.WriteFile(path, image, 0644); err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("Screenshot: %s", path)
+	}
 	check := func(expression string) {
 		t.Helper()
 		var ok bool
@@ -68,14 +89,22 @@ func TestTaskSessionLazyBrowser(t *testing.T) {
 			t.Fatal(expression)
 		}
 	}
-	if err := chromedp.Run(tab, chromedp.Navigate(server.URL+"/#board"), chromedp.WaitVisible("looster-board"), chromedp.Evaluate(`document.querySelector('looster-board').open(1)`, nil), chromedp.WaitVisible(`[data-task-session-job="12"]`), chromedp.Evaluate(`document.querySelector('looster-board').loadDetail(1)`, nil)); err != nil {
+	if err := chromedp.Run(tab, emulation.SetDeviceMetricsOverride(1280, 1200, 1, false), chromedp.Navigate(server.URL+"/#board"), chromedp.WaitVisible("looster-board"), chromedp.Evaluate(`document.querySelector('looster-board').open(1)`, nil), chromedp.WaitVisible(`[data-task-session-job="12"]`), chromedp.Evaluate(`document.querySelector('looster-board').loadDetail(1)`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	check(`document.querySelectorAll('#sessions button').length===2 && !document.querySelector('#sessions script') && document.querySelector('#sessions').textContent.includes('First <script>bad</script>') && !document.querySelector('#session-output')`)
 	if detailRequests.Load() != 0 || outputRequests.Load() != 0 {
 		t.Fatal("task opening eagerly fetched session detail or output")
 	}
-	if err := chromedp.Run(tab, chromedp.Evaluate(`document.querySelector('#comment-form textarea').value='Unsaved draft'`, nil), chromedp.Click(`[data-task-session-job="11"]`), chromedp.Poll(`document.querySelector('#session-dialog #selected-run').textContent.includes('/11')`, nil), chromedp.KeyEvent(kb.Escape), chromedp.Poll(`!document.querySelector('#session-dialog').open`, nil)); err != nil {
+	if err := chromedp.Run(tab, chromedp.Evaluate(`document.querySelector('#sessions').scrollIntoView({block:'end'})`, nil)); err != nil {
+		t.Fatal(err)
+	}
+	screenshot("task-session-cards")
+	if err := chromedp.Run(tab, chromedp.Evaluate(`document.querySelector('#comment-form textarea').value='Unsaved draft'`, nil), chromedp.Click(`[data-task-session-job="11"]`), chromedp.Poll(`document.querySelector('#session-dialog #selected-run').textContent.includes('/11')`, nil)); err != nil {
+		t.Fatal(err)
+	}
+	screenshot("task-session-detail")
+	if err := chromedp.Run(tab, chromedp.KeyEvent(kb.Escape), chromedp.Poll(`!document.querySelector('#session-dialog').open`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	check(`document.querySelector('looster-board').detailID===1 && document.querySelector('looster-board').dialog.open && document.querySelector('#comment-form textarea').value==='Unsaved draft' && document.activeElement.dataset.taskSessionJob==='11'`)
