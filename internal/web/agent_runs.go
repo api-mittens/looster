@@ -1,7 +1,7 @@
 package web
 
 import (
-	"context"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -9,12 +9,9 @@ import (
 	"github.com/api-mittens/looster/internal/app"
 )
 
-// sessionHistoryRepository is optional so existing dashboard repositories and
-// lightweight fakes do not need to implement durable run storage.
-type sessionHistoryRepository interface {
-	SessionHistory(context.Context, string, int64, int64, int) ([]agent.SessionRun, error)
-	SessionRun(context.Context, int64) (agent.SessionRun, error)
-}
+// Use the application port so permission-wrapped dashboard repositories retain
+// the same run inspection capabilities as the underlying namespace store.
+type sessionHistoryRepository = app.SessionHistoryRepository
 
 func registerAgentRuns(mux *http.ServeMux, repo Repository, write func(http.ResponseWriter, any, error)) {
 	mux.HandleFunc("GET /api/agents/{name}/runs", func(w http.ResponseWriter, r *http.Request) {
@@ -47,6 +44,10 @@ func registerAgentRuns(mux *http.ServeMux, repo Repository, write func(http.Resp
 			return
 		}
 		runs, err := history.SessionHistory(r.Context(), name, 0, before, limit+1)
+		if errors.Is(err, app.ErrSessionHistoryUnavailable) {
+			http.Error(w, "Run history unavailable", http.StatusNotImplemented)
+			return
+		}
 		if err != nil {
 			write(w, nil, err)
 			return
@@ -77,6 +78,10 @@ func registerAgentRuns(mux *http.ServeMux, repo Repository, write func(http.Resp
 			return
 		}
 		run, err := history.SessionRun(r.Context(), id)
+		if errors.Is(err, app.ErrSessionHistoryUnavailable) {
+			http.Error(w, "Run history unavailable", http.StatusNotImplemented)
+			return
+		}
 		if err == nil && run.Agent != name {
 			err = app.ErrNotFound
 		}
