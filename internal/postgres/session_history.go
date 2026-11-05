@@ -43,7 +43,7 @@ func (s *Store) SessionRun(ctx context.Context, jobID int64) (agent.SessionRun, 
 	r, err := scanSessionRun(s.Pool.QueryRow(ctx, `SELECT `+sessionRunColumns+` FROM agent_session_runs WHERE job_id=$1
  UNION ALL
  SELECT id,coalesce(task_id,0),coalesce(context_task_id,0),agent_name,session_id,
- coalesce(started_at,'0001-01-01'::timestamptz),'0001-01-01'::timestamptz,state,summary,
+ coalesce(started_at,'0001-01-01 00:00:00+00'::timestamptz),'0001-01-01 00:00:00+00'::timestamptz,state,summary,
  CASE WHEN summary<>'' THEN 'available' ELSE 'pending' END,error
  FROM jobs WHERE id=$1 AND state IN ('pending','running','archiving')
  AND NOT EXISTS (SELECT FROM agent_session_runs WHERE job_id=$1)`, jobID))

@@ -6,10 +6,20 @@ import (
 
 	"github.com/api-mittens/looster/internal/app"
 	"github.com/api-mittens/looster/internal/task"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestSessionsExactRunSummaryAndLiveDetail(t *testing.T) {
 	ctx, s := queuePerformanceStore(t)
+	// Exercise live timestamp sentinels under a non-UTC PostgreSQL timezone.
+	cfg := s.Pool.Config()
+	cfg.ConnConfig.RuntimeParams["timezone"] = "Europe/Paris"
+	detailPool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer detailPool.Close()
+	detailStore := &Store{Pool: detailPool}
 	created, err := s.CreateTask(ctx, "session summaries", "", task.Planning, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -34,7 +44,7 @@ func TestSessionsExactRunSummaryAndLiveDetail(t *testing.T) {
 		id := queuePerformanceJob(t, ctx, s, created.ID, nil, "queue_test", "pending", nil)
 		ids = append(ids, id)
 		check(id, "", "pending", "")
-		r, err := s.SessionRun(ctx, id)
+		r, err := detailStore.SessionRun(ctx, id)
 		if err != nil || r.Outcome != "pending" || !r.StartedAt.IsZero() || !r.FinishedAt.IsZero() {
 			t.Fatalf("pending=%+v %v", r, err)
 		}
@@ -45,7 +55,7 @@ func TestSessionsExactRunSummaryAndLiveDetail(t *testing.T) {
 		if err := l.Capture(ctx, app.Output{SessionID: "shared", Text: `{"type":"done","text":"` + summary + `"}`}); err != nil {
 			t.Fatal(err)
 		}
-		r, err = s.SessionRun(ctx, id)
+		r, err = detailStore.SessionRun(ctx, id)
 		if err != nil || r.Outcome != "running" || r.StartedAt.IsZero() || !r.FinishedAt.IsZero() || r.Summary != summary {
 			t.Fatalf("running=%+v %v", r, err)
 		}
