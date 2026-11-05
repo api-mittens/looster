@@ -105,6 +105,12 @@ func TestDashboardScheduledSessionHistoryPostgres(t *testing.T) {
 			if detail.Code != 200 || !strings.Contains(detail.Body.String(), want) || strings.Contains(detail.Body.String(), fmt.Sprintf("namespace %d scheduled", 1-i)) {
 				t.Fatalf("detail namespace %d: %d %s", i, detail.Code, detail.Body.String())
 			}
+			output := httptest.NewRecorder()
+			handler.ServeHTTP(output, httptest.NewRequest("GET", fmt.Sprintf("/api/agents/solo/runs/%d/output%s", run.JobID, suffix), nil))
+			otherRun := fmt.Sprintf("namespace %d scheduled run %d", i, j+1)
+			if output.Code != 200 || !strings.Contains(output.Body.String(), want) || strings.Contains(output.Body.String(), otherRun) || strings.Contains(output.Body.String(), fmt.Sprintf("namespace %d scheduled", 1-i)) {
+				t.Fatalf("output namespace %d: %d %s", i, output.Code, output.Body.String())
+			}
 		}
 	}
 }

@@ -128,11 +128,26 @@ func TestMarkdownBrowser(t *testing.T) {
 	if gotPosted != submitted {
 		t.Fatalf("comment source changed: got %q want %q", gotPosted, submitted)
 	}
-	if err := chromedp.Run(tab, chromedp.Reload(), chromedp.Click("#toggle-stages"), chromedp.WaitVisible("task-card"), chromedp.Click(`task-card[data-id="1"]`), chromedp.WaitVisible("#task-comments article:nth-child(2) h2")); err != nil {
+	// Reload is asynchronous. Wait for the new document before clicking controls,
+	// otherwise Chromium can satisfy selectors from the outgoing page and then
+	// replace it while the close-dialog assertion is running.
+	if _, err := chromedp.RunResponse(tab, chromedp.Reload()); err != nil {
+		t.Fatal(err)
+	}
+	if err := chromedp.Run(tab, chromedp.Click("#toggle-stages"), chromedp.WaitVisible("task-card"), chromedp.Click(`task-card[data-id="1"]`), chromedp.WaitVisible("#task-comments article:nth-child(2) h2")); err != nil {
 		t.Fatal(err)
 	}
 	evaluateTrue(t, `document.querySelectorAll('#task-comments article').length===2 && document.querySelector('#task-comments article:first-child h2').textContent==='Existing comment' && document.querySelector('#task-comments article:last-child code').textContent.includes('<not-html>')`)
-	if err := chromedp.Run(tab, chromedp.Click("#close"), chromedp.Poll(`!document.querySelector('looster-board').dialog.open && document.querySelector('looster-board').detailID===null`, nil), chromedp.Click(`task-card[data-id="2"]`), chromedp.WaitVisible("#task-description"), chromedp.Poll(`document.querySelector('#task-description').textContent.trim()==='No description.' && document.querySelector('#task-comments').textContent.trim()==='No comments yet.'`, nil)); err != nil {
+	// Native close events are asynchronous. Observe application cleanup after
+	// its registered close handler, not merely the synchronous open flag.
+	if err := chromedp.Run(tab,
+		chromedp.Evaluate(`{const board=document.querySelector('looster-board');board.dialog.addEventListener('close',()=>{board.dataset.closedTask=String(board.detailID===null);},{once:true});}`, nil),
+		chromedp.Click("#close"),
+		chromedp.Poll(`!document.querySelector('dialog[aria-labelledby="dialog-title"]').open && document.querySelector('looster-board').dataset.closedTask==='true'`, nil),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := chromedp.Run(tab, chromedp.Click(`task-card[data-id="2"]`), chromedp.WaitVisible("#task-description"), chromedp.Poll(`document.querySelector('#task-description').textContent.trim()==='No description.' && document.querySelector('#task-comments').textContent.trim()==='No comments yet.'`, nil)); err != nil {
 		t.Fatal(err)
 	}
 }
