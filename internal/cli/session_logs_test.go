@@ -26,6 +26,49 @@ type cliLogRepo struct {
 	calls int
 }
 
+func TestSessionLogLinkCLIAndAPI(t *testing.T) {
+	t.Setenv("LOOSTER_JOB_ID", "9")
+	t.Setenv("LOOSTER_AGENT", "coder")
+	t.Setenv("LOOSTER_SESSION_ID", "session")
+	t.Setenv("LOOSTER_TASK_ID", "TSK-3")
+	for _, body := range []string{"https://example.com/path?a=1&b=2", "http://localhost:8080", "https:///missing", "javascript:alert(1)", "https://one.test https://two.test", "https://example.com\n", "https://example.com/\u00a0"} {
+		t.Run(body, func(t *testing.T) {
+			valid := body == "https://example.com/path?a=1&b=2" || body == "http://localhost:8080"
+			raw := &cliLogRepo{}
+			repo, _ := app.WithPermissions(raw, app.Actor{Role: app.Agent, Name: "coder"})
+			cmd := (&application{repo: repo}).sessionLogCommand()
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SetArgs([]string{"link", body})
+			err := cmd.ExecuteContext(context.Background())
+			if valid {
+				if err != nil || raw.calls != 1 || raw.input.Body != body || raw.input.Kind != "link" || raw.input.JobID != 9 || raw.input.Agent != "coder" || raw.input.SessionID != "session" || raw.input.TaskID != 3 {
+					t.Fatalf("CLI input=%+v calls=%d err=%v", raw.input, raw.calls, err)
+				}
+			} else if !errors.Is(err, app.ErrInvalidSessionLog) || raw.calls != 0 {
+				t.Fatalf("CLI accepted invalid link: %v calls=%d", err, raw.calls)
+			}
+			raw.calls = 0
+			payload, _ := json.Marshal(map[string]string{"kind": "link", "body": body, "session_id": "session"})
+			req := httptest.NewRequest("POST", "/api/agents/coder/runs/9/logs", bytes.NewReader(payload))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			web.Handler(repo, nil).ServeHTTP(w, req)
+			want, calls := 400, 0
+			if valid {
+				want, calls = 200, 1
+			}
+			if w.Code != want || raw.calls != calls {
+				t.Fatalf("API status=%d calls=%d body=%s", w.Code, raw.calls, w.Body.String())
+			}
+			if valid && (raw.input.JobID != 9 || raw.input.Agent != "coder" || raw.input.SessionID != "session" || raw.input.Body != body) {
+				t.Fatalf("API attribution: %+v", raw.input)
+			}
+		})
+	}
+}
+
 func TestSessionLogCLIHTTPPostgres(t *testing.T) {
 	url := os.Getenv("LOOSTER_TEST_DATABASE_URL")
 	if url == "" {

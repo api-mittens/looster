@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
+	"unicode"
 
 	"github.com/api-mittens/looster/internal/agent"
 )
@@ -21,6 +23,12 @@ type SessionLogRepository interface {
 func ValidateSessionLog(in agent.SessionLogInput) error {
 	if in.JobID < 1 || !agent.ValidName(in.Agent) || strings.TrimSpace(in.Kind) == "" || strings.TrimSpace(in.Body) == "" || in.TaskID < 0 || len(in.Kind) > 100 || len(in.Body) > 1048576 {
 		return fmt.Errorf("%w: positive job ID, agent, kind (up to 100 bytes) and body (up to 1 MiB) are required", ErrInvalidSessionLog)
+	}
+	if in.Kind == "link" {
+		u, err := url.Parse(in.Body)
+		if err != nil || u.Opaque != "" || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Hostname() == "" || strings.ContainsAny(in.Body, "\\") || strings.ContainsFunc(in.Body, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+			return fmt.Errorf("%w: link body must be a single absolute HTTP(S) URL with a host and no whitespace", ErrInvalidSessionLog)
+		}
 	}
 	return nil
 }

@@ -9,7 +9,7 @@ task-card .task-compact .card-top{flex-shrink:0}
 task-card .task-compact .task-counters,task-card .task-compact .signal-label,task-card .task-compact .badge:not(.signal-badge){display:none}
 task-card .task-compact .badges{flex-shrink:0;flex-wrap:nowrap;margin-left:auto}
 task-card .task-compact .signal-badge{padding:0;border:0;background:none;font-size:13px}
-task-card .task-compact h3{margin:0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+task-card .task-compact h3{flex:1 1 0;margin:0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .blocker-badge{color:#92400e;background:#fffbeb;border-color:#f59e0b}
 .question-badge{color:#1d4ed8;background:#eff6ff;border-color:#93c5fd}
 .run-history-card{border:1px solid #d4d4d8;border-radius:6px;padding:8px;min-width:0}

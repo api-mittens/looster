@@ -78,3 +78,21 @@ func TestSessionLogValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSessionLogLinkValidation(t *testing.T) {
+	for _, body := range []string{"https://example.com", "http://localhost:8080/path?q=a&b=c#fragment", "HTTPS://example.com/a%20b", "https://[::1]/"} {
+		if err := ValidateSessionLog(agent.SessionLogInput{JobID: 9, Agent: "coder", Kind: "link", Body: body}); err != nil {
+			t.Errorf("valid URL %q: %v", body, err)
+		}
+	}
+	for _, body := range []string{"example.com", "/relative", "//example.com", "https:///path", "http://", "https://:80/", "javascript:alert(1)", "data:text/html,test", "ftp://example.com", "https://example.com https://other.com", "https://example.com\nhttps://other.com", " https://example.com", "https://example.com\t", "https://example.com/\u00a0", "https://example.com/\x00", "https://example.com\\evil", "https://example.com/%zz"} {
+		in := agent.SessionLogInput{JobID: 9, Agent: "coder", Kind: "link", Body: body}
+		if err := ValidateSessionLog(in); !errors.Is(err, ErrInvalidSessionLog) {
+			t.Errorf("invalid URL %q: %v", body, err)
+		}
+		in.Kind = "future-kind"
+		if err := ValidateSessionLog(in); err != nil {
+			t.Errorf("open-ended kind %q: %v", body, err)
+		}
+	}
+}

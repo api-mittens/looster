@@ -9,12 +9,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/api-mittens/looster/internal/event"
 	"github.com/api-mittens/looster/internal/task"
+	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 )
 
@@ -22,6 +24,54 @@ type browserAttachmentRepo struct {
 	testRepo
 	mu    sync.Mutex
 	files []task.Attachment
+}
+
+func TestAttachmentResponsiveRefreshBrowser(t *testing.T) {
+	if os.Getenv("LOOSTER_BROWSER_TEST") != "1" {
+		t.Skip("set LOOSTER_BROWSER_TEST=1 for real Chromium attachment acceptance")
+	}
+	owner := int64(42)
+	name := strings.Repeat("long-unbroken-filename", 14) + ".png"
+	var img bytes.Buffer
+	if err := png.Encode(&img, image.NewRGBA(image.Rect(0, 0, 1600, 900))); err != nil {
+		t.Fatal(err)
+	}
+	repo := &browserAttachmentRepo{files: []task.Attachment{
+		{ID: 1, TaskID: 1, Name: name, Key: "tasks/TSK-1/cli/wide.png", Size: int64(img.Len())},
+		{ID: 2, TaskID: 1, EventID: &owner, Name: name, Key: "tasks/TSK-1/cli/wide.png", Size: int64(img.Len())},
+	}}
+	objects := &browserAttachmentObjects{data: map[string][]byte{"tasks/TSK-1/cli/wide.png": img.Bytes()}}
+	server := httptest.NewServer(HandlerWithStorage(repo, objects))
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	tab, shutdown := newTestBrowser(t, ctx)
+	defer shutdown()
+	if err := chromedp.Run(tab, chromedp.Navigate(server.URL+"/#board"), chromedp.Click("#toggle-stages"), chromedp.WaitVisible("task-card"), chromedp.Click("task-card"), chromedp.WaitVisible(".comment-attachments img"), chromedp.Poll(`document.querySelector('#description-attachments img')?.naturalWidth === 1600`, nil)); err != nil {
+		t.Fatal(err)
+	}
+	for _, width := range []int64{1440, 375, 280} {
+		var valid bool
+		err := chromedp.Run(tab, chromedp.EmulateViewport(width, 900), chromedp.Evaluate(`(() => {
+		  const lists=[...document.querySelectorAll('.attachments')];
+		  return lists.length===2 && lists.every(list => [...list.children].every(tile => {
+		    const r=tile.getBoundingClientRect(), p=list.getBoundingClientRect(), image=tile.querySelector('img'), i=image.getBoundingClientRect();
+		    return r.width<=241 && r.left>=p.left-1 && r.right<=p.right+1 && tile.scrollWidth<=tile.clientWidth+1 && i.width<=r.width && i.height<=161 && getComputedStyle(image).objectFit==='contain';
+		  })) && document.querySelector('#description-attachments [data-refresh-key="attachment:1"]') && !!document.querySelector('[data-comment-id="42"] [data-refresh-key="attachment:2"]');
+		})()`, &valid))
+		if err != nil || !valid {
+			t.Fatalf("attachment bounds/ownership at width %d: valid=%v err=%v", width, valid, err)
+		}
+	}
+	// A direct refresh must update both mounted owners, not only description files.
+	repo.mu.Lock()
+	repo.files = repo.files[1:]
+	repo.files[0].Name = "refreshed.png"
+	repo.mu.Unlock()
+	var valid bool
+	if err := chromedp.Run(tab, chromedp.Evaluate(`(async () => { const board=document.querySelector('looster-board'), preview=document.querySelector('[data-comment-id="42"] .comment-attachments img'); await board.loadAttachments(1,board.outputs); await board.loadDetail(1); return preview===document.querySelector('[data-comment-id="42"] .comment-attachments img') && !document.querySelector('#description-attachments li') && document.querySelector('[data-comment-id="42"] .comment-attachments a').textContent==='refreshed.png'; })()`, &valid, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) })); err != nil || !valid {
+		t.Fatalf("refresh owners: valid=%v err=%v", valid, err)
+	}
 }
 
 func (r *browserAttachmentRepo) Attachments(_ context.Context, id int64) ([]task.Attachment, error) {

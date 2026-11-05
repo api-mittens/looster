@@ -8,6 +8,27 @@ const sessionLogFrontendProbe = `import {chronologicalEntries,sessionLogHTML} fr
 import {sortTasksForColumn,taskCardAge,taskCardHTML,taskSignals} from './static/board.mjs';
 import {buildGraph,renderGraph,renderTaskSignals} from './static/task-graph.mjs';
 import {runHistoryHTML,runDetailHTML} from './static/agent-runs.mjs';
+// The shared Goja host exposes href/searchParams only. Browser tests below use
+// the native WHATWG URL implementation for the full DOM acceptance check.
+Object.defineProperties(URL.prototype, {
+ protocol:{get(){return this.href.match(/^[^:]+:/)?.[0] || '';}},
+ hostname:{get(){return this.href.match(/^https?:\/\/([^/:?#]+)/i)?.[1] || '';}}
+});
+test('link logs are clickable and escaped in timelines and both run views',()=>{
+ const body='https://example.com/path?q="<tag>"&other=1';
+ const log={id:5,job_id:9,agent:'coder',kind:'link',body,created_at:'2026-11-05T11:00:00Z'};
+ const renderers=[log=>sessionLogHTML(log),log=>runHistoryHTML({runs:[{job_id:9,logs:[log]}]}),log=>runDetailHTML({job_id:9,logs:[log]})];
+ for(const render of renderers) {
+  const html=render(log);
+  assert.match(html,/<a href="https:\/\/example.com\/path\?q=&quot;&lt;tag&gt;&quot;&amp;other=1" target="_blank" rel="noopener noreferrer">/);
+  assert.match(html,/coder · link · Run 9/);
+  assert.doesNotMatch(html,/<tag>|data-log-action/);
+  for(const body of ['javascript:alert(1)','data:text/html,<img>','ftp://example.com','//example.com','https:///example.com','https://one.test https://two.test','https://example.com\n','https://example.com/\u00a0','https://example.com\\evil']) {
+   const invalid=render({...log,body});assert.doesNotMatch(invalid,/<a href=/);assert.doesNotMatch(invalid,/<img>/);
+  }
+  assert.doesNotMatch(render({...log,kind:'custom-kind'}),/<a href=/);
+ }
+});
 test('historical logs interleave with comments using independent identities and stable chronological order',()=>{
  const comments=[{id:1,created_at:'2026-11-05T12:00:00Z'},{id:2,created_at:'2026-11-05T10:00:00Z'}];
  const logs=[{id:1,created_at:'2026-11-05T11:00:00Z',kind:'blocker'}];

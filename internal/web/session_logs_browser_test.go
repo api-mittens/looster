@@ -11,8 +11,48 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 )
+
+func TestSessionLogLinksBrowser(t *testing.T) {
+	if os.Getenv("LOOSTER_BROWSER_TEST") != "1" {
+		t.Skip("set LOOSTER_BROWSER_TEST=1")
+	}
+	server := httptest.NewServer(Handler(&testRepo{}))
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	tab, shutdown := newTestBrowser(t, ctx)
+	defer shutdown()
+	var valid bool
+	if err := chromedp.Run(tab, chromedp.Navigate(server.URL), chromedp.WaitReady("body"), chromedp.Evaluate(`(async()=>{
+ const {sessionLogHTML}=await import('/session-logs.mjs');
+ const {runHistoryHTML,runDetailHTML}=await import('/agent-runs.mjs');
+ const body='https://example.com/path?q="<img>"&other=1';
+ const log={id:7,job_id:9,agent:'coder',kind:'link',body,created_at:'2026-11-05T11:00:00Z'};
+ const renderers=[l=>sessionLogHTML(l),l=>runHistoryHTML({runs:[{job_id:9,logs:[l]}]}),l=>runDetailHTML({job_id:9,logs:[l]})];
+ for (const render of renderers) {
+  const root=document.createElement('section');document.body.append(root);root.innerHTML=render(log);
+  const a=root.querySelector('.log-body a');
+  if(!a||a.getAttribute('href')!==body||a.textContent!==body||a.target!=='_blank'||!a.relList.contains('noopener')||!a.relList.contains('noreferrer')||root.querySelector('img')||!root.textContent.includes('coder · link · Run 9'))return false;
+  // Dispatch a cancelled click so the test verifies an actionable anchor
+  // without opening any external site or popup.
+  let clicked=false;a.addEventListener('click',e=>{clicked=true;e.preventDefault();});a.click();if(!clicked)return false;
+  for(const body of ['javascript:alert(1)','data:text/html,<img>','ftp://example.com','//example.com','https:///example.com','https://one.test https://two.test','https://example.com\n','https://example.com/\u00a0','https://example.com\\evil','https://:80/']) {
+   root.innerHTML=render({...log,body});if(root.querySelector('.log-body a,img,script')||root.querySelector('.log-body').textContent!==body)return false;
+  }
+  root.innerHTML=render({...log,kind:'future-kind'});if(root.querySelector('.log-body a')||!root.textContent.includes('future-kind'))return false;
+  root.remove();
+ }
+ return true;
+})()`, &valid, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) })); err != nil {
+		t.Fatal(err)
+	}
+	if !valid {
+		t.Fatal("timeline and run history links must be safe, clickable, attributed, and limited to valid HTTP(S) link-kind bodies")
+	}
+}
 
 func TestSessionLogArrivalBrowser(t *testing.T) {
 	if os.Getenv("LOOSTER_BROWSER_TEST") != "1" {

@@ -4,6 +4,27 @@ import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import {attachmentsHTML,attachmentURL,attachmentUploadHTML} from './attachments.mjs';
 
+test('attachment refresh reconciles description and each existing comment owner',async () => {
+  const board=harness(async () => {}), description={}, notice={}, first={}, second={};
+  board.outputs=new Map(); board.dialog={open:true};
+  board.panel={querySelector:s => s === '#description-attachments' ? description : notice,
+    querySelectorAll:() => [{dataset:{commentId:'42'},querySelector:() => first},{dataset:{commentId:'43'},querySelector:() => second}]};
+  let files=[{id:1,name:'description.txt'},{id:2,event_id:42,name:'owned.txt'},{id:3,event_id:43,name:'other.txt'}];
+  board.api=async () => files;
+  await board.loadAttachments(33,board.outputs);
+  assert.match(description.innerHTML,/description.txt/);
+  assert.doesNotMatch(description.innerHTML,/owned.txt|other.txt/);
+  assert.match(first.innerHTML,/owned.txt/);
+  assert.doesNotMatch(first.innerHTML,/description.txt|other.txt/);
+  assert.match(second.innerHTML,/other.txt/);
+  files=[{id:2,event_id:42,name:'renamed.txt'}];
+  await board.loadAttachments(33,board.outputs);
+  assert.equal(description.innerHTML,'');
+  assert.equal(second.innerHTML,'');
+  assert.match(first.innerHTML,/renamed.txt/);
+  assert.doesNotMatch(first.innerHTML,/owned.txt/);
+});
+
 function harness(fetch) {
   const classes = new Map();
   const context = vm.createContext({document:{activeElement:null},HTMLElement:class {},customElements:{define:(name,type) => classes.set(name,type)},URL,AbortController,DOMException,FormData,location:{origin:'http://localhost'},fetch,queueMicrotask,attachmentsHTML,patchHTML:(root,html) => { root.innerHTML = html; }});
@@ -156,7 +177,7 @@ test('attachment read errors retain explicit backend diagnostics',async () => {
 test('attachment load uses array contract and ignores stale detail response',async () => {
   const board = harness(async () => {}), controls = new Map();
   board.outputs = new Map(); board.dialog = {open:true};
-  board.panel = {querySelector:selector => {if(!controls.has(selector)) controls.set(selector,{innerHTML:'',textContent:''});return controls.get(selector);}};
+  board.panel = {querySelectorAll:() => [],querySelector:selector => {if(!controls.has(selector)) controls.set(selector,{innerHTML:'',textContent:''});return controls.get(selector);}};
   board.api = async () => [{id:1,name:'saved.txt',size:1}];
   await board.loadAttachments(33,board.outputs);
   assert.equal(controls.get('#attachment-notice').textContent,'');
