@@ -13,10 +13,13 @@ type Agent struct {
 	TasklessOnly bool `json:"taskless_only,omitempty"`
 }
 type Session struct {
-	// JobID identifies a taskless run before the harness supplies a session ID.
-	JobID     int64  `json:"job_id,omitempty"`
-	TaskID    int64  `json:"task_id"`
-	Agent     string `json:"agent"`
-	SessionID string `json:"session_id"`
-	Status    string `json:"status"`
+	// JobID identifies the latest/current run, including runs without a session ID.
+	JobID         int64  `json:"job_id,omitempty"`
+	Summary       string `json:"summary"`
+	SummaryStatus string `json:"summary_status"`
+	Error         string `json:"error,omitempty"`
+	TaskID        int64  `json:"task_id"`
+	Agent         string `json:"agent"`
+	SessionID     string `json:"session_id"`
+	Status        string `json:"status"`
 }

@@ -48,8 +48,8 @@ func TestSessionHistoryCompletionAndArchiveResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	l.Close()
-	if _, err := s.SessionRun(ctx, first); !errors.Is(err, app.ErrNotFound) {
-		t.Fatalf("retry finalized early: %v", err)
+	if r, err := s.SessionRun(ctx, first); err != nil || r.Outcome != "archiving" || r.Summary != "first summary" || !r.FinishedAt.IsZero() {
+		t.Fatalf("archive retry detail: %+v %v", r, err)
 	}
 	if _, err := s.Pool.Exec(ctx, `UPDATE jobs SET available_at=now() WHERE id=$1`, first); err != nil {
 		t.Fatal(err)
@@ -186,8 +186,8 @@ func TestSessionHistoryFailureInterruptionAndDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	l.Close()
-	if _, err := s.SessionRun(ctx, id); !errors.Is(err, app.ErrNotFound) {
-		t.Fatalf("cancellation froze resumable job: %v", err)
+	if r, err := s.SessionRun(ctx, id); err != nil || r.Outcome != "pending" || r.SummaryStatus != "pending" || !r.FinishedAt.IsZero() {
+		t.Fatalf("resumable cancellation detail: %+v %v", r, err)
 	}
 	// Final records are not tied to cascading task or agent foreign keys.
 	created, err := s.CreateTask(ctx, "history task", "", task.Planning, nil)

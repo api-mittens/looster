@@ -329,9 +329,23 @@ func (s *Store) Sessions(ctx context.Context, name string) ([]agent.Session, err
 	// Stored task sessions survive process crashes. Taskless runs instead use
 	// their durable job identity and disappear when processing finishes. Match
 	// Claim's lock identity, including notification jobs with a context task.
+	// Resolve previews in this same statement, never by per-session history calls.
+	// An executing job wins over newer queued jobs. Otherwise choose the latest
+	// queued run or result matching the binding, including history whose job was
+	// removed. Join summary/error by that job ID only, not by shared session ID.
 	query := `WITH candidates AS (
- SELECT s.task_id,0::bigint AS job_id,s.agent_name,s.session_id,s.status,
+ SELECT s.task_id,coalesce(r.job_id,0) AS job_id,s.agent_name,s.session_id,s.status,
  'looster:session:'||s.task_id||':'||s.agent_name AS lock_key FROM sessions s
+ LEFT JOIN LATERAL (
+ SELECT job_id FROM (
+ SELECT j.id AS job_id,j.state IN ('running','archiving') AS active FROM jobs j
+ WHERE j.task_id=s.task_id AND j.agent_name=s.agent_name
+ AND (j.state IN ('pending','running','archiving') OR j.session_id=s.session_id)
+ UNION ALL
+ SELECT h.job_id,false FROM agent_session_runs h
+ WHERE h.task_id=s.task_id AND h.agent_name=s.agent_name AND h.session_id=s.session_id
+ ) runs ORDER BY active DESC,job_id DESC LIMIT 1
+ ) r ON true
  UNION ALL
  SELECT 0,j.id,j.agent_name,j.session_id,'running',
  CASE WHEN j.context_task_id IS NOT NULL AND j.context_task_id>0
@@ -346,8 +360,15 @@ func (s *Store) Sessions(ctx context.Context, name string) ([]agent.Session, err
  AND l.classid=((hashtextextended((CASE WHEN current_schema()='public' THEN '' ELSE current_schema()||':' END)||s.lock_key,0)>>32)&4294967295)::oid
  AND l.objid=(hashtextextended((CASE WHEN current_schema()='public' THEN '' ELSE current_schema()||':' END)||s.lock_key,0)&4294967295)::oid
  AND l.objsubid=1) THEN 'interrupted'
- ELSE 'running' END
- FROM candidates s`
+ ELSE 'running' END,
+ coalesce(h.summary,j.summary,''),
+ coalesce(h.summary_status,CASE WHEN j.summary<>'' THEN 'available'
+ WHEN j.state IN ('pending','running','archiving') THEN 'pending'
+ WHEN j.state='failed' THEN 'failed' ELSE 'missing' END),
+ coalesce(h.error,j.error,'')
+ FROM candidates s
+ LEFT JOIN jobs j ON j.id=s.job_id
+ LEFT JOIN agent_session_runs h ON h.job_id=s.job_id`
 	var args []any
 	if name != "" {
 		query += ` WHERE s.agent_name=$1`
@@ -362,7 +383,7 @@ func (s *Store) Sessions(ctx context.Context, name string) ([]agent.Session, err
 	out := []agent.Session{}
 	for rows.Next() {
 		var r agent.Session
-		if e = rows.Scan(&r.TaskID, &r.JobID, &r.Agent, &r.SessionID, &r.Status); e != nil {
+		if e = rows.Scan(&r.TaskID, &r.JobID, &r.Agent, &r.SessionID, &r.Status, &r.Summary, &r.SummaryStatus, &r.Error); e != nil {
 			return nil, e
 		}
 		out = append(out, r)
