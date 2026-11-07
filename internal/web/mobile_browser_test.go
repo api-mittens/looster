@@ -103,6 +103,15 @@ func TestMobileTouchBrowser(t *testing.T) {
 			check(`JSON.stringify([...document.querySelectorAll('.board>.column')].map(c=>c.dataset.refreshKey))===JSON.stringify(['planning','todo','validated','closed','agent:coder','other-sessions'])`)
 			overflow()
 			if size.w <= 650 {
+				// Exercise real page scrolling, not just the computed position.
+				// Both geometry and hit testing must remain pinned above cards.
+				for _, fraction := range []float64{0.5, 1} {
+					eval(fmt.Sprintf(`window.scrollTo(0,(document.documentElement.scrollHeight-innerHeight)*%g)`, fraction), nil)
+					check(fmt.Sprintf(`window.scrollY>0&&Math.abs(window.scrollY-(document.documentElement.scrollHeight-innerHeight)*%g)<1`, fraction))
+					check(`(()=>{const h=document.querySelector('header'),r=h.getBoundingClientRect();return getComputedStyle(h).position==='sticky'&&Math.abs(r.top)<1&&r.bottom<innerHeight&&[.1,.5,.9].every(f=>h.contains(document.elementFromPoint(innerWidth*f,r.top+r.height/2)))})()`)
+				}
+				eval(`window.scrollTo(0,0)`, nil)
+				check(`window.scrollY===0`)
 				check(`(()=>{const c=[...document.querySelectorAll('.board>.column')].map(e=>e.getBoundingClientRect());return c.length>=5&&c.every((r,i)=>!i||(r.top>=c[i-1].bottom-1&&Math.abs(r.left-c[0].left)<2))})()`)
 				rail := `document.querySelector('[data-refresh-key="todo"] .cards')`
 				check(rail + `.scrollWidth>` + rail + `.clientWidth+100`)

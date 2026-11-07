@@ -85,7 +85,7 @@ header{position:sticky;top:0;z-index:50;display:grid;grid-template-columns:minma
 #selected-run dd{margin-bottom:.6rem;overflow-wrap:anywhere}
 /* Phones scroll the page vertically and each column's cards horizontally. */
 @media(max-width:650px){
-  header{position:static;display:flex;flex-wrap:wrap;gap:10px;padding:12px}
+  header{position:sticky;top:0;display:flex;flex-wrap:wrap;gap:10px;padding:12px}
   .header-brand{flex:1 1 100%;justify-content:flex-start;flex-wrap:wrap;gap:8px}
   #namespace{flex:1 1 120px;width:auto;max-width:100%;margin:0}
   .header-actions{flex:1 1 100%;justify-content:flex-start;flex-wrap:wrap;gap:8px;white-space:normal}
