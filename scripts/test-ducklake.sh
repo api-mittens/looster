@@ -21,7 +21,7 @@ trap 'exit 143' TERM
 TMPDIR="$runner"
 export TMPDIR
 # A real binary, rather than go run, ensures signals reach the cleanup owner.
-go build -o "$runner/harness" ./scripts/test-ducklake
+go build -o "$runner/harness" ./internal/ducklakefixture/cmd
 "$runner/harness" &
 pid=$!
 code=0

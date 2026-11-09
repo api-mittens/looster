@@ -34,6 +34,19 @@ module/build caches remain. Test HOME and the DuckDB signed-extension cache are
 disposable, so official HTTPS extension installation requires network access
 each run.
 
+The runner then builds the actual `cmd/looster` binary and invokes it with an
+empty `PATH`, private HOME and explicit private TOML. It creates a custom
+application database before initialization, migrates `default`, `dom`, and
+`nume`, seeds real task sentinels in each namespace and an existing-table
+sentinel, and runs `configure storage --ducklake` twice without database/catalog
+overrides. It checks that the default `ducklake` catalog was newly created,
+application database OID and sentinels remain intact, namespace migration
+histories are unchanged, no unintended `looster` database appeared, and the
+catalog contains DuckLake metadata but no application migrations.
+
+The Go runner and tests live under `internal/ducklakefixture/cmd` to honor the
+repository's private package layout policy.
+
 The fixture implements path-style PUT, GET, HEAD, DELETE, byte ranges,
 ListObjectsV2 prefix filtering, and multipart initiate/upload/complete/abort.
 It is intentionally **not** a production S3 server: no authentication/signature
@@ -46,5 +59,5 @@ A local fixture pass does not establish real-cloud IAM/TLS compatibility.
 Fixture protocol checks are available without PostgreSQL or embedded DuckDB:
 
 ```sh
-go test -race ./internal/ducklakefixture
+go test -race ./internal/ducklakefixture/...
 ```

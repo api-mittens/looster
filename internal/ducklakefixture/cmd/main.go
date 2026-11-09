@@ -18,6 +18,15 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 5 && os.Args[1] == "--compiled-cli-integration" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		if err := exerciseCLI(ctx, os.Args[2], os.Args[3], os.Args[4], os.Environ()); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -130,6 +139,15 @@ func run() (result error) {
 		if err := command(ctx, "go", "test", "-count=1", "-v", "-timeout=5m", test.pkg, "-run", test.pattern); err != nil {
 			return err
 		}
+	}
+	// Run the CLI scenario in an allowlisted child so pgx in that scenario
+	// cannot read ambient PG* configuration either.
+	executable, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if err := command(ctx, executable, "--compiled-cli-integration", root, port, s3.Endpoint()); err != nil {
+		return err
 	}
 	requests := s3.Requests()
 	if requests["PUT"] == 0 || requests["RANGE"] == 0 {
