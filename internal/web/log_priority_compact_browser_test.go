@@ -47,7 +47,7 @@ func TestLogPriorityCompactBrowser(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		var data any = []any{}
 		switch r.URL.Path {
-		case "/api/board":
+		case "/api/board", "/api/board/list":
 			data = map[string]any{"tasks": tasks, "sessions": sessions, "agents": []any{map[string]any{"name": "coder"}}}
 		case "/api/status":
 			data = map[string]any{"workers": []any{map[string]any{"agents": []string{"coder"}}}}
@@ -58,7 +58,7 @@ func TestLogPriorityCompactBrowser(t *testing.T) {
 				data = detail
 			}
 		}
-		json.NewEncoder(w).Encode(data)
+		json.NewEncoder(w).Encode(paginatedBoardFixture(t, r, data))
 	}))
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -66,7 +66,7 @@ func TestLogPriorityCompactBrowser(t *testing.T) {
 	tab, shutdown := newTestBrowser(t, ctx)
 	defer shutdown()
 	var valid bool
-	if err := chromedp.Run(tab, chromedp.Navigate(server.URL+"/#board"), chromedp.WaitVisible("#toggle-stages"), chromedp.Click("#toggle-stages"), chromedp.WaitVisible(`.column[data-refresh-key="closed"] task-card`), chromedp.Evaluate(`(()=>{const ids=key=>[...document.querySelectorAll('.column[data-refresh-key="'+key+'"] task-card')].map(c=>+c.dataset.id).join(',');return ids('planning')==='3,2,1,4'&&ids('todo')==='13,12,11,14'&&ids('closed')==='24,21,23,22'&&ids('validated')==='34,31,33,32'&&ids('agent:coder')==='3,13,23,33,2,12,22,32,1,11,21,31,4,14,24,34';})()`, &valid)); err != nil {
+	if err := chromedp.Run(tab, chromedp.Navigate(server.URL+"/#board"), chromedp.WaitVisible("#toggle-stages"), chromedp.Click("#toggle-stages"), chromedp.WaitVisible(`.column[data-refresh-key="closed"] task-card`), chromedp.Evaluate(`(()=>{const ids=key=>[...document.querySelectorAll('.column[data-refresh-key="'+key+'"] task-card')].map(c=>+c.dataset.id).join(',');return ids('planning')==='3,2,1,4'&&ids('todo')==='13,12,11,14'&&ids('closed')==='24,21,23,22'&&ids('validated')==='34,31,33,32'&&ids('agent:coder')==='3,13,23,33,2,12,22,32,1,11,21,31,4,14,24';})()`, &valid)); err != nil {
 		t.Fatal(err)
 	}
 	if !valid {

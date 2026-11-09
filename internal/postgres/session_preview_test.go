@@ -37,6 +37,17 @@ func TestSessionsExactRunSummaryAndLiveDetail(t *testing.T) {
 		if r.JobID != id || r.Summary != summary || r.SummaryStatus != status || r.Error != cause {
 			t.Fatalf("session=%+v want job=%d summary=%q status=%q error=%q", r, id, summary, status, cause)
 		}
+		metadata, err := s.BoardSessions(ctx)
+		if err != nil || len(metadata) != 1 {
+			t.Fatalf("list metadata=%+v error=%v", metadata, err)
+		}
+		expected := r
+		expected.Summary = ""
+		expected.Error = ""
+		expected.SummaryStatus = ""
+		if metadata[0] != expected {
+			t.Fatalf("list metadata hydrated payload or changed identity: %+v", metadata[0])
+		}
 	}
 	check(0, "", "missing", "")
 	var ids []int64

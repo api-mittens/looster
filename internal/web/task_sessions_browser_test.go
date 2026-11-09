@@ -36,7 +36,7 @@ func TestTaskSessionLazyBrowser(t *testing.T) {
 		case "/api/test/complete":
 			completed.Store(true)
 			data = map[string]any{}
-		case "/api/board":
+		case "/api/board", "/api/board/list":
 			data = map[string]any{"tasks": []any{task}, "agents": []any{}, "sessions": []any{}}
 		case "/api/status", "/api/system", "/api/library":
 			data = map[string]any{}
@@ -71,7 +71,7 @@ func TestTaskSessionLazyBrowser(t *testing.T) {
 				data = map[string]any{"job_id": id, "agent": "coder", "task_id": 1, "outcome": "running", "summary_status": "pending", "summary": "Pending summary for " + r.URL.Path}
 			}
 		}
-		json.NewEncoder(w).Encode(data)
+		json.NewEncoder(w).Encode(paginatedBoardFixture(t, r, data))
 	}))
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)

@@ -38,6 +38,9 @@ func (*inspectorBrowserRepo) Agents(context.Context) ([]agent.Agent, error) {
 func (*inspectorBrowserRepo) Sessions(context.Context, string) ([]agent.Session, error) {
 	return []agent.Session{{JobID: 100, Agent: "solo", Status: "running", SessionID: "live-session"}}, nil
 }
+func (r *inspectorBrowserRepo) BoardSessions(ctx context.Context) ([]agent.Session, error) {
+	return r.Sessions(ctx, "")
+}
 func (*inspectorBrowserRepo) Behaviour(context.Context) ([]behaviour.Rule, error) {
 	return []behaviour.Rule{{Trigger: "every", Target: "solo", IntervalSeconds: 60}}, nil
 }

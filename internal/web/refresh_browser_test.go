@@ -31,6 +31,10 @@ func TestRefreshPreservesUIBrowser(t *testing.T) {
  let revision=0, reverse=false;
  const task=id=>({id,name:'Task '+id+' revision '+revision,status:'todo',description:'Description '+revision,tags:['a','b']});
  b.api=async path=>{
+  if(path.startsWith('/api/board/list?')) {
+   const tasks=[task(1),task(2)], sessions=[{task_id:1,agent:'aaa-offline',status:'running'},{task_id:1,agent:'coder',status:'running'}];
+   return {tasks:[],agents:[{name:'aaa-offline'},{name:'coder'}],sessions,columns:['planning','todo','validated','closed','agent:aaa-offline','agent:coder'].map(key=>({key,tasks:key==='todo'?tasks:key.startsWith('agent:')?[tasks[0]]:[],total:key==='todo'?2:key.startsWith('agent:')?1:0,page:1,page_size:15}))};
+  }
   if(path==='/api/board') return {tasks:[task(1),task(2)],agents:[{name:'aaa-offline'},{name:'coder'}],sessions:[{task_id:1,agent:'aaa-offline',status:'running'},{task_id:1,agent:'coder',status:'running'}]};
   if(path==='/api/status') return {workers:[{id:'refresh-worker',agents:['coder']}]};
   if(path==='/api/system') return {behaviours:[]};
@@ -112,7 +116,7 @@ func TestRefreshPreservesUIBrowser(t *testing.T) {
  assert(orphan.isConnected && orphan.open,'page accordion reset');
  assert(document.activeElement===agent,'page focus reset');
  assert(orphan.textContent.includes('Prompt '+revision),'page data stale');
- b.openPalette();
+ b.openPalette(); await b.loadPaletteTasks();
  b.paletteSelection=b.paletteItems.findIndex(item=>item.key==='task:2'); b.paletteQuery=null; b.renderPalette();
  const option=b.palette.querySelector('[aria-selected="true"]'); option.focus();
  revision++; await b.refresh();

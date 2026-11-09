@@ -77,7 +77,7 @@ func TestSessionLogArrivalBrowser(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		var data any = []any{}
 		switch r.URL.Path {
-		case "/api/board":
+		case "/api/board", "/api/board/list":
 			data = map[string]any{"tasks": []any{taskSnapshot()}, "agents": []any{}, "sessions": []any{}}
 		case "/api/status", "/api/system", "/api/library":
 			data = map[string]any{}
@@ -89,7 +89,7 @@ func TestSessionLogArrivalBrowser(t *testing.T) {
 				data = []any{map[string]any{"id": 1, "body": "Before log", "created_at": "2026-11-05T10:00:00Z"}, map[string]any{"id": 2, "body": "After log", "created_at": "2026-11-05T12:00:00Z"}}
 			}
 		}
-		json.NewEncoder(w).Encode(data)
+		json.NewEncoder(w).Encode(paginatedBoardFixture(t, r, data))
 	}))
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -149,7 +149,7 @@ func TestSessionLogsBrowser(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		var data any = []any{}
 		switch r.URL.Path {
-		case "/api/board":
+		case "/api/board", "/api/board/list":
 			data = map[string]any{"tasks": []any{task}, "agents": []any{}, "sessions": []any{}}
 		case "/api/status", "/api/system", "/api/library":
 			data = map[string]any{}
@@ -160,7 +160,7 @@ func TestSessionLogsBrowser(t *testing.T) {
 				data = []any{map[string]any{"id": 1, "body": "Before log", "created_at": "2026-11-05T10:00:00Z"}, map[string]any{"id": 2, "body": "After log", "created_at": "2026-11-05T12:00:00Z"}}
 			}
 		}
-		json.NewEncoder(w).Encode(data)
+		json.NewEncoder(w).Encode(paginatedBoardFixture(t, r, data))
 	}))
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)

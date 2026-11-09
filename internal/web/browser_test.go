@@ -51,7 +51,7 @@ func TestGraphBrowser(t *testing.T) {
 			case "/api/namespaces":
 				w.Header().Set("X-Default-Namespace", "default")
 				data = []string{"default", "beta"}
-			case "/api/board":
+			case "/api/board", "/api/board/list":
 				data = map[string]interface{}{"tasks": scoped, "agents": agents, "sessions": related}
 			case "/api/status":
 				data = map[string]interface{}{"workers": []interface{}{map[string]interface{}{"agents": []string{"coder"}}}, "agents": agents, "sessions": sessions}
@@ -77,7 +77,7 @@ func TestGraphBrowser(t *testing.T) {
 					data = map[string]interface{}{"task": ts[0], "sessions": sessions, "context": map[string]interface{}{"tags": []interface{}{}}}
 				}
 			}
-			json.NewEncoder(w).Encode(data)
+			json.NewEncoder(w).Encode(paginatedBoardFixture(t, r, data))
 			return
 		}
 		name := strings.TrimPrefix(r.URL.Path, "/")
