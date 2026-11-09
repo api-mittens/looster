@@ -1,29 +1,28 @@
-// Package ducklake provides an optional, external DuckDB CLI boundary. Nothing
-// is started until Open is called. It does not provision PostgreSQL databases.
-//
-// Prerequisites: DuckDB 1.5.2 with official DuckLake format 1.0 extensions:
-// ducklake build 415a9ebd, postgres_scanner c89234f and httpfs 13e18b3.
-// Install with the pinned CLI using stdin SQL: INSTALL ducklake; INSTALL postgres;
-// INSTALL httpfs; then retain those signed artifacts in its extension directory.
-// Installation is deliberately an operator
-// task, not an implicit download. See https://ducklake.select/release_calendar
-// and https://ducklake.select/docs/1.0/duckdb/usage/connecting.
+// Package ducklake embeds the official DuckDB database/sql driver.
+// Open attaches metadata but does not prove object storage write access.
 package ducklake
 
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"errors"
-	"io"
 	"net/url"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"strings"
+
+	_ "github.com/duckdb/duckdb-go/v2"
 
 	"github.com/api-mittens/looster/internal/objectstore"
 )
 
+// Official compatibility research: duckdb-go's version matrix maps
+// v2.10502.0 to DuckDB v1.5.2 (github.com/duckdb/duckdb-go).
+// ducklake.select/release_calendar maps DuckDB 1.5.2 to DuckLake 1.0.
+// These official HTTPS artifacts were verified with TestOfficialExtensions on
+// darwin_arm64. Other platforms must also pass the runtime build-ID gate.
 const EngineVersion = "v1.5.2"
 const DuckLakeVersion = "1.0"
 
@@ -36,9 +35,11 @@ const HTTPFSExtensionVersion = "13e18b3"
 // Config must not be logged or serialized. CatalogConnection is a fully resolved
 // libpq KEY=VALUE string from the caller's PostgreSQL resolver, not a pgx TLS
 // config translated back to a URL. Explicit sslmode and identity/root settings
-// are passed through unchanged. Ambient PG variables and credential files are
-// not used. Namespace is empty or "default" only.
+// are passed through unchanged. Open rejects ambient libpq PG* variables rather
+// than mutating process-wide environment. Password files are disabled.
+// Namespace is empty or "default" only.
 type Config struct {
+	// Deprecated: Binary is ignored by the embedded engine.
 	Binary            string
 	CatalogConnection string
 	Namespace         string
@@ -49,50 +50,151 @@ type Config struct {
 func (c Config) String() string   { return "ducklake.Config{values redacted}" }
 func (c Config) GoString() string { return c.String() }
 
-// Lake retains credentials in memory only. Each Exec uses a fresh in-memory
-// DuckDB and reattaches the catalog, so transactions must fit in one Exec call.
-// The lake alias is always "lake". Do not log Config or supplied SQL.
+// Lake owns one in-memory engine and one pinned SQL session. Call Close.
+// Transactions and session state survive Exec calls. Do not log supplied SQL.
 type Lake struct {
-	prelude string
-	binary  string
-	run     runner
+	gate     chan struct{}
+	db       *sql.DB
+	conn     *sql.Conn
+	cancel   context.CancelFunc
+	lifetime context.Context
+	closed   bool
 }
 
 func (l *Lake) String() string   { return "ducklake.Lake{values redacted}" }
 func (l *Lake) GoString() string { return l.String() }
 
-type runner func(context.Context, string, string) error
-
 // Validate checks configuration without starting DuckDB or contacting services.
 func Validate(c Config) error { _, err := prepare(c); return err }
 
 // Open initializes or attaches metadata. It does not prove S3 write access.
-func Open(ctx context.Context, c Config) (*Lake, error) { return open(ctx, c, runCLI) }
-func open(ctx context.Context, c Config, run runner) (*Lake, error) {
+func Open(ctx context.Context, c Config) (*Lake, error) {
 	p, err := prepare(c)
 	if err != nil {
 		return nil, err
 	}
-	binary := c.Binary
-	if binary == "" {
-		binary = "duckdb"
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	l := &Lake{p, binary, run}
-	if err = l.Exec(ctx, ""); err != nil {
+	// libpq reads process-wide defaults. Unlike a subprocess we cannot safely
+	// scrub them per connection without racing unrelated PostgreSQL users.
+	for _, entry := range os.Environ() {
+		key, value, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(key, "PG") && value != "" {
+			return nil, errors.New("embedded DuckLake requires ambient PG* variables to be unset; supply resolved libpq settings explicitly")
+		}
+	}
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return nil, operationError("extension cache location")
+	}
+	directory := filepath.Join(cache, "looster", "duckdb", EngineVersion)
+	if err = os.MkdirAll(directory, 0700); err != nil {
+		return nil, operationError("extension cache creation")
+	}
+	l, err := openEngine(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err = l.Exec(ctx, "SET extension_directory="+quote(directory)); err != nil {
+		_ = l.Close()
+		return nil, err
+	}
+	// Bootstrap is credential-free. Keep failures distinct from catalog/S3
+	// attachment failures without exposing SQL or native error messages.
+	phases := strings.SplitN(p, "CREATE TEMPORARY SECRET", 2)
+	if err = l.exec(ctx, phases[0], "engine/extension bootstrap"); err == nil {
+		err = l.exec(ctx, "CREATE TEMPORARY SECRET"+phases[1], "temporary secrets/catalog attachment")
+	}
+	if err != nil {
+		_ = l.Close()
 		return nil, err
 	}
 	return l, nil
 }
 
-// Exec executes trusted application SQL. Output and engine diagnostics are
-// intentionally discarded because both can contain credentials or connection
-// strings. Context cancellation terminates the child process.
-func (l *Lake) Exec(ctx context.Context, sql string) error {
-	if err := l.run(ctx, l.binary, l.prelude+"\n"+sql); err != nil {
+func openEngine(ctx context.Context) (*Lake, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		return nil, operationError("engine initialization")
+	}
+	db.SetMaxOpenConns(1)
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		_ = db.Close()
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, operationError("session initialization")
+	}
+	lifetime, cancel := context.WithCancel(context.Background())
+	return &Lake{gate: make(chan struct{}, 1), db: db, conn: conn, lifetime: lifetime, cancel: cancel}, nil
+}
+
+var ErrClosed = errors.New("DuckLake is closed")
+
+func operationError(stage string) error {
+	return errors.New("DuckLake " + stage + " failed (engine details suppressed to protect credentials): check engine/extension compatibility, HTTPS extension access, catalog TLS/permissions and S3 settings")
+}
+
+// Exec executes trusted application SQL in the retained session. Engine errors
+// are never wrapped because SQL diagnostics can contain credentials and data.
+func (l *Lake) Exec(ctx context.Context, query string) error {
+	return l.exec(ctx, query, "SQL operation")
+}
+
+func (l *Lake) exec(ctx context.Context, query, stage string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case l.gate <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-l.lifetime.Done():
+		return ErrClosed
+	}
+	defer func() { <-l.gate }()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if l.closed || l.lifetime.Err() != nil {
+		return ErrClosed
+	}
+	op, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(l.lifetime, cancel)
+	defer stop()
+	defer cancel()
+	_, err := l.conn.ExecContext(op, query)
+	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return errors.New("DuckLake operation failed (details suppressed): check pinned engine/extensions, catalog TLS/permissions and S3 settings")
+		if l.lifetime.Err() != nil {
+			return ErrClosed
+		}
+		return operationError(stage)
+	}
+	return nil
+}
+
+// Close cancels active work before waiting for the session, then releases both
+// connection and engine. It is idempotent and safe concurrently with Exec.
+func (l *Lake) Close() error {
+	l.cancel()
+	l.gate <- struct{}{}
+	defer func() { <-l.gate }()
+	if l.closed {
+		return nil
+	}
+	l.closed = true
+	e1 := l.conn.Close()
+	e2 := l.db.Close()
+	if e1 != nil || e2 != nil {
+		return operationError("close")
 	}
 	return nil
 }
@@ -139,7 +241,8 @@ func prepare(c Config) (string, error) {
 	}
 	// Temporary secrets, no persistent secret storage. Never emit this SQL.
 	return "SELECT CASE WHEN version() = '" + EngineVersion + "' THEN true ELSE error('engine version mismatch') END;\n" +
-		"SET autoinstall_known_extensions=false; SET autoload_known_extensions=false;\nLOAD ducklake; LOAD postgres; LOAD httpfs;\n" +
+		"SET allow_unsigned_extensions=false; SET autoinstall_known_extensions=false; SET autoload_known_extensions=false;\n" +
+		"INSTALL httpfs FROM 'https://extensions.duckdb.org'; LOAD httpfs;\nINSTALL postgres FROM 'https://extensions.duckdb.org'; LOAD postgres;\nINSTALL ducklake FROM 'https://extensions.duckdb.org'; LOAD ducklake;\n" +
 		"SELECT CASE WHEN (SELECT count(*) FROM duckdb_extensions() WHERE loaded AND ((extension_name='ducklake' AND extension_version='" + DuckLakeExtensionVersion + "') OR (extension_name='postgres_scanner' AND extension_version='" + PostgresExtensionVersion + "') OR (extension_name='httpfs' AND extension_version='" + HTTPFSExtensionVersion + "'))) = 3 THEN true ELSE error('extension version mismatch') END;\n" +
 		"CREATE TEMPORARY SECRET looster_s3 (TYPE s3, PROVIDER config, KEY_ID " + quote(s.AccessKey) + ", SECRET " + quote(s.SecretKey) + ", SESSION_TOKEN " + quote(s.SessionToken) + ", REGION " + quote(s.Region) + ", URL_STYLE 'path', SCOPE " + quote(c.DataPath) + endpoint + ");\n" +
 		"CREATE TEMPORARY SECRET looster_lake (TYPE ducklake, METADATA_PATH " + quote("postgres:"+c.CatalogConnection+" passfile='/dev/null'") + ", DATA_PATH " + quote(c.DataPath) + ");\n" +
@@ -205,23 +308,8 @@ func validConnection(raw string) bool {
 	return seen["host"] && seen["dbname"] && seen["user"] && seen["sslmode"]
 }
 
-func runCLI(ctx context.Context, binary, sql string) error {
-	// -init /dev/null prevents ~/.duckdbrc, -batch avoids interactive history.
-	// Secrets are only on stdin, never argv or inherited credential variables.
-	cmd := exec.CommandContext(ctx, binary, "-init", "/dev/null", "-batch", "-bail", ":memory:")
-	cmd.Stdin = strings.NewReader(sql)
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	for _, key := range []string{"HOME", "PATH", "SYSTEMROOT"} {
-		if v, ok := os.LookupEnv(key); ok {
-			cmd.Env = append(cmd.Env, key+"="+v)
-		}
-	}
-	return cmd.Run()
-}
-
-// ProbeDisposable writes a real Parquet-backed table, exits the writer process,
-// reopens and checks rows, then drops the table and physically cleans files.
+// ProbeDisposable writes a real Parquet-backed table, closes the writer engine,
+// opens a fresh engine and reads rows, then drops the table and cleans files.
 // It is ONLY for an exclusively owned disposable catalog and S3 prefix: cleanup
 // expires catalog-wide history. Never call against production or shared storage.
 // A failed probe may leave artifacts, and returns a sanitized error for retry.
@@ -229,13 +317,22 @@ func ProbeDisposable(ctx context.Context, c Config, confirmDisposable bool) erro
 	if !confirmDisposable {
 		return errors.New("DuckLake probe requires explicit disposable catalog and prefix confirmation")
 	}
-	l, err := Open(ctx, c)
+	return probeDisposable(ctx, c, func(ctx context.Context, c Config) (probeSession, error) { return Open(ctx, c) })
+}
+
+// The opener seam allows tests to prove independent engine lifetimes, not just
+// repeated execution on the same session.
+type probeSession interface {
+	Exec(context.Context, string) error
+	Close() error
+}
+
+func probeDisposable(ctx context.Context, c Config, opener func(context.Context, Config) (probeSession, error)) error {
+	l, err := opener(ctx, c)
 	if err != nil {
 		return err
 	}
-	return l.probe(ctx)
-}
-func (l *Lake) probe(ctx context.Context) error {
+	defer l.Close()
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return errors.New("DuckLake probe random ID unavailable")
@@ -245,10 +342,18 @@ func (l *Lake) probe(ctx context.Context) error {
 	if err := l.Exec(ctx, "CREATE TABLE "+table+" (id INTEGER); CALL lake.set_option('data_inlining_row_limit', 0, table_name => "+quote(tableName)+"); INSERT INTO "+table+" VALUES (42);"); err != nil {
 		return err
 	}
-	// array_agg requires row values, unlike count/min that can be answered from
-	// Parquet/catalog statistics without proving that the file is readable.
-	if err := l.Exec(ctx, "SELECT CASE WHEN array_agg(id)=[42] THEN true ELSE error('probe mismatch') END FROM "+table+";"); err != nil {
+	if err := l.Close(); err != nil {
 		return err
 	}
-	return l.Exec(ctx, "DROP TABLE "+table+"; CALL ducklake_expire_snapshots('lake', older_than => now()); CALL ducklake_cleanup_old_files('lake', cleanup_all => true);")
+	reader, err := opener(ctx, c)
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+	// array_agg requires row values, unlike count/min that can be answered from
+	// Parquet/catalog statistics without proving that the file is readable.
+	if err := reader.Exec(ctx, "SELECT CASE WHEN array_agg(id)=[42] THEN true ELSE error('probe mismatch') END FROM "+table+";"); err != nil {
+		return err
+	}
+	return reader.Exec(ctx, "DROP TABLE "+table+"; CALL ducklake_expire_snapshots('lake', older_than => now()); CALL ducklake_cleanup_old_files('lake', cleanup_all => true);")
 }
