@@ -21,6 +21,8 @@ func TestTaskSessionLazyBrowser(t *testing.T) {
 	if os.Getenv("LOOSTER_BROWSER_TEST") != "1" {
 		t.Skip("set LOOSTER_BROWSER_TEST=1")
 	}
+	preview := "**First** [safe](https://example.com) <script>bad</script>\n\n[unsafe](javascript:alert(1))"
+	fullSummary := "## Full summary\n\n**Verified** and *formatted* [safe](https://example.com).\n\n- item\n\n```js\n" + strings.Repeat("long_code", 100) + "\n```\n\n| A | B |\n| --- | --- |\n| " + strings.Repeat("wide", 100) + " | cell |\n\n<script>globalThis.summaryPwned=1</script>\n\n[unsafe](javascript:alert(1))"
 	var completed atomic.Bool
 	var detailRequests, outputRequests, taskOutputRequests atomic.Int32
 	handler := Handler(&testRepo{})
@@ -36,13 +38,13 @@ func TestTaskSessionLazyBrowser(t *testing.T) {
 		case "/api/test/complete":
 			completed.Store(true)
 			data = map[string]any{}
-		case "/api/board":
+		case "/api/board", "/api/board/list":
 			data = map[string]any{"tasks": []any{task}, "agents": []any{}, "sessions": []any{}}
 		case "/api/status", "/api/system", "/api/library":
 			data = map[string]any{}
 		case "/api/tasks/TSK-1":
 			data = map[string]any{"task": task, "sessions": []any{
-				map[string]any{"agent": "coder", "job_id": 11, "status": "done", "short_summary": "First <script>bad</script>", "summary_status": "available"},
+				map[string]any{"agent": "coder", "job_id": 11, "status": "done", "short_summary": preview, "summary_status": "available"},
 				map[string]any{"agent": "coder", "job_id": 12, "status": "running", "summary_status": "pending"},
 			}}
 		case "/api/tasks/TSK-1/events":
@@ -66,12 +68,12 @@ func TestTaskSessionLazyBrowser(t *testing.T) {
 			if strings.HasSuffix(r.URL.Path, "/12") {
 				id = 12
 			}
-			data = map[string]any{"job_id": id, "agent": "coder", "task_id": 1, "outcome": "done", "summary_status": "available", "summary": "Full summary for " + r.URL.Path}
+			data = map[string]any{"job_id": id, "agent": "coder", "task_id": 1, "outcome": "done", "summary_status": "available", "summary": fullSummary + "\n\nFull summary for " + r.URL.Path, "error": "**plain error** <unsafe>"}
 			if id == 12 && !completed.Load() {
 				data = map[string]any{"job_id": id, "agent": "coder", "task_id": 1, "outcome": "running", "summary_status": "pending", "summary": "Pending summary for " + r.URL.Path}
 			}
 		}
-		json.NewEncoder(w).Encode(data)
+		json.NewEncoder(w).Encode(paginatedBoardFixture(t, r, data))
 	}))
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -110,7 +112,8 @@ func TestTaskSessionLazyBrowser(t *testing.T) {
 	if err := chromedp.Run(tab, emulation.SetDeviceMetricsOverride(1280, 1600, 1, false), chromedp.Navigate(server.URL+"/#board"), chromedp.WaitVisible("looster-board"), chromedp.Evaluate(`document.querySelector('looster-board').open(1)`, nil), chromedp.WaitVisible(`[data-task-session-job="12"]`), chromedp.Evaluate(`document.querySelector('looster-board').loadDetail(1)`, nil)); err != nil {
 		t.Fatal(err)
 	}
-	check(`document.querySelectorAll('#sessions button').length===2 && !document.querySelector('#sessions script') && document.querySelector('#sessions').textContent.includes('First <script>bad</script>') && !document.querySelector('#session-output')`)
+	check(`document.querySelectorAll('#sessions button').length===2 && !document.querySelector('#sessions script') && document.querySelector('#sessions').textContent.includes('First safe <script>bad</script>') && !!document.querySelector('#sessions .task-session-summary strong') && !!document.querySelector('#sessions .task-session-summary a[href="https://example.com"]') && !document.querySelector('#sessions button a, #sessions button p, #sessions a[href^="javascript:"]') && !document.querySelector('#session-output')`)
+	check(`(() => {const a=document.querySelector('#sessions .task-session-summary a');a.addEventListener('click', e=>e.preventDefault(), {once:true});a.click();return !document.querySelector('#session-dialog').open;})()`)
 	if detailRequests.Load() != 0 || outputRequests.Load() != 0 || taskOutputRequests.Load() != 0 {
 		t.Fatal("task opening eagerly fetched session detail or output")
 	}
@@ -119,6 +122,16 @@ func TestTaskSessionLazyBrowser(t *testing.T) {
 	}
 	screenshot("task-session-cards")
 	if err := chromedp.Run(tab, chromedp.Evaluate(`document.querySelector('#comment-form textarea').value='Unsaved draft'`, nil), chromedp.Click(`[data-task-session-job="11"]`), chromedp.Poll(`document.querySelector('#task-session-output').textContent==='Hello <safe>' && document.querySelector('#task-session-run').textContent.includes('/11') && !document.querySelector('#task-session-output safe')`, nil)); err != nil {
+		t.Fatal(err)
+	}
+	check(`(() => {const s=document.querySelector('#task-session-run .run-summary.markdown-body');return !!s.querySelector('h2') && !!s.querySelector('strong') && !!s.querySelector('em') && !!s.querySelector('li') && !!s.querySelector('pre code.language-js') && !!s.querySelector('table') && !s.querySelector('script,a[href^="javascript:"]') && !globalThis.summaryPwned && s.textContent.includes('<script>') && document.querySelector('#task-session-run pre.run-summary').textContent==='**plain error** <unsafe>';})()`)
+	for _, mode := range []string{"light", "dark"} {
+		if err := chromedp.Run(tab, emulation.SetEmulatedMedia().WithFeatures([]*emulation.MediaFeature{{Name: "prefers-color-scheme", Value: mode}}), emulation.SetDeviceMetricsOverride(375, 900, 1, false)); err != nil {
+			t.Fatal(err)
+		}
+		check(`(() => {const s=document.querySelector('#task-session-run .run-summary.markdown-body'), d=document.querySelector('#session-dialog .detail');return s.scrollWidth<=s.clientWidth+1 && d.scrollWidth<=d.clientWidth+1 && getComputedStyle(s.querySelector('pre')).overflowX==='auto' && getComputedStyle(s.querySelector('table')).overflowX==='auto';})()`)
+	}
+	if err := chromedp.Run(tab, emulation.SetDeviceMetricsOverride(1280, 1600, 1, false)); err != nil {
 		t.Fatal(err)
 	}
 	screenshot("task-session-detail")

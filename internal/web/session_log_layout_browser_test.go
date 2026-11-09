@@ -28,7 +28,7 @@ func TestSessionLogResponsiveLayoutBrowser(t *testing.T) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		// Production renderers and styles below are the same ones used by the task
 		// timeline and run inspector. Constrain their containers like the real dialog.
-		fmt.Fprint(w, `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/log-events.css"></head><body><main style="max-width:850px;margin:auto"><div id="compact-fixture"></div><section class="detail"><h3>Task comments</h3><div id="task-comments"></div></section><section class="detail" id="history-fixture"></section></main></body></html>`)
+		fmt.Fprint(w, `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/log-events.css"><script src="/vendor/markdown-it.v15.0.3.min.js"></script></head><body><main style="max-width:850px;margin:auto"><div id="compact-fixture"></div><section class="detail"><h3>Task comments</h3><div id="task-comments"></div></section><section class="detail" id="history-fixture"></section></main></body></html>`)
 	}))
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)

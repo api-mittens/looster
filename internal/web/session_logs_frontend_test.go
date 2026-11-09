@@ -49,10 +49,22 @@ test('priority groups are scoped to agent planning todo columns with recency ret
  for(const col of ['closed','validated','other-sessions']) assert.deepEqual(sortTasksForColumn(tasks,col).map(t=>t.id),[4,1,3,2]);
  assert.deepEqual(tasks.map(t=>t.id),[1,2,3,4]);
 });
-test('graph question and warning emojis sit on the task circle top-right edge without sessions',()=>{
- const html=renderTaskSignals({blocker:true,question:true});assert.match(html,/⚠️❓/);assert.match(html,/aria-label="Historical blocker log and Historical question log"/);
- assert.match(html,/x="21\.213/);assert.match(html,/y="-21\.213/);
- assert.equal(renderTaskSignals({blocker:false,question:false}),'');
+test('graph signals have separate accessible circular backgrounds at different radii',()=>{
+ for(const radius of [18,30,54]) for(const blocker of [false,true]) for(const question of [false,true]) {
+  const html=renderTaskSignals({blocker,question},radius),count=Number(blocker)+Number(question);
+  assert.equal((html.match(/class="tg-task-signal-bg" r="10"/g)||[]).length,count);
+  assert.equal((html.match(/role="img"/g)||[]).length,count);
+  for(const [kind,present,emoji] of [['blocker',blocker,'⚠️'],['question',question,'❓']]) {
+   assert.equal(html.includes('aria-label="Historical '+kind+' log"'),present);
+   assert.equal(html.includes(emoji),present);
+  }
+  const centers=[...html.matchAll(/translate\(([^,]+),([^\)]+)\)/g)].map(m=>[Number(m[1]),Number(m[2])]);
+  if(count) {
+   const x=centers.reduce((v,p)=>v+p[0],0)/count,y=centers.reduce((v,p)=>v+p[1],0)/count;
+   assert.ok(Math.abs(Math.hypot(x,y)-radius)<.001);assert.ok(x>0&&y<0);
+  } else assert.equal(html,'');
+  if(count===2) assert.ok(Math.hypot(centers[0][0]-centers[1][0],centers[0][1]-centers[1][1])>21);
+ }
  const model=buildGraph({tasks:[{id:1,name:'Task',status:'todo',session_logs:[{kind:'question'},{kind:'blocker'}]}]});
  assert.equal(model.nodes[0].question,true);assert.equal(model.edges.length,0);
  assert.match(renderGraph({...model,width:500,height:500}),/tg-task-signal/);

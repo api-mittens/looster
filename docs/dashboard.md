@@ -78,6 +78,54 @@ report counters. Other log kinds are excluded. Data is scoped to the selected
 namespace, refreshes with the dashboard, and can be retried with **Refresh** or
 `r`. Expand **Daily data (UTC)** for exact accessible chart values.
 
+## Reading the list
+
+Each task-stage and agent column has its own server-backed page of **15 tasks**.
+Previous and Next controls at the bottom show the visible range, total matching
+tasks and current page. Controls are keyboard-accessible, report loading and
+errors, and offer Retry without discarding the current cards. Agent columns
+contain only tasks with currently running sessions. **Other sessions** continues
+to show active taskless runs rather than task pages.
+
+Changing one column's page does not change the other columns. Polling, manual
+refresh, stage visibility and offline-agent toggles retain page selections.
+Search changes or namespace switches reset pages to the first page. If tasks
+are removed or move between columns, the server clamps an unavailable last page
+to the new last page, including an empty first page.
+
+List search runs against the entire selected namespace, not just loaded cards.
+List uses case-insensitive substring matching against task name, description,
+status, `TSK-ID`, tags and associated agents. The global command palette uses a
+dedicated `/api/palette/tasks` read port: PostgreSQL ranks tasks across all stages
+before returning at most **50 task candidates**. It mirrors the client fuzzy
+scorer's greedy ordered-character, adjacency, word-start and length scoring,
+with task-label ordering for ties. The client merges those candidates with other
+palette item kinds and selects the final 50 results. Palette task search fields
+are exactly `TSK-ID`, name, description, status and sorted tags, not associated
+agents or session logs. Regex-shaped input remains literal, not executable regex.
+On UTF-8 PostgreSQL with ICU, the SQL scorer uses locale-independent Unicode
+lowercasing, including dotted I and final sigma, and UTF-16 scoring positions.
+Other installations upgrade normally and use portable C/ASCII lowercasing.
+UTF-8 databases retain UTF-16 positions, while other encodings use native
+positions. ASCII-only task/search strings retain exact client scoring, but
+non-ASCII matches can rank differently without UTF-8 and ICU. No database
+conversion or additional extension is required for this change.
+Planning, todo and agent columns promote historical blocker logs before question
+logs, then sort by latest activity with ascending task ID as a tie-breaker.
+Validated and closed columns sort only by activity and ID. Details and CLI task
+commands retain their existing behavior.
+
+List uses `GET /api/board/list`, with `search`, optional `namespace` and `pages`
+(a JSON object mapping column keys to one-based page numbers, for example
+`{"todo":2,"agent:coder":3}`). The response includes column `tasks`, `total`,
+`page` and fixed `page_size`, alongside agent/session placement metadata. The
+repository counts and selects each page in a read-only repeatable-read snapshot,
+then hydrates tags, counters and session-log bodies for only those selected task
+IDs. It never calls the unbounded task-list repository method. Counts, ordering
+and search still inspect matching database records, and placement metadata spans
+the namespace, but task and log payload hydration is bounded per column.
+Graph deliberately retains `GET /api/board` for its whole-dataset graph view.
+
 ## Reading the graph
 
 Only unfinished tasks (`planning` and `todo`) and their actual session links

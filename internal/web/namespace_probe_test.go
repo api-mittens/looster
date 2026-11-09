@@ -2,6 +2,7 @@ package web
 
 // Behavioral probes execute only through their Go test entrypoints.
 const namespaceProbe = `import {behavioursHTML,ruleLabel} from './static/views.mjs';
+import {columnPaginationHTML} from './static/pagination.mjs';
 import {layout} from './static/workflow.mjs';
 import {sortTasksForColumn,sortTasksByLatestActivity,taskCardHTML,isTasklessSession,boardAgentNames,activeTasklessSessions,sessionCardHTML} from './static/board.mjs';
 
@@ -56,7 +57,7 @@ test('task comments explain registered mention and ignored unknown name semantic
 
 function boardHarness(fetch, globals={}) {
   const classes = new Map();
-  const context = vm.createContext({sortTasksForColumn,isTasklessSession,boardAgentNames,activeTasklessSessions,sessionCardHTML,HTMLElement:class {},customElements:{define:(name,type) => classes.set(name,type)},URL,AbortController,DOMException,location:{origin:'http://localhost'},fetch,queueMicrotask,...globals});
+  const context = vm.createContext({columnPaginationHTML,sortTasksForColumn,isTasklessSession,boardAgentNames,activeTasklessSessions,sessionCardHTML,HTMLElement:class {},customElements:{define:(name,type) => classes.set(name,type)},URL,AbortController,DOMException,location:{origin:'http://localhost'},fetch,queueMicrotask,...globals});
   vm.runInContext(readFileSync(new URL('./static/app.js','file:./probe'),'utf8').replace(/^import .*;\n/gm,''),context);
   const board = new (classes.get('looster-board'))();
   Object.assign(board,{namespace:'alpha',generation:0,controller:new AbortController()});
@@ -87,7 +88,7 @@ test('list defaults hide stages and offline agents with independent reversible c
   board.page='board';board.render();assert.equal(control('#toggle-offline-agents').hidden,false);assert.equal(sections.length,1);
 });
 
-test('every stage and agent column preserves latest activity order after filtering and refresh',()=>{
+test('every stage and agent column renders server ordering without client re-sorting',()=>{
   const sections=[];
   const document={activeElement:{}};
   const patchHTML=(_root,html)=>{sections.length=0;sections.push(...(html.match(/<section\b[\s\S]*?<\/section>/g)||[]).filter(html=>!html.includes('data-refresh-key="other-sessions"')).map(html=>({html,rows:[...html.matchAll(/<task-card data-id="(\d+)"/g)].map(match=>Number(match[1]))})));};
@@ -104,17 +105,72 @@ test('every stage and agent column preserves latest activity order after filteri
     assert.deepEqual(sections.slice(0,4).map(s=>s.rows),[[1,2,3],[11,12,13],[21,22,23],[31,32,33]]);
     assert.deepEqual(sections.slice(4).map(s=>s.rows),[[],[1,2,11,12,21,22,31,32,3,13,23,33],[1,2,11,12,21,22,31,32,3,13,23,33]]);
   };
-  board.render();check();
-  board.data.tasks=[...tasks].reverse();board.render();check();
-  board.search.value='TSK-13';board.render();
+  const serverResult = () => {
+    const filtered=board.data.tasks.filter(t => [t.name,'TSK-'+t.id].join(' ').toLowerCase().includes(board.search.value.toLowerCase()));
+    board.data.columns=[...['planning','todo','validated','closed'].map(key=>({key,tasks:sortTasksForColumn(filtered.filter(t=>t.status===key),key)})),...['historical','live','offline'].map(name=>({key:'agent:'+name,tasks:sortTasksForColumn(filtered,'agent').filter(t=>sessions.some(s=>s.task_id===t.id&&s.agent===name&&s.status==='running'))}))].map(c=>({...c,total:c.tasks.length,page:1,page_size:15}));
+  };
+  serverResult();board.render();check();
+  board.data.tasks=[...tasks].reverse();serverResult();board.render();check();
+  board.search.value='TSK-13';serverResult();board.render();
   assert.deepEqual(sections.map(s=>s.rows),[[],[13],[],[],[],[13],[13]]);
   board.search.value='';
   board.data.tasks=tasks.map(t=>t.id===13?{...t,last_activity_at:'2026-11-04T00:00:00Z'}:t);
-  board.render();
+  serverResult();board.render();
   assert.deepEqual(sections[1].rows,[13,11,12]);
   assert.deepEqual(sections[5].rows,[13,1,2,11,12,21,22,31,32,3,23,33]);
   assert.deepEqual(sections[6].rows,sections[5].rows);
   assert.deepEqual(tasks.map(t=>t.id),[3,2,1,13,12,11,23,22,21,33,32,31]);
+});
+
+test('column pagination shows exact boundaries and accessible disabled controls',()=>{
+  for(const [total,page,range,nextDisabled] of [[0,1,'0–0',true],[15,1,'1–15',true],[16,1,'1–15',false],[16,2,'16–16',true],[31,3,'31–31',true]]) {
+    const html=columnPaginationHTML({key:'todo',total,page,page_size:15});
+    assert.ok(html.includes(range+' of '+total+' tasks'));
+    assert.match(html,/aria-label="todo pagination"/);
+    assert.equal(/aria-label="Next page for todo" disabled/.test(html),nextDisabled);
+    assert.equal(/aria-label="Previous page for todo" disabled/.test(html),page===1);
+  }
+  const html=columnPaginationHTML({key:'agent:<coder>',total:31,page:2},{pending:true,error:'Offline <retry>'});
+  assert.match(html,/aria-busy="true"/);assert.match(html,/Loading…/);assert.match(html,/role="alert"/);assert.match(html,/data-column-retry/);assert.ok(!html.includes('<coder>'));assert.ok(html.includes('&lt;retry&gt;'));
+});
+
+test('list refresh retains independent server pages and clamps only the changed column',async()=>{
+  const board=boardHarness(async()=>{}),calls=[];
+  Object.assign(board,{page:'board',search:{value:'  needle  '},columnPages:{todo:3,'agent:coder':2},palette:{open:false},sessionDialog:{open:false}});
+  board.render=()=>{};board.querySelector=()=>({});
+  board.api=async path=>{calls.push(path);if(path.startsWith('/api/board/list?')) return {tasks:[],agents:[],sessions:[],columns:[{key:'todo',page:2,total:30,tasks:[]},{key:'agent:coder',page:2,total:31,tasks:[]}]};return {};};
+  await board.refresh();
+  const url=new URL(calls[0],'http://localhost');
+  assert.equal(url.searchParams.get('search'),'needle');
+  assert.deepEqual(JSON.parse(url.searchParams.get('pages')),{todo:3,'agent:coder':2});
+  assert.deepEqual(board.columnPages,{todo:2,'agent:coder':2});
+  await board.refresh();
+  assert.ok(!calls.includes('/api/board'));
+  assert.deepEqual(JSON.parse(new URL(calls[5],'http://localhost').searchParams.get('pages')),{todo:2,'agent:coder':2});
+  board.refresh=()=>{calls.push('refresh');};
+  board.changeColumnPage('todo',1);assert.deepEqual(board.columnPages,{todo:1,'agent:coder':2});
+  board.filterTasks();assert.deepEqual(board.columnPages,{});
+});
+
+test('detail status rollback does not depend on the visible task page',async()=>{
+ const board=boardHarness(async()=>{}),error={};
+ board.detailID=99;board.data={tasks:[]};board.panel={querySelector:()=>error};
+ board.post=async()=>{throw Error('Controlled failure');};
+ const select={value:'todo',dataset:{previous:'closed'},isConnected:true};
+ await board.changeStatus(select);
+ assert.equal(select.value,'closed');assert.equal(select.disabled,false);assert.equal(error.textContent,'Controlled failure');
+});
+
+test('late list responses cannot overwrite new search or route data',async()=>{
+  const board=boardHarness(async()=>{});let resolve;
+  Object.assign(board,{page:'board',search:{value:''},data:{tasks:[],columns:[]},palette:{open:false},sessionDialog:{open:false}});
+  board.render=()=>{};board.querySelector=()=>({});
+  board.api=path=>path.startsWith('/api/board/list?')?new Promise(r=>{resolve=r;}):Promise.resolve({});
+  const pending=board.refresh();board.listRevision=1;board.columnPages={};board.search.value='new query';
+  resolve({tasks:[{id:999}],columns:[{key:'todo',page:3}]});await pending;
+  assert.equal(board.data.tasks.length,0);assert.deepEqual(board.columnPages,{});
+  board.api=async path=>path==='/api/board'?{tasks:[{id:31}],agents:[],sessions:[]}:{ };
+  board.page='graph';await board.refresh();assert.equal(board.data.tasks[0].id,31);
 });
 
 test('manifest view shows full source, prior immutable versions, activation and escaping',() => {
