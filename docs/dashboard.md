@@ -50,12 +50,33 @@ still opens List. Navigation links show their shortcuts:
 | `gg` | Graph |
 | `gl` | List |
 | `gs` | Servers |
+| `gp` | Performance |
 | `gb` | Behaviours |
 
 Press both keys within 700 ms, outside text fields or dialogs. Former H/L tab
 navigation is removed. `G` still jumps to the last task or page bottom. Dialogs
 retain `gg`/`G` for top/bottom scrolling. The namespace switcher next to the logo
 changes the namespace and clears the prior view.
+
+## Performance
+
+Open **Performance** with `gp` or the `#performance` bookmark. Seven line charts
+show 30 daily UTC buckets, including today's partial bucket. Counters cover the
+exact trailing seven days (168 hours). Both resolutions are fixed.
+
+Task metrics are validated count, closed count, and validated divided by closed
+(shown as a percentage, or N/A when closed is zero). Each task counts once using
+its current status and latest activity timestamp, not each status transition.
+Later comments or task-associated session logs can move that task to a newer day,
+so these charts are current-state snapshots rather than historical completion
+throughput. Planning and todo tasks do not contribute to these outcome counts.
+
+Blocker and question reports count immutable session-log observations by report
+time. Task-associated reports appear under **Tasks**. Reports without a task
+appear separately under **Autonomous agents**, and are not included in task
+report counters. Other log kinds are excluded. Data is scoped to the selected
+namespace, refreshes with the dashboard, and can be retried with **Refresh** or
+`r`. Expand **Daily data (UTC)** for exact accessible chart values.
 
 ## Reading the list
 

@@ -335,7 +335,7 @@ test('graph statuses combine with tags/search and persist on refresh including n
 test('graph route is a separate navigation tab and wires node detail events',() => {
   const source=readFileSync(new URL('./static/app.js','file:./probe'),'utf8');
   assert.ok(source.includes('href="#graph">Graph <kbd>gg</kbd></a>'));
-  assert.ok(source.includes("const goPage = {g:'graph',l:'board',s:'servers',b:'system'}"));
+  assert.ok(source.includes("const goPage = {g:'graph',l:'board',s:'servers',b:'system',p:'performance'}"));
   assert.ok(source.includes('href="#board">List <kbd>gl</kbd></a>'));
   assert.ok(!source.includes('switchTab('));
   assert.ok(source.includes("addEventListener('task-open',e => this.open(e.detail.id))"));
