@@ -12,6 +12,7 @@ type recordedSession struct {
 	statements []string
 	closed     bool
 	fail       bool
+	closeErr   error
 }
 
 func (s *recordedSession) Exec(_ context.Context, q string) error {
@@ -24,7 +25,7 @@ func (s *recordedSession) Exec(_ context.Context, q string) error {
 	}
 	return nil
 }
-func (s *recordedSession) Close() error { s.closed = true; return nil }
+func (s *recordedSession) Close() error { s.closed = true; return s.closeErr }
 
 func TestProbeFreshReopen(t *testing.T) {
 	for _, failure := range []string{"", "write", "reopen", "read"} {
@@ -82,6 +83,23 @@ func TestProbeFreshReopen(t *testing.T) {
 				t.Fatal("missing cleanup")
 			}
 		})
+	}
+}
+
+func TestProbeReportsReaderCloseFailure(t *testing.T) {
+	closeFailure := errors.New("test reader close failure")
+	writer := &recordedSession{}
+	reader := &recordedSession{closeErr: closeFailure}
+	calls := 0
+	err := probeDisposable(context.Background(), config(), func(context.Context, Config) (probeSession, error) {
+		calls++
+		if calls == 1 {
+			return writer, nil
+		}
+		return reader, nil
+	})
+	if !errors.Is(err, closeFailure) || !writer.closed || !reader.closed {
+		t.Fatalf("close failure or resource lifetime lost: %v", err)
 	}
 }
 

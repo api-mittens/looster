@@ -124,6 +124,9 @@ jobs:
         run: |
           echo "CC=$GITHUB_WORKSPACE/scripts/static-cxx-cc.sh" >> "$GITHUB_ENV"
           echo 'CGO_LDFLAGS=-static-libgcc' >> "$GITHUB_ENV"
+      - name: Link Windows AMD64 compiler runtimes statically
+        if: matrix.os == 'windows' && matrix.arch == 'amd64'
+        run: echo 'CGO_LDFLAGS=-static -static-libgcc' >> "$GITHUB_ENV"
       - name: Build matching static DuckDB for Windows ARM64
         if: matrix.os == 'windows' && matrix.arch == 'arm64'
         run: bash scripts/build-duckdb-windows-arm64.sh

@@ -61,7 +61,7 @@ or framework static. No `duckdb_use_lib` build is publishable.
 | Linux arm64 | Ubuntu 24.04 ARM | Official version-pinned prebuilt static archive |
 | macOS amd64 | macOS 15 Intel | Official version-pinned prebuilt static archive |
 | macOS arm64 | macOS 15 ARM | Official version-pinned prebuilt static archive |
-| Windows amd64 | Windows 2025, MSYS2 MINGW64 | Official version-pinned prebuilt static archive |
+| Windows amd64 | Windows 2025, MSYS2 UCRT64 | Official version-pinned prebuilt static archive |
 | Windows arm64 | Windows 11 ARM, MSYS2 CLANGARM64 | Source-pinned custom static archive with `duckdb_use_static_lib` |
 
 Windows ARM64 has no upstream prebuilt Go archive. Its explicit recipe is

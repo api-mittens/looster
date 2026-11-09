@@ -331,7 +331,7 @@ type probeSession interface {
 	Close() error
 }
 
-func probeDisposable(ctx context.Context, c Config, opener func(context.Context, Config) (probeSession, error)) error {
+func probeDisposable(ctx context.Context, c Config, opener func(context.Context, Config) (probeSession, error)) (result error) {
 	l, err := opener(ctx, c)
 	if err != nil {
 		return err
@@ -353,7 +353,11 @@ func probeDisposable(ctx context.Context, c Config, opener func(context.Context,
 	if err != nil {
 		return err
 	}
-	defer reader.Close()
+	defer func() {
+		if err := reader.Close(); result == nil {
+			result = err
+		}
+	}()
 	// array_agg requires row values, unlike count/min that can be answered from
 	// Parquet/catalog statistics without proving that the file is readable.
 	if err := reader.Exec(ctx, "SELECT CASE WHEN array_agg(id)=[42] THEN true ELSE error('probe mismatch') END FROM "+table+";"); err != nil {
