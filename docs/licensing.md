@@ -23,6 +23,14 @@ single license label. Goja's test-only numeric conversion code also includes a
 Lucent permissive notice requiring retained documentation notices and
 non-endorsement. Its complete text is retained rather than relabeled MIT.
 
+The embedded DuckDB native engine has its own source-pinned notice collection,
+including bundled ICU, compression/crypto libraries and TPC benchmark terms.
+Do not treat the native engine's complete contents as MIT-only. Linux archives
+also retain the statically linked GCC/C++ runtime notices and runtime exception.
+The Go driver and all four supported native targets are covered by the generated
+inventory and archive checks. See [the native inventory](../scripts/licenses/README.md)
+for exact source pins, distribution contents and regeneration instructions.
+
 ### HCL source availability
 
 HCL is used unmodified. Its covered source files remain under MPL-2.0, not MIT.
