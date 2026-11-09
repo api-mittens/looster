@@ -3,6 +3,7 @@ package postgres
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"math"
 	"os/exec"
 	"path/filepath"
@@ -41,6 +42,10 @@ func paletteNode(t *testing.T, script string, input any, output any) {
 
 func TestPaletteSQLScoreParity(t *testing.T) {
 	ctx, s := manifestTestStore(t)
+	var unicode bool
+	if err := s.Pool.QueryRow(ctx, `SELECT current_setting('server_encoding')='UTF8' AND collprovider='i' FROM pg_collation WHERE collname='palette_unicode' AND collnamespace=current_schema()::regnamespace`).Scan(&unicode); err != nil {
+		t.Fatal(err)
+	}
 	pairs := [][2]string{{"", "anything"}, {"  ", ""}, {"xyz", "example"}, {"design", "design"}, {"design", "A design task"}, {"aa", "a___a"}, {"ab", "a/b"}, {"ab", "a\nb"}, {"[.*", "[.*"}, {"😀b", "😀b"}, {"b", "😀 b"}, {"tsk1", "TSK-123 name"}, {"é", "École"}, {"σ", "ΟΣ"}, {"i\u0307", "İ"}, {"\uFEFF x \uFEFF", "X"}, {"ab", "a\u2003b"}, {"a", string(make([]byte, 0))}}
 	// Deterministic generated cases exercise greedy first occurrence, punctuation,
 	// whitespace, repeated characters, and UTF-16 positions without a copied scorer.
@@ -53,6 +58,16 @@ func TestPaletteSQLScoreParity(t *testing.T) {
 	var want []float64
 	for _, space := range []rune{'\t', '\n', '\r', '\v', '\f', 0xa0, 0x1680, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000, 0xfeff} {
 		pairs = append(pairs, [2]string{string(space) + "ab" + string(space), "a" + string(space) + "b"})
+	}
+	if !unicode {
+		ascii := pairs[:0]
+		for _, pair := range pairs {
+			if !strings.ContainsFunc(pair[0]+pair[1], func(r rune) bool { return r > 127 }) {
+				ascii = append(ascii, pair)
+			}
+		}
+		pairs = ascii
+		t.Log("Portable fallback: verifying exact ASCII JS parity; Unicode parity requires UTF8+ICU")
 	}
 	paletteNode(t, `console.log(JSON.stringify(input.map(([q,v])=>fuzzyScore(q,v))));`, pairs, &want)
 	for i, p := range pairs {
@@ -145,4 +160,71 @@ func TestPaletteGlobalRankingBeforeLimit(t *testing.T) {
 	if !strings.Contains(query, "LIMIT 50") || strings.Contains(query, "session_logs") || strings.Contains(query, "FROM events") {
 		t.Fatalf("unbounded palette hydration: %s", query)
 	}
+}
+
+// Run this test against both UTF8 and SQL_ASCII databases. The capability
+// assertion exercises the actual migration in each environment. The second
+// pass forces the same migration's no-ICU branch on ICU-enabled test servers.
+func TestPaletteMigrationPortable(t *testing.T) {
+	ctx, s := manifestTestStore(t)
+	var encoding, provider, schema string
+	var haveICU bool
+	if err := s.Pool.QueryRow(ctx, `SELECT current_setting('server_encoding'),current_schema(),EXISTS(SELECT FROM pg_collation WHERE collprovider='i')`).Scan(&encoding, &schema, &haveICU); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Pool.QueryRow(ctx, `SELECT collprovider::text FROM pg_collation WHERE collname='palette_unicode' AND collnamespace=current_schema()::regnamespace`).Scan(&provider); err != nil {
+		t.Fatal(err)
+	}
+	want := "c"
+	if encoding == "UTF8" && haveICU {
+		want = "i"
+	}
+	if provider != want {
+		t.Fatalf("encoding=%s ICU=%v provider=%s want=%s", encoding, haveICU, provider, want)
+	}
+	t.Logf("actual migration: encoding=%s ICU=%v selected provider=%s", encoding, haveICU, provider)
+	exact, err := s.CreateTask(ctx, "needle", "", task.Todo, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Pool.Exec(ctx, `INSERT INTO tasks(name,description,status,created_at) SELECT 'needle unrelated verbose task '||i,'','todo',now()+interval '1 day' FROM generate_series(1,70) i`); err != nil {
+		t.Fatal(err)
+	}
+	check := func() {
+		t.Helper()
+		got, err := s.PaletteTasks(ctx, "NEEDLE")
+		if err != nil || len(got) != 50 || got[0].ID != exact.ID {
+			t.Fatalf("portable ranking: len=%d error=%v tasks=%+v", len(got), err, got)
+		}
+	}
+	check()
+	source, err := namespaceMigrations(mustSub(), schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := fs.ReadFile(source, "022_palette_search.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.SplitN(string(raw), "-- +goose Down", 2)
+	if len(parts) != 2 {
+		t.Fatal("palette migration missing rollback")
+	}
+	condition := "IF current_setting('server_encoding')='UTF8'\n    AND EXISTS (SELECT FROM pg_collation WHERE collprovider='i') THEN"
+	if !strings.Contains(parts[0], condition) {
+		t.Fatal("palette capability guard changed, update test")
+	}
+	if _, err = s.Pool.Exec(ctx, parts[1]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Pool.Exec(ctx, strings.Replace(parts[0], condition, "IF false THEN", 1)); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Pool.QueryRow(ctx, `SELECT collprovider::text FROM pg_collation WHERE collname='palette_unicode' AND collnamespace=current_schema()::regnamespace`).Scan(&provider); err != nil {
+		t.Fatal(err)
+	}
+	if provider != "c" {
+		t.Fatalf("no-ICU branch selected %s", provider)
+	}
+	check()
 }

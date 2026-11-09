@@ -37,9 +37,7 @@ func legacyUpgradeDatabase(t *testing.T) string {
 	}
 	name := fmt.Sprintf("looster_upgrade_%d", time.Now().UnixNano())
 	quoted := pgx.Identifier{name}.Sanitize()
-	// Palette scoring uses Unicode semantics, so do not inherit a SQL_ASCII
-	// template from developer test clusters.
-	if _, err = admin.Exec(ctx, "CREATE DATABASE "+quoted+" TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C'"); err != nil {
+	if _, err = admin.Exec(ctx, "CREATE DATABASE "+quoted); err != nil {
 		admin.Close(ctx)
 		t.Fatal(err)
 	}

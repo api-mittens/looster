@@ -82,8 +82,13 @@ with task-label ordering for ties. The client merges those candidates with other
 palette item kinds and selects the final 50 results. Palette task search fields
 are exactly `TSK-ID`, name, description, status and sorted tags, not associated
 agents or session logs. Regex-shaped input remains literal, not executable regex.
-The SQL scorer requires a UTF-8 PostgreSQL database with ICU support for
-locale-independent Unicode lowercasing, including dotted I and final sigma.
+On UTF-8 PostgreSQL with ICU, the SQL scorer uses locale-independent Unicode
+lowercasing, including dotted I and final sigma, and UTF-16 scoring positions.
+Other installations upgrade normally and use portable C/ASCII lowercasing.
+UTF-8 databases retain UTF-16 positions, while other encodings use native
+positions. ASCII-only task/search strings retain exact client scoring, but
+non-ASCII matches can rank differently without UTF-8 and ICU. No database
+conversion or additional extension is required for this change.
 Planning, todo and agent columns promote historical blocker logs before question
 logs, then sort by latest activity with ascending task ID as a tie-breaker.
 Validated and closed columns sort only by activity and ID. Details and CLI task

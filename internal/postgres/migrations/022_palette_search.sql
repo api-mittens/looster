@@ -1,19 +1,36 @@
 -- +goose Up
 -- +goose StatementBegin
--- ECMAScript uses locale-independent Unicode lowercasing. ICU's root locale
--- also handles dotted I and contextual final sigma, unlike libc/C lower().
-CREATE COLLATION palette_unicode (provider = icu, locale = 'und');
--- Mirror static/search.mjs. Positions and length are UTF-16 code units, not
--- PostgreSQL character counts (important for astral characters).
+-- Prefer locale-independent Unicode casing where supported. Existing SQL_ASCII
+-- and non-ICU installations must still upgrade: C supplies exact ASCII casing,
+-- with intentionally limited non-ASCII parity on those installations.
+DO $$
+BEGIN
+ IF current_setting('server_encoding')='UTF8'
+    AND EXISTS (SELECT FROM pg_collation WHERE collprovider='i') THEN
+  CREATE COLLATION palette_unicode (provider = icu, locale = 'und');
+ ELSE
+  CREATE COLLATION palette_unicode FROM "C";
+ END IF;
+END
+$$;
+
+-- Mirror static/search.mjs. UTF8 positions and length use UTF-16 code units,
+-- not PostgreSQL character counts. Other encodings retain native positions.
 CREATE FUNCTION palette_utf16_length(value text) RETURNS integer
-LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE SET search_path=public,pg_temp AS $$
- SELECT length(value) + length(regexp_replace(value COLLATE "C", '[^𐀀-􏿿]', '', 'g'))
+LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE SET search_path=public,pg_temp AS $$
+BEGIN
+ IF current_setting('server_encoding')='UTF8' THEN
+  RETURN length(value) + length(regexp_replace(value COLLATE "C", '[^'||chr(65536)||'-'||chr(1114111)||']', '', 'g'));
+ END IF;
+ RETURN length(value);
+END
 $$;
 
 CREATE FUNCTION palette_fuzzy_score(query text, value text) RETURNS double precision
 LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE SET search_path=public,pg_temp AS $$
 DECLARE
- needle text := lower((btrim(query, E' \t\n\r\f' || chr(11) || chr(160) || chr(5760) || chr(8192) || chr(8193) || chr(8194) || chr(8195) || chr(8196) || chr(8197) || chr(8198) || chr(8199) || chr(8200) || chr(8201) || chr(8202) || chr(8232) || chr(8233) || chr(8239) || chr(8287) || chr(12288) || chr(65279))) COLLATE palette_unicode);
+ whitespace text := E' \t\n\r\f' || chr(11);
+ needle text;
  hay text := lower(value COLLATE palette_unicode);
  character text;
  at_pos integer := 1;
@@ -21,8 +38,14 @@ DECLARE
  units integer;
  previous integer := -2;
  score integer := 0;
- boundaries text := E' /._:#-\t\n\r\f' || chr(11) || chr(160) || chr(5760) || chr(8192) || chr(8193) || chr(8194) || chr(8195) || chr(8196) || chr(8197) || chr(8198) || chr(8199) || chr(8200) || chr(8201) || chr(8202) || chr(8232) || chr(8233) || chr(8239) || chr(8287) || chr(12288) || chr(65279);
+ boundaries text;
 BEGIN
+ -- Do not evaluate Unicode chr() on SQL_ASCII/legacy database encodings.
+ IF current_setting('server_encoding')='UTF8' THEN
+  whitespace := whitespace || chr(160) || chr(5760) || chr(8192) || chr(8193) || chr(8194) || chr(8195) || chr(8196) || chr(8197) || chr(8198) || chr(8199) || chr(8200) || chr(8201) || chr(8202) || chr(8232) || chr(8233) || chr(8239) || chr(8287) || chr(12288) || chr(65279);
+ END IF;
+ needle := lower(btrim(query,whitespace) COLLATE palette_unicode);
+ boundaries := ' /._:#-' || whitespace;
  IF needle = '' THEN RETURN 0; END IF;
  FOR i IN 1..length(needle) LOOP
   character := substr(needle,i,1);
