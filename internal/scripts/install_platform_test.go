@@ -9,6 +9,18 @@ import (
 	"testing"
 )
 
+func TestReleaseRejectsRemovedWindowsTargets(t *testing.T) {
+	for _, arch := range []string{"amd64", "arm64"} {
+		t.Run(arch, func(t *testing.T) {
+			cmd := exec.Command("bash", "../../scripts/release-archive.sh", "windows", arch, "v0.0.0-ci")
+			out, err := cmd.CombinedOutput()
+			if err == nil || !strings.Contains(string(out), "Unsupported release platform") {
+				t.Fatalf("Windows release unexpectedly accepted: err=%v output=%s", err, out)
+			}
+		})
+	}
+}
+
 func TestInstallerRejectsRemovedWindowsTargetsBeforeDownload(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX installer")
