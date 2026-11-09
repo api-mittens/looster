@@ -44,8 +44,15 @@ These runtime notices are additional to the source-pinned DuckDB inventory.
 Only operating-system native dependencies are accepted in release executables.
 Linux uses `static-cxx-cc.sh` to replace upstream's explicit `-lstdc++` with the
 compiler's static archive. GCC's `-static-libstdc++` alone does not replace that
-explicit library argument. Windows AMD64 uses UCRT64, as required by the official
-driver installation instructions, and upstream's `--static` link directive.
+explicit library argument. Windows AMD64 uses the exact GCC 14.2.0 POSIX/SEH/UCRT
+compiler pinned by DuckDB v1.5.2's `.github/workflows/BundleStaticLibs.yml`.
+`setup-duckdb-windows-amd64.sh` verifies the niXman archive SHA-256 published in
+Chocolatey mingw 14.2.0's installer and checks genuine static definitions of both
+`std::call_once` emulated-TLS symbols. Current MSYS2 GCC 16's static C++ runtime
+is not ABI-compatible with those prebuilt archives. No symbol shims are used.
+The release packages GCC, MinGW-w64 and winpthreads notices from that exact
+compiler archive, not from MSYS2's independently updated toolchain. Upstream's
+`--static` link directive remains enabled.
 DuckDB DLLs/shared objects and separately installed C++/pthread runtimes fail the
 artifact inspection. This means the engine is statically embedded, not that the
 entire executable is independent of its platform C runtime or system frameworks.

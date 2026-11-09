@@ -25,13 +25,24 @@ case "$os/$arch" in
     ;;
   windows/amd64)
     mkdir -p "$dest"
-    test -s "${MINGW_PREFIX:?}/share/licenses/gcc/COPYING.RUNTIME"
-    for name in gcc libgcc 'libstdc++' winpthreads libwinpthread crt headers mingw-w64-crt mingw-w64-headers; do
-      if [[ -d "$MINGW_PREFIX/share/licenses/$name" ]]; then
-        cp -RL "$MINGW_PREFIX/share/licenses/$name" "$dest/"
-      fi
-    done
-    gcc --version > "$dest/compiler-version.txt"
+    if [[ -n "${LOOSTER_MINGW_ROOT:-}" ]]; then
+      compiler_root=$LOOSTER_MINGW_ROOT
+      if command -v cygpath >/dev/null; then compiler_root=$(cygpath -u "$compiler_root"); fi
+      test -s "$compiler_root/licenses/gcc/COPYING.RUNTIME"
+      for name in gcc mingw-w64 winpthreads; do
+        test -d "$compiler_root/licenses/$name"
+        cp -RL "$compiler_root/licenses/$name" "$dest/"
+      done
+      "$compiler_root/bin/gcc.exe" --version > "$dest/compiler-version.txt"
+    else
+      test -s "${MINGW_PREFIX:?}/share/licenses/gcc/COPYING.RUNTIME"
+      for name in gcc libgcc 'libstdc++' winpthreads libwinpthread crt headers mingw-w64-crt mingw-w64-headers; do
+        if [[ -d "$MINGW_PREFIX/share/licenses/$name" ]]; then
+          cp -RL "$MINGW_PREFIX/share/licenses/$name" "$dest/"
+        fi
+      done
+      gcc --version > "$dest/compiler-version.txt"
+    fi
     ;;
   darwin/*)
     # Apple's C++ runtime is an OS library, not redistributed in the archive.

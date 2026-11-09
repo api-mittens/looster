@@ -32,4 +32,19 @@ rm "$MINGW_PREFIX/share/licenses/gcc/COPYING.RUNTIME"
 if bash "$root/scripts/package-runtime-notices.sh" windows amd64 "$tmp/stage"; then
   echo 'missing GCC runtime exception was accepted' >&2; exit 1
 fi
+export LOOSTER_MINGW_ROOT="$tmp/pinned-mingw"
+mkdir -p "$LOOSTER_MINGW_ROOT/bin"
+cp "$tmp/tools/gcc" "$LOOSTER_MINGW_ROOT/bin/gcc.exe"
+for name in gcc mingw-w64 winpthreads; do
+  mkdir -p "$LOOSTER_MINGW_ROOT/licenses/$name"
+  echo "pinned compiler notice $name" > "$LOOSTER_MINGW_ROOT/licenses/$name/COPYING.RUNTIME"
+done
+bash "$root/scripts/package-runtime-notices.sh" windows amd64 "$tmp/pinned-stage"
+cmp "$LOOSTER_MINGW_ROOT/licenses/gcc/COPYING.RUNTIME" "$tmp/pinned-stage/NATIVE_RUNTIME_LICENSES/gcc/COPYING.RUNTIME"
+test -s "$tmp/pinned-stage/NATIVE_RUNTIME_LICENSES/mingw-w64/COPYING.RUNTIME"
+test -s "$tmp/pinned-stage/NATIVE_RUNTIME_LICENSES/winpthreads/COPYING.RUNTIME"
+rm "$LOOSTER_MINGW_ROOT/licenses/gcc/COPYING.RUNTIME"
+if bash "$root/scripts/package-runtime-notices.sh" windows amd64 "$tmp/pinned-stage"; then
+  echo 'missing pinned GCC runtime exception was accepted' >&2; exit 1
+fi
 echo 'runtime notice packaging: all cases passed'

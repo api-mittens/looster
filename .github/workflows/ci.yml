@@ -97,7 +97,7 @@ jobs:
           - {os: linux, arch: arm64, runner: ubuntu-24.04-arm, shell: bash}
           - {os: darwin, arch: amd64, runner: macos-15-intel, shell: bash}
           - {os: darwin, arch: arm64, runner: macos-15, shell: bash}
-          - {os: windows, arch: amd64, runner: windows-2025, shell: 'msys2 {0}', msystem: UCRT64, packages: 'mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-binutils zip'}
+          - {os: windows, arch: amd64, runner: windows-2025, shell: 'msys2 {0}', msystem: MSYS, packages: 'zip curl'}
           - {os: windows, arch: arm64, runner: windows-11-arm, shell: 'msys2 {0}', msystem: CLANGARM64, packages: 'mingw-w64-clang-aarch64-toolchain mingw-w64-clang-aarch64-cmake mingw-w64-clang-aarch64-ninja mingw-w64-clang-aarch64-python git zip'}
     runs-on: ${{ matrix.runner }}
     defaults:
@@ -119,6 +119,9 @@ jobs:
           update: true
           install: ${{ matrix.packages }}
           path-type: inherit
+      - name: Pin Windows AMD64 compiler to official archive ABI
+        if: matrix.os == 'windows' && matrix.arch == 'amd64'
+        run: bash scripts/setup-duckdb-windows-amd64.sh
       - name: Force Linux explicit C++ libraries to static archives
         if: matrix.os == 'linux'
         run: |
