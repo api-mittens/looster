@@ -16,4 +16,8 @@ task-card .task-compact h3{flex:1 1 0;margin:0;min-width:0;overflow:hidden;text-
 .run-history-card>button{width:100%}
 .session-log .muted{overflow-wrap:anywhere}
 .session-log .log-body{color:inherit;margin:6px 0;white-space:pre-wrap;overflow-wrap:anywhere}
-@media(prefers-color-scheme:dark){.blocker-badge{color:#fcd34d;background:#422d13}.question-badge{color:#bfdbfe;background:#172b49}}
+.session-log-blocker{border-left-color:#f59e0b}
+.session-log-question{border-left-color:#93c5fd}
+.session-log-blocker>.muted{color:#92400e}
+.session-log-question>.muted{color:#1d4ed8}
+@media(prefers-color-scheme:dark){.blocker-badge{color:#fcd34d;background:#422d13}.question-badge{color:#bfdbfe;background:#172b49}.session-log-blocker>.muted{color:#fcd34d}.session-log-question>.muted{color:#bfdbfe}}

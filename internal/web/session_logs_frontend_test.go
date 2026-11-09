@@ -14,6 +14,24 @@ Object.defineProperties(URL.prototype, {
  protocol:{get(){return this.href.match(/^[^:]+:/)?.[0] || '';}},
  hostname:{get(){return this.href.match(/^https?:\/\/([^/:?#]+)/i)?.[1] || '';}}
 });
+test('only exact blocker and question kinds receive accent hooks in every log view',()=>{
+ const log={id:8,job_id:9,agent:'<agent>',body:'<img src=x onerror=alert(1)>',created_at:'2026-11-05T11:00:00Z'};
+ const renderers=[sessionLogHTML,log=>runHistoryHTML({runs:[{job_id:9,logs:[log]}]}),log=>runDetailHTML({job_id:9,logs:[log]})];
+ for(const render of renderers) {
+  for(const kind of ['blocker','question']) {
+   const html=render({...log,kind});
+   assert.match(html,new RegExp('class="comment session-log session-log-'+kind+'"'));
+   assert.match(html,/data-refresh-key="log:8"/);
+   assert.match(html,new RegExp('&lt;agent&gt; · '+kind+' · Run 9'));
+   assert.match(html,/<pre class="log-body">&lt;img src=x onerror=alert\(1\)&gt;<\/pre>/);
+  }
+  for(const kind of ['note','link','custom-kind','Blocker','question ','constructor','__proto__','blocker question','blocker" onclick="alert(1)','<img src=x onerror=alert(1)>',null,undefined]) {
+   const html=render({...log,kind});
+   assert.match(html,/class="comment session-log"/);
+   assert.doesNotMatch(html,/session-log-blocker|session-log-question|<img|onclick="/);
+  }
+ }
+});
 test('link logs are clickable and escaped in timelines and both run views',()=>{
  const body='https://example.com/path?q="<tag>"&other=1';
  const log={id:5,job_id:9,agent:'coder',kind:'link',body,created_at:'2026-11-05T11:00:00Z'};
