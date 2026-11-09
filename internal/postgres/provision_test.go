@@ -14,6 +14,8 @@ import (
 func TestSelectDatabase(t *testing.T) {
 	for _, tc := range []struct{ name, raw, override, env, want string }{
 		{name: "unspecified", want: "looster"},
+		{name: "URL inferred role database", raw: "postgres://worker@host?sslmode=disable", want: "worker"},
+		{name: "keyword inferred role database", raw: "host=host user=worker", want: "worker"},
 		{name: "native", env: "native-db", want: "native-db"},
 		{name: "URL path", raw: "postgres://worker:secret@one.example:5544,two.example:5545/custom?sslmode=require&application_name=setup", env: "ignored", want: "custom"},
 		{name: "URL query", raw: "postgres://worker@host/path?database=query&sslmode=disable", want: "query"},

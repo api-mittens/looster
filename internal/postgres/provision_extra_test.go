@@ -10,6 +10,26 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
+func TestProvisionNamespaceValidationAndConnectionSelection(t *testing.T) {
+	clearPGEnvironment(t)
+	if _, err := ConfigureDatabasesNamespace(context.Background(), "postgres://secret@unreachable.invalid", "app", "", "invalid namespace"); err == nil {
+		t.Fatal("invalid namespace accepted")
+	}
+	t.Setenv("PG_DB", "existing")
+	t.Setenv("PGPASSWORD", "env-secret")
+	selected, err := DatabaseConnectionString("", "catalog")
+	if err != nil {
+		t.Fatal(err)
+	}
+	values, err := connectorKeywords(selected)
+	if err != nil || values["dbname"] != "catalog" || values["password"] != "env-secret" {
+		t.Fatalf("exported connection selection failed: %v", err)
+	}
+	if !strings.Contains(selected, "env-secret") {
+		t.Fatal("native connector requires resolved environment password")
+	}
+}
+
 func TestConfigureRepeatExistingAndCancellation(t *testing.T) {
 	clearPGEnvironment(t)
 	f := &provisionFake{exists: map[string]bool{"app": true, "catalog": true}, execErr: &pgconn.PgError{Code: "42501", Message: "secret"}}

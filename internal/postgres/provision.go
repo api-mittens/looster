@@ -11,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/api-mittens/looster/internal/namespace"
 )
 
 // ConfigureDatabases creates missing application and optional catalog databases,
@@ -24,7 +26,28 @@ import (
 // Creation and migrations are not atomic. On failure selectedRaw is still
 // returned after selection, so callers can report partial progress and retry.
 func ConfigureDatabases(ctx context.Context, raw, applicationName, catalogName string) (selectedRaw string, err error) {
-	return configureDatabases(ctx, raw, applicationName, catalogName, connectProvisioning, Migrate)
+	return ConfigureDatabasesNamespace(ctx, raw, applicationName, catalogName, namespace.Default)
+}
+
+// ConfigureDatabasesNamespace provisions databases and ensures the selected
+// application namespace through the existing schema and migration locking path.
+// Namespace validation occurs before any connection or infrastructure change.
+func ConfigureDatabasesNamespace(ctx context.Context, raw, applicationName, catalogName, ns string) (string, error) {
+	if err := namespace.Validate(ns); err != nil {
+		return "", err
+	}
+	return configureDatabases(ctx, raw, applicationName, catalogName, connectProvisioning, func(ctx context.Context, selected string) error {
+		return EnsureNamespace(ctx, selected, ns)
+	})
+}
+
+// DatabaseConnectionString returns a fully resolved libpq keyword connection
+// string for the selected database, without connecting. Unlike selectedRaw from
+// ConfigureDatabases, this explicitly materializes environment credentials for
+// connectors that do not inherit PG variables. Keep it in memory only, never log
+// or persist it. Unsupported connector settings fail closed.
+func DatabaseConnectionString(raw, databaseName string) (string, error) {
+	return databaseConnectionString(raw, databaseName)
 }
 
 type provisioningConn interface {
@@ -47,6 +70,12 @@ func selectDatabase(raw, applicationName, catalogName string) (string, *pgxpool.
 	name := applicationName
 	if name == "" {
 		name = cfg.ConnConfig.Database
+	}
+	if name == "" && strings.TrimSpace(raw) != "" {
+		// PostgreSQL defaults an omitted startup database to the login role. A
+		// configured DSN already targets that database even though pgx leaves its
+		// Database field empty. Do not redirect such existing installations.
+		name = cfg.ConnConfig.User
 	}
 	if name == "" {
 		name = "looster"
