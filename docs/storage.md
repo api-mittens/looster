@@ -130,6 +130,10 @@ unchanged. Application code must not log the credential-bearing config or SQL.
 
 ## Disposable write/reopen verification
 
+For a reproducible local run using a fresh PostgreSQL cluster and loopback S3
+fixture, see [the disposable harness](../scripts/test-ducklake/README.md).
+The harness never loads normal application connection settings.
+
 `ducklake.ProbeDisposable` explicitly requires confirmation of an **exclusively
 owned disposable catalog and S3 prefix**. It writes a Parquet-backed table with
 inlining disabled, closes the writer engine, opens a fresh connection to the
@@ -168,6 +172,9 @@ cgo and a C/C++ toolchain. An S3 emulator verifies the HTTP persistence
 workflow, not cloud IAM policies, TLS certificates or production availability.
 
 ## Official references
+
+- https://duckdb.org/docs/2.0/clients/go/overview
+- https://github.com/duckdb/duckdb-go/tree/v2.10502.0
 
 - https://ducklake.select/docs/1.0/duckdb/usage/connecting
 - https://ducklake.select/docs/1.0/duckdb/installation
