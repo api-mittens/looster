@@ -121,10 +121,13 @@ are still required to run workers.
 ## Build from source
 
 The module is `github.com/api-mittens/looster`. Use **Go 1.27.2 or newer**, as declared
-in [go.mod](../go.mod). From the source checkout:
+in [go.mod](../go.mod), plus a C/C++ compiler for the embedded DuckDB engine.
+The official client links its bundled static library by default. Do not use
+`CGO_ENABLED=0` or require a separately installed DuckDB executable. From the
+source checkout:
 
 ```sh
-go build -buildvcs=false -o bin/looster ./cmd/looster
+CGO_ENABLED=1 go build -buildvcs=false -o bin/looster ./cmd/looster
 ./bin/looster --help
 ```
 
