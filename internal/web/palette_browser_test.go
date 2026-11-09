@@ -69,6 +69,9 @@ func TestPaletteRelevancePostgresBrowser(t *testing.T) {
  window.paletteResult='ok';
  })().catch(e=>window.paletteResult=e.stack||String(e));`, fmt.Sprintf("TSK-%d · %s", exact.ID, exact.Name), fmt.Sprintf("task:%d", exact.ID))
 	if err = chromedp.Run(tab, chromedp.Navigate(server.URL+"/#board"), chromedp.WaitVisible("#toggle-stages"),
+		// The controls exist before the initial refresh finishes. That refresh can
+		// reload an open palette and supersede the request this probe awaits.
+		chromedp.Poll(`!document.querySelector('looster-board').loading && !!document.querySelector('looster-board').data`, nil),
 		chromedp.Evaluate(script, nil, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }),
 		chromedp.Evaluate(`window.paletteResult`, &result)); err != nil {
 		t.Fatal(err)
