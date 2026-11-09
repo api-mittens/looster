@@ -271,6 +271,7 @@ func TestFreshOpenBootstrap(t *testing.T) {
 	}
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("LocalAppData", t.TempDir())
 	c := config()
 	c.CatalogConnection = "host=127.0.0.1 port=1 dbname=unreachable user=test password='resolved-password' sslmode=disable connect_timeout=1"
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

@@ -146,6 +146,12 @@ func exerciseCLI(ctx context.Context, root, port, endpoint string, env []string)
 	if !exists {
 		return fmt.Errorf("default catalog metadata missing or application migrations leaked into catalog")
 	}
+	if err := catalog.QueryRow(ctx, "SELECT EXISTS(SELECT FROM public.ducklake_metadata WHERE key='data_path' AND value='s3://fixture/ducklake/')").Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("default catalog did not retain the configured bucket /ducklake/ prefix")
+	}
 	fmt.Println("Compiled CLI PASS: empty PATH, private HOME/config, default catalog created, custom application database and default/dom/nume sentinels retained after repeated initialization")
 	return nil
 }
