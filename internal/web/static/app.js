@@ -1,5 +1,6 @@
 import {chronologicalEntries,sessionLogHTML} from './session-logs.mjs';
 import {appendOutput} from './output.mjs';
+import {performanceHTML} from './performance.mjs';
 import {patchHTML} from './refresh.mjs';
 import {renderMarkdown} from './markdown.mjs';
 import {serversHTML,behavioursHTML,ruleLabel} from './views.mjs';
@@ -38,7 +39,7 @@ class LoosterBoard extends HTMLElement {
     this.paletteInput.oninput = () => this.renderPalette();
     this.paletteInput.onkeydown = e => this.paletteKey(e);
     this.palette.querySelector('.palette-results').onclick = e => { const row = e.target.closest('[data-index]'); if(row) this.selectPalette(Number(row.dataset.index)); };
-    this.querySelector('header > span').outerHTML = '<nav aria-label="Main navigation"><a href="#graph">Graph <kbd>gg</kbd></a><a href="#board">List <kbd>gl</kbd></a><a href="#servers">Servers <kbd>gs</kbd></a><a href="#system">Behaviours <kbd>gb</kbd></a></nav>';
+    this.querySelector('header > span').outerHTML = '<nav aria-label="Main navigation"><a href="#graph">Graph <kbd>gg</kbd></a><a href="#board">List <kbd>gl</kbd></a><a href="#servers">Servers <kbd>gs</kbd></a><a href="#performance">Performance <kbd>gp</kbd></a><a href="#system">Behaviours <kbd>gb</kbd></a></nav>';
     this.board.insertAdjacentHTML('afterend','<section id="page" hidden></section>');
     const hints = this.querySelector('.footer');
     this.board.before(hints); this.board.id = 'board-columns';
@@ -61,7 +62,7 @@ class LoosterBoard extends HTMLElement {
     this.querySelector('#page').addEventListener('tag-filter',e => { this.graphTags = e.detail.tags; this.renderPage(); });
     this.querySelector('#page').addEventListener('task-open',e => this.open(e.detail.id));
     this.querySelector('#page').addEventListener('change',e => { if(e.target.id === 'manifest-version') { this.manifestID = Number(e.target.value); this.renderPage(); } });
-    this.querySelector('#page').addEventListener('click',e => { if(e.target.closest('#activate-manifest')) this.activateManifest(); const run=e.target.closest('[data-run-schedule]'); if(run) this.runSchedule(Number(run.dataset.runSchedule)); });
+    this.querySelector('#page').addEventListener('click',e => { if(e.target.closest('#performance-refresh')) this.refresh(); if(e.target.closest('#activate-manifest')) this.activateManifest(); const run=e.target.closest('[data-run-schedule]'); if(run) this.runSchedule(Number(run.dataset.runSchedule)); });
     this.insertAdjacentHTML('beforeend','<dialog id="session-dialog" aria-labelledby="session-title"><div class="dialog-head"><h2 id="session-title"></h2><div class="spacer"></div><button type="button" id="session-back">Back <kbd>Esc</kbd></button></div><div class="detail" tabindex="0"><section id="task-session-run" aria-live="polite"></section><section aria-labelledby="session-output-title"><h3 id="session-output-title">Session output</h3><pre id="task-session-output" class="session-output" tabindex="0" aria-label="Session output"></pre><p id="session-output-status" class="muted" role="status"></p><button type="button" id="session-output-more" hidden>Load more output</button></section></div></dialog>');
     this.sessionDialog = this.querySelector('#session-dialog');
     this.querySelector('#session-output-more').onclick = () => { if(this.sessionInspection) this.loadSessionOutput(this.sessionInspection); };
@@ -131,7 +132,7 @@ class LoosterBoard extends HTMLElement {
     for(const dialog of this.querySelectorAll('dialog')) if(dialog.open) dialog.close();
     this.detailID = null; this.outputs = new Map(); this.comments = new Map(); this.detailQueued = false;
     this.cursor = 0; this.commentCursor = 0; this.logAgent = ''; this.selected = null;
-    this.data = null; this.status = null; this.system = null; this.library = null; this.manifests = null; this.manifestID = null;
+    this.data = null; this.performance = null; this.status = null; this.system = null; this.library = null; this.manifests = null; this.manifestID = null;
     this.graphTags = [];
     this.graphStatuses = undefined;
     this.pageHTML = null; this.paletteItems = []; this.panel.replaceChildren(); this.board.replaceChildren();
@@ -176,6 +177,7 @@ class LoosterBoard extends HTMLElement {
     try {
       const requests = [['board','/api/board'],['status','/api/status'],['system','/api/system']];
       requests.push(['library','/api/library'],['manifests','/api/manifests']);
+      if(this.page === 'performance') requests.push(['performance','/api/performance']);
       const results = await Promise.allSettled(requests.map(([,path]) => this.api(path)));
       if(generation !== this.generation) return;
       const failures=[];
@@ -184,7 +186,7 @@ class LoosterBoard extends HTMLElement {
         if(result.status==='fulfilled') this[name === 'board' ? 'data' : name]=result.value;
         else failures.push(name+' data unavailable');
       }
-      if(this.data) {for(const k of ['tasks','agents','sessions']) this.data[k] ||= [];this.render();}
+      if(this.data || this.page === 'performance') {if(this.data) for(const k of ['tasks','agents','sessions']) this.data[k] ||= [];this.render();}
       if(this.palette.open) this.renderPalette();
       this.querySelector('#notice').textContent = failures.join(' · ');
       this.querySelector('#sync').textContent = 'Updated ' + new Date().toLocaleTimeString();
@@ -198,9 +200,9 @@ class LoosterBoard extends HTMLElement {
     finally { this.loading = false; if(this.refreshQueued) { this.refreshQueued=false; queueMicrotask(() => this.refresh()); } }
   }
   render() {
-    if (!this.data) return;
+    if (!this.data && this.page !== 'performance') return;
     this.querySelectorAll('nav a').forEach(a => { if(a.hash === '#'+this.page) a.setAttribute('aria-current','page'); else a.removeAttribute('aria-current'); });
-    const other = ['graph','servers','system'].includes(this.page);
+    const other = ['graph','servers','system','performance'].includes(this.page);
     this.board.hidden = other; this.querySelector('#page').hidden = !other;
     this.querySelector('.toolbar').hidden = other && this.page !== 'graph';
     this.querySelectorAll('.board-hint').forEach(hint => hint.hidden = other);
@@ -208,8 +210,8 @@ class LoosterBoard extends HTMLElement {
     this.querySelector('.footer').hidden = this.page === 'graph';
     this.querySelector('#toggle-stages').hidden = other;
     this.querySelector('#toggle-offline-agents').hidden = other;
-    this.querySelector('h1').textContent = this.page === 'graph' ? 'Task graph' : this.page === 'servers' ? 'Servers & agents' : this.page === 'system' ? 'Behaviours' : 'Task list';
-    this.querySelector('main > p').textContent = this.page === 'graph' ? 'Explore tasks by status, tags and search. Planning and todo are shown by default. Animated links show active work, quiet links show past sessions.' : this.page === 'servers' ? 'Live workers, agent coverage, and interrupted sessions.' : this.page === 'system' ? 'How work moves through the factory.' : 'Follow tasks from planning through closure.';
+    this.querySelector('h1').textContent = this.page === 'performance' ? 'Performance' : this.page === 'graph' ? 'Task graph' : this.page === 'servers' ? 'Servers & agents' : this.page === 'system' ? 'Behaviours' : 'Task list';
+    this.querySelector('main > p').textContent = this.page === 'performance' ? 'Task outcomes and reports in UTC.' : this.page === 'graph' ? 'Explore tasks by status, tags and search. Planning and todo are shown by default. Animated links show active work, quiet links show past sessions.' : this.page === 'servers' ? 'Live workers, agent coverage, and interrupted sessions.' : this.page === 'system' ? 'How work moves through the factory.' : 'Follow tasks from planning through closure.';
     if(other) { this.renderPage(); return; }
     const focused = this.board.contains(document.activeElement), q = this.search.value.toLowerCase().trim();
     const tasks = sortTasksByLatestActivity(this.data.tasks.filter(t => [t.name,t.description,t.status,`TSK-${t.id}`,...(t.tags || []),...this.data.sessions.filter(s => s.task_id === t.id).map(s => s.agent)].join(' ').toLowerCase().includes(q)));
@@ -234,7 +236,7 @@ class LoosterBoard extends HTMLElement {
   }
   focus() { const c = [...this.board.querySelectorAll('task-card')].find(c => c.dataset.key === this.selected); c?.querySelector('button').focus({preventScroll:true}); c?.scrollIntoView({block:'nearest',inline:'nearest'}); }
   highlight(id) { this.board.querySelectorAll('task-card').forEach(c => c.classList.toggle('linked',!!id && c.dataset.id === id)); }
-  showHelp() { this.agentInspection = null; this.detailID = null; this.lastG = 0; this.querySelector('#dialog-title').textContent = 'Keyboard shortcuts'; this.panel.innerHTML = '<p><kbd>h</kbd> / <kbd>l</kbd> or left / right: list columns</p><p><kbd>j</kbd> / <kbd>k</kbd> or down / up: tasks; scroll pages and dialogs</p><p><kbd>gg</kbd>: Graph · <kbd>gl</kbd>: List · <kbd>gs</kbd>: Servers · <kbd>gb</kbd>: Behaviours</p><p><kbd>G</kbd>: last task / bottom of page; <kbd>gg</kbd> / <kbd>G</kbd> inside dialogs: top / bottom</p><p><kbd>Enter</kbd>: open task</p><p><kbd>n</kbd>: new task on List or Graph</p><p><kbd>:</kbd>: search everything · <kbd>/</kbd>: filter list or graph · <kbd>r</kbd>: refresh · <kbd>?</kbd>: help</p><p><kbd>Esc</kbd>: close details or clear search</p><p><kbd>Tab</kbd>: move through controls</p>'; this.dialog.showModal(); }
+  showHelp() { this.agentInspection = null; this.detailID = null; this.lastG = 0; this.querySelector('#dialog-title').textContent = 'Keyboard shortcuts'; this.panel.innerHTML = '<p><kbd>h</kbd> / <kbd>l</kbd> or left / right: list columns</p><p><kbd>j</kbd> / <kbd>k</kbd> or down / up: tasks; scroll pages and dialogs</p><p><kbd>gg</kbd>: Graph · <kbd>gl</kbd>: List · <kbd>gs</kbd>: Servers · <kbd>gb</kbd>: Behaviours · <kbd>gp</kbd>: Performance</p><p><kbd>G</kbd>: last task / bottom of page; <kbd>gg</kbd> / <kbd>G</kbd> inside dialogs: top / bottom</p><p><kbd>Enter</kbd>: open task</p><p><kbd>n</kbd>: new task on List or Graph</p><p><kbd>:</kbd>: search everything · <kbd>/</kbd>: filter list or graph · <kbd>r</kbd>: refresh · <kbd>?</kbd>: help</p><p><kbd>Esc</kbd>: close details or clear search</p><p><kbd>Tab</kbd>: move through controls</p>'; this.dialog.showModal(); }
   async open(id,agent = '') { this.agentInspection = null; if(!this.dialog.open) this.returnFocus = document.activeElement; this.detailID = id; this.attachments = []; this.lastG = 0; this.cursor = 0; this.commentCursor = 0; this.comments = new Map(); this.outputs = new Map(); this.logAgent = agent; this.querySelector('#dialog-title').textContent = 'Loading…'; this.panel.textContent = ''; if(!this.dialog.open) this.dialog.showModal(); await this.loadDetail(id); }
   async loadDetail(id) {
     const generation = this.outputs;
@@ -377,7 +379,7 @@ class LoosterBoard extends HTMLElement {
       return;
     }
     this.manifestID = (this.manifests || []).some(m => m.id === this.manifestID) ? this.manifestID : (this.manifests || []).find(m => m.active)?.id || this.manifests?.[0]?.id;
-    const html = this.page === 'servers' ? serversHTML(this.status) : behavioursHTML(this.system,this.library,m => this.memoryHTML(m),this.manifests,this.manifestID,this.scheduleRuns);
+    const html = this.page === 'performance' ? performanceHTML(this.performance) : this.page === 'servers' ? serversHTML(this.status) : behavioursHTML(this.system,this.library,m => this.memoryHTML(m),this.manifests,this.manifestID,this.scheduleRuns);
     if(this.pageHTML !== html) {
       if(panel.dataset.refreshPage !== this.page) { panel.replaceChildren(); panel.dataset.refreshPage = this.page; }
       patchHTML(panel,html); this.pageHTML = html;
@@ -561,7 +563,7 @@ class LoosterBoard extends HTMLElement {
     if (e.target.matches('select')) return;
     if (e.target.matches('input,textarea,[contenteditable]')) { if (e.key === 'Escape') { e.preventDefault(); this.search.value = ''; this.render(); this.focus(); } if (e.key === 'Enter') { e.preventDefault(); this.focus(); } return; }
     if(e.repeat && (e.key === 'g' || this.goPrefix)) { e.preventDefault(); return; }
-    const goPage = {g:'graph',l:'board',s:'servers',b:'system'};
+    const goPage = {g:'graph',l:'board',s:'servers',b:'system',p:'performance'};
     if(this.goPrefix && Date.now()-this.goPrefix < 700) {
       this.goPrefix = 0;
       if(goPage[e.key]) { e.preventDefault(); this.lastG = 0; location.hash = goPage[e.key]; window.scrollTo({top:0}); this.querySelector(`nav a[href="#${goPage[e.key]}"]`)?.focus({preventScroll:true}); return; }
@@ -573,7 +575,7 @@ class LoosterBoard extends HTMLElement {
     if(e.key === 'n' && ['board','graph'].includes(this.page)) { e.preventDefault(); this.openCreate('task'); return; }
     if (e.key === 's' && this.page === 'board') { e.preventDefault(); this.toggleStages(); return; }
     if (e.key === 'Escape') { this.search.value = ''; this.render(); this.focus(); return; }
-    if (['graph','servers','system'].includes(this.page)) {
+    if (['graph','servers','system','performance'].includes(this.page)) {
       this.scrollMotion(e,document.scrollingElement || document.documentElement); return;
     }
     const cols = [...this.board.querySelectorAll('.column')].map(c => [...c.querySelectorAll('task-card')]);
