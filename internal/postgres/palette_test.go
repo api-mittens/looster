@@ -75,7 +75,7 @@ func TestPaletteGlobalRankingBeforeLimit(t *testing.T) {
 	// Newer, fuzzy matches in the SAME stage must not crowd out either the exact
 	// match or the global top fifty. Ordinary column ordering still returns these.
 	_, err = s.Pool.Exec(ctx, `INSERT INTO tasks(name,description,status,created_at)
- SELECT 'nxexexdxlxe '||i,'newer fuzzy','todo',now()+interval '1 day' FROM generate_series(1,90) i;
+ SELECT (CASE WHEN i%2=0 THEN 'needle unrelated verbose task ' ELSE 'nxexexdxlxe ' END)||i,'newer fuzzy','todo',now()+interval '1 day' FROM generate_series(1,90) i;
  INSERT INTO tasks(name,description,status) VALUES ('needle other with a much longer task title','', 'closed'),('unrelated','description-only-token','planning');
  INSERT INTO tags(name,description) VALUES ('tag-only-token','');`)
 	if err == nil {

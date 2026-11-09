@@ -27,7 +27,7 @@ func TestPaletteRelevancePostgresBrowser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.Pool.Exec(ctx, `INSERT INTO tasks(name,description,status,created_at) SELECT 'qxuxaxrxtxzxnxexexdxlxe '||i,'newer fuzzy','todo',now()+interval '1 day' FROM generate_series(1,90) i`)
+	_, err = s.Pool.Exec(ctx, `INSERT INTO tasks(name,description,status,created_at) SELECT (CASE WHEN i%2=0 THEN 'quartzneedle unrelated verbose task ' ELSE 'qxuxaxrxtxzxnxexexdxlxe ' END)||i,'newer fuzzy','todo',now()+interval '1 day' FROM generate_series(1,90) i`)
 	if err != nil {
 		t.Fatal(err)
 	}

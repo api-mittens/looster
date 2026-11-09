@@ -1,8 +1,9 @@
 package web
 
 import (
-	"github.com/api-mittens/looster/internal/app"
 	"net/http"
+
+	"github.com/api-mittens/looster/internal/app"
 )
 
 func paletteTasks(repo Repository, write func(http.ResponseWriter, any, error)) http.HandlerFunc {
