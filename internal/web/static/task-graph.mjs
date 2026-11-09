@@ -132,8 +132,12 @@ export function renderProgressRing(status, radius=30) {
 }
 export function renderTaskSignals(task, radius = 30) {
   if(!task.blocker && !task.question) return '';
-  const edge=radius/Math.sqrt(2),label=[task.blocker?'Historical blocker log':'',task.question?'Historical question log':''].filter(Boolean).join(' and ');
-  return `<text class="tg-task-signal" x="${edge}" y="${-edge}" text-anchor="middle" dominant-baseline="central" role="img" aria-label="${label}"><title>${label}</title>${task.blocker?'⚠️':''}${task.question?'❓':''}</text>`;
+  const edge=radius/Math.sqrt(2),signals=[['blocker','⚠️'],['question','❓']].filter(([kind])=>task[kind]);
+  // Separate paired badges along the tangent, keeping their midpoint on the rim.
+  return signals.map(([kind,emoji],i)=>{
+    const offset=(i-(signals.length-1)/2)*24/Math.sqrt(2),label=`Historical ${kind} log`;
+    return `<g class="tg-task-signal tg-task-signal-${kind}" transform="translate(${edge+offset},${-edge+offset})" role="img" aria-label="${label}"><title>${label}</title><circle class="tg-task-signal-bg" r="10"/><text x="0" y="0" text-anchor="middle" dominant-baseline="central" aria-hidden="true">${emoji}</text></g>`;
+  }).join('');
 }
 export function renderGraph(graph) {
   const esc=escapeHTML, byKey=new Map(graph.nodes.map(n=>[n.key,n]));

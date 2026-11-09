@@ -11,9 +11,78 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/emulation"
+	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 )
+
+func TestGraphSignalBadgesBrowser(t *testing.T) {
+	if os.Getenv("LOOSTER_BROWSER_TEST") != "1" {
+		t.Skip("set LOOSTER_BROWSER_TEST=1")
+	}
+	server := httptest.NewServer(Handler(&testRepo{}))
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	tab, shutdown := newTestBrowser(t, ctx)
+	defer shutdown()
+	if err := chromedp.Run(tab, chromedp.Navigate(server.URL), chromedp.WaitReady("body")); err != nil {
+		t.Fatal(err)
+	}
+	for _, theme := range []string{"light", "dark"} {
+		for _, interaction := range []string{"rest", "hover", "focus"} {
+			var result string
+			x, y := float64(0), float64(0)
+			if interaction == "hover" {
+				x, y = 350, 350
+			}
+			err := chromedp.Run(tab,
+				emulation.SetEmulatedMedia().WithFeatures([]*emulation.MediaFeature{{Name: "prefers-color-scheme", Value: theme}}),
+				chromedp.Evaluate(`window.signalInteraction="`+interaction+`"`, nil),
+				input.DispatchMouseEvent(input.MouseMoved, x, y),
+				chromedp.Evaluate(`(async()=>{
+ const {renderTaskSignals}=await import('/task-graph.mjs');
+ const host=document.createElement('task-agent-graph');document.body.append(host);
+ host.style.cssText='position:fixed;left:100px;top:100px;width:500px;z-index:9999';
+ // Keep the production host CSS, replacing its empty graph after connection.
+ host.innerHTML='<svg viewBox="0 0 500 500"></svg>';
+ const svg=host.querySelector('svg');
+ svg.style.height='500px';
+ const check=(ok,message)=>{if(!ok)throw Error(message);};
+ try {
+ for(const radius of [18,30,54]) for(const blocker of [false,true]) for(const question of [false,true])
+ for(const state of ['', 'tg-working', 'tg-heat-green', 'tg-heat-yellow', 'tg-heat-red', 'tg-working tg-heat-red']) {
+  svg.innerHTML='<g class="tg-node tg-task '+state+'" tabindex="0" role="button" transform="translate(250,250)"><circle class="tg-body" r="'+radius+'"/>'+renderTaskSignals({blocker,question},radius)+'</g>';
+  const node=svg.firstElementChild,badges=[...node.querySelectorAll('.tg-task-signal')];
+  check(badges.length===Number(blocker)+Number(question),'signal combination');
+  if(window.signalInteraction==='focus') {node.focus();check(node.matches(':focus-visible'),'real focus-visible state');}
+  if(window.signalInteraction==='hover') {await new Promise(requestAnimationFrame);check(node.matches(':hover'),'real hover state');}
+  for(const badge of badges) {
+   const circle=badge.querySelector('circle'),s=getComputedStyle(circle),text=badge.querySelector('text'),b=circle.getBoundingClientRect();
+   const expected=matchMedia('(prefers-color-scheme: dark)').matches?['rgb(37, 42, 52)','rgb(228, 228, 231)']:['rgb(255, 255, 255)','rgb(24, 24, 27)'];
+   check(s.fill===expected[0]&&s.stroke===expected[1]&&s.strokeWidth==='1px'&&s.fillOpacity==='1'&&s.opacity==='1','visible contrast circle '+state+' '+s.fill+' '+s.stroke);
+   check(b.width>0&&Math.abs(b.width-b.height)<.01&&circle.r.baseVal.value===10,'visible circular geometry');
+   check(s.pointerEvents==='all'&&getComputedStyle(text).pointerEvents==='none'&&getComputedStyle(text).fontSize==='14px','circle delegates pointer input, text remains decorative');
+   check(badge.getAttribute('role')==='img'&&badge.getAttribute('aria-label')===badge.querySelector('title').textContent&&!badge.hasAttribute('tabindex'),'accessible signal');
+  }
+  if(badges.length===2) {
+   const [a,b]=badges.map(el=>el.querySelector('circle').getBoundingClientRect());
+   check(Math.hypot(a.x-b.x,a.y-b.y)>a.width+1,'paired circles must not overlap');
+  }
+ }
+ return 'ok';
+ }catch(e){return e.message;}finally{host.remove();}
+})()`, &result, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result != "ok" {
+				t.Fatalf("%s/%s: %s", theme, interaction, result)
+			}
+		}
+	}
+}
 
 func TestSessionLogLinksBrowser(t *testing.T) {
 	if os.Getenv("LOOSTER_BROWSER_TEST") != "1" {
@@ -181,10 +250,23 @@ func TestSessionLogsBrowser(t *testing.T) {
 	if !valid {
 		t.Fatal("refresh duplicated timeline entries")
 	}
-	if err := chromedp.Run(tab, chromedp.Evaluate(`document.querySelector('looster-board').dialog.close();location.hash='#graph'`, nil), chromedp.WaitVisible(`.tg-task-signal`), chromedp.Evaluate(`(()=>{const el=document.querySelector('task-agent-graph');el.settle();const m=el.querySelector('[data-key="task:1"] .tg-task-signal'),x=+m.getAttribute('x'),y=+m.getAttribute('y');return el.graph.edges.length===0&&m.textContent.includes('⚠️')&&x>0&&y<0&&Math.abs(Math.hypot(x,y)-30)<.001;})()`, &valid)); err != nil {
+	if err := chromedp.Run(tab, chromedp.Evaluate(`document.querySelector('looster-board').dialog.close();location.hash='#graph'`, nil), chromedp.WaitVisible(`.tg-task-signal`), chromedp.Evaluate(`(()=>{const el=document.querySelector('task-agent-graph');el.settle();const m=el.querySelector('[data-key="task:1"] .tg-task-signal'),x=m.transform.baseVal.getItem(0).matrix.e,y=m.transform.baseVal.getItem(0).matrix.f;return el.graph.edges.length===0&&m.textContent.includes('⚠️')&&x>0&&y<0&&Math.abs(Math.hypot(x,y)-30)<.001;})()`, &valid)); err != nil {
 		t.Fatal(err)
 	}
 	if !valid {
 		t.Fatal("graph log marker must sit on task circle top-right edge even without sessions")
+	}
+	var point []float64
+	if err := chromedp.Run(tab, chromedp.ScrollIntoView(`.tg-task-signal-bg`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := chromedp.Run(tab, chromedp.Evaluate(`(()=>{const b=document.querySelector('.tg-task-signal-bg').getBoundingClientRect();return [b.x+b.width/2,b.y+b.height/2];})()`, &point)); err != nil {
+		t.Fatal(err)
+	}
+	if err := chromedp.Run(tab, chromedp.MouseClickXY(point[0], point[1]), chromedp.WaitVisible(`#task-comments .session-log`)); err != nil {
+		t.Fatalf("clicking signal circle must open its task: %v", err)
+	}
+	if err := chromedp.Run(tab, chromedp.Evaluate(`document.querySelector('looster-board').dialog.close()`, nil), chromedp.Focus(`task-agent-graph [data-key="task:1"]`), chromedp.Evaluate(`document.querySelector('task-agent-graph [data-key="task:1"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))`, nil), chromedp.WaitVisible(`#task-comments .session-log`)); err != nil {
+		t.Fatalf("task must remain keyboard actionable with signals: %v", err)
 	}
 }
