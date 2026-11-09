@@ -59,12 +59,21 @@ not the attachment prefix or another installation's lake data path.
 
 ```sh
 # Configure the normal application PG environment and LOOSTER_S3_* first.
+# Defaults to s3://<resolved configured s3.bucket>/ducklake/:
+looster configure storage --ducklake
+# Explicit dedicated prefix override:
 looster configure storage --ducklake \
   --ducklake-database ducklake \
   --ducklake-data-path s3://my-bucket/looster-ducklake/default/
 # Optional executable override:
 #   --duckdb-binary /opt/duckdb/duckdb
 ```
+
+Omitting `--ducklake-data-path` uses the resolved configured `s3.bucket`, including
+`LOOSTER_S3_BUCKET`. A missing or invalid bucket fails before provisioning.
+An explicit path is used unchanged and still validated against the configured
+bucket. An explicitly empty path fails instead of selecting the default. All
+DuckLake settings are validated before database creation or migrations.
 
 The catalog must differ from the resolved application database. The S3 bucket
 must already exist. Metadata attachment initializes the catalog, but does **not**

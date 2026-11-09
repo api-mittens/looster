@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"regexp"
+	"strings"
 
 	"github.com/api-mittens/looster/internal/ducklake"
 	"github.com/api-mittens/looster/internal/namespace"
@@ -34,6 +37,10 @@ func (a *application) configureCommandWith(actions storageActions) *cobra.Comman
 	var enabled bool
 	storage := &cobra.Command{
 		Use: "storage", Short: "Create missing databases and migrate storage, optionally initialize DuckLake",
+		Example: "  # Default: s3://<configured s3.bucket>/ducklake/\n" +
+			"  looster configure storage --ducklake\n" +
+			"  # Explicit dedicated prefix override:\n" +
+			"  looster configure storage --ducklake --ducklake-data-path s3://my-bucket/custom-prefix/",
 		Args: cobra.NoArgs, Annotations: map[string]string{"local": "true", "human": "true"},
 		RunE: func(c *cobra.Command, _ []string) error {
 			ns := a.v.GetString("namespace")
@@ -52,13 +59,23 @@ func (a *application) configureCommandWith(actions storageActions) *cobra.Comman
 				if catalog == "" {
 					return errors.New("--ducklake-database must not be empty")
 				}
+				resolvedPath := dataPath
+				if !c.Flags().Changed("ducklake-data-path") {
+					bucket := a.v.GetString("s3.bucket")
+					if !validDuckLakeBucket(bucket) {
+						return errors.New("DuckLake default data path requires a valid configured s3.bucket; no storage changes made")
+					}
+					resolvedPath = "s3://" + bucket + "/ducklake/"
+				} else if dataPath == "" {
+					return errors.New("--ducklake-data-path must not be empty")
+				}
 				catalogName = catalog
 				connection, err := actions.connection(a.v.GetString("database_url"), catalog)
 				if err != nil {
 					return err
 				}
 				lake = ducklake.Config{
-					Binary: binary, CatalogConnection: connection, Namespace: ns, DataPath: dataPath,
+					Binary: binary, CatalogConnection: connection, Namespace: ns, DataPath: resolvedPath,
 					S3: objectstore.Config{
 						Endpoint: a.v.GetString("s3.endpoint"), Region: a.v.GetString("s3.region"), Bucket: a.v.GetString("s3.bucket"),
 						AccessKey: a.v.GetString("s3.access_key"), SecretKey: a.v.GetString("s3.secret_key"), SessionToken: a.v.GetString("s3.session_token"),
@@ -87,8 +104,24 @@ func (a *application) configureCommandWith(actions storageActions) *cobra.Comman
 	storage.Flags().StringVar(&database, "database", "", "Application database override (default: currently configured database, or looster for fresh installs)")
 	storage.Flags().BoolVar(&enabled, "ducklake", false, "Explicitly opt in to a separate DuckLake catalog and S3 data path")
 	storage.Flags().StringVar(&catalog, "ducklake-database", "ducklake", "Separate PostgreSQL catalog database (requires --ducklake)")
-	storage.Flags().StringVar(&dataPath, "ducklake-data-path", "", "Dedicated s3://bucket/prefix/ for DuckLake data (required with --ducklake)")
+	storage.Flags().StringVar(&dataPath, "ducklake-data-path", "", "Dedicated S3 data path (default: s3://<configured s3.bucket>/ducklake/; requires --ducklake)")
 	storage.Flags().StringVar(&binary, "duckdb-binary", "duckdb", "Installed pinned DuckDB CLI executable (requires --ducklake)")
 	root.AddCommand(storage)
 	return root
+}
+
+var duckLakeBucketLabel = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
+
+// Check bucket syntax before interpolating configuration into an S3 URL. Do not
+// trim or otherwise rewrite it, which could silently select a different bucket.
+func validDuckLakeBucket(bucket string) bool {
+	if len(bucket) < 3 || len(bucket) > 63 || net.ParseIP(bucket) != nil {
+		return false
+	}
+	for _, label := range strings.Split(bucket, ".") {
+		if !duckLakeBucketLabel.MatchString(label) {
+			return false
+		}
+	}
+	return true
 }
