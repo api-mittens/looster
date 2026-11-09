@@ -233,6 +233,11 @@ func TestDisposableIntegration(t *testing.T) {
 	if os.Getenv("LOOSTER_DUCKLAKE_DISPOSABLE_PROBE") != "yes" {
 		t.Skip("requires explicitly disposable PostgreSQL catalog, S3 prefix and pinned DuckDB CLI/extensions")
 	}
+	for _, key := range []string{"LOOSTER_TEST_DUCKDB", "LOOSTER_TEST_DUCKLAKE_LIBPQ", "LOOSTER_TEST_DUCKLAKE_DATA_PATH", "LOOSTER_TEST_S3_ACCESS_KEY", "LOOSTER_TEST_S3_SECRET_KEY"} {
+		if os.Getenv(key) == "" {
+			t.Fatalf("disposable integration requires explicit %s", key)
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	c := Config{Binary: os.Getenv("LOOSTER_TEST_DUCKDB"), CatalogConnection: os.Getenv("LOOSTER_TEST_DUCKLAKE_LIBPQ"), DataPath: os.Getenv("LOOSTER_TEST_DUCKLAKE_DATA_PATH"), S3: objectstore.Config{Endpoint: os.Getenv("LOOSTER_TEST_S3_ENDPOINT"), Region: os.Getenv("LOOSTER_TEST_S3_REGION"), AccessKey: os.Getenv("LOOSTER_TEST_S3_ACCESS_KEY"), SecretKey: os.Getenv("LOOSTER_TEST_S3_SECRET_KEY"), SessionToken: os.Getenv("LOOSTER_TEST_S3_SESSION_TOKEN")}}

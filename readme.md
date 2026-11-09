@@ -94,6 +94,16 @@ mise exec -- looster --help
 This alternative builds from source and requires Go. The installation guide covers
 shared config, private `mise.local.toml` overrides, version pinning, and shell setup.
 
+## Optional DuckLake storage
+
+Use human-only `looster configure storage` to create missing application databases
+and apply migrations while preserving your configured/custom database name.
+DuckLake is disabled unless explicitly requested with `--ducklake`, uses a separate
+PostgreSQL catalog and dedicated S3 prefix, and does not move existing data.
+See [storage configuration](docs/storage.md) for opt-in prerequisites, database
+selection, retry safety and disposable S3 write/reopen verification.
+The existing `looster db migrate` command remains migration-only.
+
 ## Quick start
 
 Install and authenticate [Jcode](https://github.com/1jehuang/jcode) separately. Install Docker with Compose for local
