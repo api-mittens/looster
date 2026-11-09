@@ -1,7 +1,8 @@
 # Native release licensing inventory
 
-`go run ./scripts/licenses` inventories the native test graph and all six release
-build graphs with cgo enabled. Windows ARM64 uses `duckdb_use_static_lib`, not a
+`go run ./scripts/licenses` inventories both test and release build graphs for
+all six platforms with cgo enabled. Platform-specific test memberships must not
+depend on the machine that generated the notices. Windows ARM64 uses `duckdb_use_static_lib`, not a
 nonexistent upstream prebuilt archive. `-check` compares the generated aggregate
 with `THIRD_PARTY_NOTICES.md`.
 
@@ -41,6 +42,10 @@ or LLVM's libc++, libunwind and compiler-rt Apache/LLVM-exception notices.
 These runtime notices are additional to the source-pinned DuckDB inventory.
 
 Only operating-system native dependencies are accepted in release executables.
+Linux uses `static-cxx-cc.sh` to replace upstream's explicit `-lstdc++` with the
+compiler's static archive. GCC's `-static-libstdc++` alone does not replace that
+explicit library argument. Windows AMD64 uses UCRT64, as required by the official
+driver installation instructions, and upstream's `--static` link directive.
 DuckDB DLLs/shared objects and separately installed C++/pthread runtimes fail the
 artifact inspection. This means the engine is statically embedded, not that the
 entire executable is independent of its platform C runtime or system frameworks.

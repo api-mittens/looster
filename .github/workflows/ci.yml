@@ -20,7 +20,8 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       CGO_ENABLED: '1'
-      CGO_LDFLAGS: '-static-libstdc++ -static-libgcc'
+      CC: '${{ github.workspace }}/scripts/static-cxx-cc.sh'
+      CGO_LDFLAGS: '-static-libgcc'
       LOOSTER_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/looster_test?sslmode=disable
     services:
       postgres:
@@ -44,6 +45,7 @@ jobs:
       - name: Verify modules and license inventory
         run: |
           go mod verify
+          bash scripts/static-cxx-cc_test.sh
           bash scripts/check-native-deps_test.sh
           bash scripts/package-runtime-notices_test.sh
           go run ./scripts/licenses -check
@@ -95,7 +97,7 @@ jobs:
           - {os: linux, arch: arm64, runner: ubuntu-24.04-arm, shell: bash}
           - {os: darwin, arch: amd64, runner: macos-15-intel, shell: bash}
           - {os: darwin, arch: arm64, runner: macos-15, shell: bash}
-          - {os: windows, arch: amd64, runner: windows-2025, shell: 'msys2 {0}', msystem: MINGW64, packages: 'mingw-w64-x86_64-gcc mingw-w64-x86_64-binutils zip'}
+          - {os: windows, arch: amd64, runner: windows-2025, shell: 'msys2 {0}', msystem: UCRT64, packages: 'mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-binutils zip'}
           - {os: windows, arch: arm64, runner: windows-11-arm, shell: 'msys2 {0}', msystem: CLANGARM64, packages: 'mingw-w64-clang-aarch64-toolchain mingw-w64-clang-aarch64-cmake mingw-w64-clang-aarch64-ninja mingw-w64-clang-aarch64-python git zip'}
     runs-on: ${{ matrix.runner }}
     defaults:
@@ -117,10 +119,11 @@ jobs:
           update: true
           install: ${{ matrix.packages }}
           path-type: inherit
-      - name: Link C++ runtime into Linux and Windows executables
-        if: matrix.os != 'darwin'
+      - name: Force Linux explicit C++ libraries to static archives
+        if: matrix.os == 'linux'
         run: |
-          echo 'CGO_LDFLAGS=-static-libstdc++ -static-libgcc' >> "$GITHUB_ENV"
+          echo "CC=$GITHUB_WORKSPACE/scripts/static-cxx-cc.sh" >> "$GITHUB_ENV"
+          echo 'CGO_LDFLAGS=-static-libgcc' >> "$GITHUB_ENV"
       - name: Build matching static DuckDB for Windows ARM64
         if: matrix.os == 'windows' && matrix.arch == 'arm64'
         run: bash scripts/build-duckdb-windows-arm64.sh
