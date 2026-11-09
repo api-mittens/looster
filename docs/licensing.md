@@ -9,7 +9,7 @@ The supplied project logo is treated as project artwork, not as a third-party de
 The checked-in [third-party notices](../THIRD_PARTY_NOTICES.md) contain exact module
 versions, upstream source locations, copyright notices, and full license texts.
 The inventory covers the Go packages used by the application and its tests,
-platform-specific packages for all six release targets, the Go toolchain, and the
+platform-specific packages for all four Linux/macOS release targets, the Go toolchain, and the
 complete bundled D3 distribution, including its transitive components. Test-only
 libraries are identified separately and are not linked into production binaries.
 Additional upstream notices may be retained conservatively even where the relevant

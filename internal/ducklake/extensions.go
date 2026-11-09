@@ -37,7 +37,7 @@ func (l *Lake) bootstrapHTTPFS(ctx context.Context, directory string) error {
 		return fail()
 	}
 	switch platform {
-	case "osx_arm64", "osx_amd64", "linux_amd64", "linux_arm64", "linux_amd64_gcc4", "windows_amd64", "windows_amd64_mingw", "windows_arm64":
+	case "osx_arm64", "osx_amd64", "linux_amd64", "linux_arm64", "linux_amd64_gcc4":
 	default:
 		return operationError("unsupported official extension platform")
 	}

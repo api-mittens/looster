@@ -21,7 +21,7 @@ fi
 case "$(uname -s)" in
   Linux) os=linux ;;
   Darwin) os=darwin ;;
-  *) fail 'This installer supports Linux and macOS. Download Windows binaries from GitHub Releases.' ;;
+  *) fail 'Only Linux and macOS are supported. Windows binaries are no longer published.' ;;
 esac
 case "$(uname -m)" in
   x86_64|amd64) arch=amd64 ;;

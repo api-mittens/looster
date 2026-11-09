@@ -52,6 +52,9 @@ not accepted. On first opt-in, Looster installs the required signed `ducklake`,
 into its user cache, then loads and checks their exact build IDs. PostgreSQL-only
 commands never initialize a DuckLake catalog or download extensions.
 
+The embedded-engine release supports Linux and macOS on amd64 and arm64.
+Windows support has been removed, including both Windows release archives.
+
 Every opened core database has a **256 MiB DuckDB buffer-manager memory limit**
 set at connection creation. This is not a total-process RSS limit: native
 allocations and some query operators can use memory outside the buffer manager.

@@ -4,7 +4,8 @@ Building Looster now requires `CGO_ENABLED=1` and a C/C++ toolchain because the
 official DuckDB Go driver statically embeds its native engine. `CGO_ENABLED=0`
 builds are no longer supported, including for PostgreSQL-only installations.
 No DuckDB executable or system DuckDB library is required. See
-[release platform details](releasing.md) for the six-target native build matrix.
+[release platform details](releasing.md) for the four-target Linux/macOS native
+build matrix. Windows is no longer a supported build or release platform.
 
 [Back to README](../readme.md) · [Architecture](architecture.md) · [Releasing](releasing.md)
 
