@@ -5,6 +5,7 @@ cd "$(dirname "$0")/.."
 : "${JCODE_SCRATCH_DIR:=${TMPDIR:-/tmp}/looster-test-scratch}"
 export JCODE_SCRATCH_DIR
 mkdir -p "$JCODE_SCRATCH_DIR"
+JCODE_SCRATCH_DIR=$(cd "$JCODE_SCRATCH_DIR" && pwd)
 runner=$(mktemp -d "$JCODE_SCRATCH_DIR/ducklake-runner.XXXXXX")
 pid=
 cleanup() {

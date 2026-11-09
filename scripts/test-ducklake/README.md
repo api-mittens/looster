@@ -16,7 +16,9 @@ It runs these uncached, explicitly enabled test groups in sequence:
 
 The latter writes real Parquet through the embedded engine, closes that engine,
 reopens the PostgreSQL catalog in a fresh engine, reads the persisted row, and
-cleans up. Nothing needs Docker, MinIO, application configuration or an existing
+cleans up. The runner also requires observed S3 PUT and ranged-read traffic,
+so a skipped or metadata-only test cannot produce a successful harness result.
+Nothing needs Docker, MinIO, application configuration or an existing
 PostgreSQL database. Ambient `PG*`, `AWS*`, and `LOOSTER*` connection settings are
 not forwarded to either database tools or tests. Test endpoints and credentials
 are generated locally and supplied explicitly. The only runner override is

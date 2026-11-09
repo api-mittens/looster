@@ -131,6 +131,10 @@ func run() (result error) {
 			return err
 		}
 	}
+	requests := s3.Requests()
+	if requests["PUT"] == 0 || requests["RANGE"] == 0 {
+		return fmt.Errorf("disposable test did not exercise an object write and ranged read: %v", requests)
+	}
 	return nil
 }
 
