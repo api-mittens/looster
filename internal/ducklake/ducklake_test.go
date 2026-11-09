@@ -49,7 +49,7 @@ func TestPrepare(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"version() = 'v1.5.2'", "allow_unsigned_extensions=false", "LOAD httpfs", "INSTALL postgres FROM 'https://extensions.duckdb.org'", "INSTALL ducklake FROM 'https://extensions.duckdb.org'", "LOAD ducklake", "CREATE TEMPORARY SECRET", "PROVIDER config", "URL_STYLE 'path'", "USE_SSL false", "REGION 'us-east-1'", "SESSION_TOKEN 'token-canary'", "passfile=''/dev/null''", "DATA_INLINING_ROW_LIMIT 0", DuckLakeExtensionVersion, PostgresExtensionVersion, HTTPFSExtensionVersion} {
+	for _, want := range []string{"version() = 'v1.5.2'", "allow_unsigned_extensions=false", "LOAD httpfs", "INSTALL postgres FROM 'https://extensions.duckdb.org'", "INSTALL ducklake FROM 'https://extensions.duckdb.org'", "LOAD ducklake", "CREATE TEMPORARY SECRET", "PROVIDER config", "URL_STYLE 'path'", "USE_SSL false", "REGION 'us-east-1'", "SESSION_TOKEN 'token-canary'", "passfile=''" + os.DevNull + "''", "DATA_INLINING_ROW_LIMIT 0", DuckLakeExtensionVersion, PostgresExtensionVersion, HTTPFSExtensionVersion} {
 		if !strings.Contains(p, want) {
 			t.Errorf("missing %s", want)
 		}
@@ -75,7 +75,7 @@ func TestConnectionPreserved(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(p, quote("postgres:"+c.CatalogConnection+" passfile='/dev/null'")) {
+		if !strings.Contains(p, quote("postgres:"+c.CatalogConnection+" passfile='"+os.DevNull+"'")) {
 			t.Fatal("libpq settings changed")
 		}
 	}
@@ -251,6 +251,10 @@ func TestOfficialExtensions(t *testing.T) {
 		}
 	}
 	rows.Close()
+	incompatible := strings.Replace(bootstrap, DuckLakeExtensionVersion, "incompatible-canary", 1)
+	if err := l.Exec(ctx, incompatible); err == nil || strings.Contains(err.Error(), "canary") {
+		t.Fatalf("incompatible loaded extension did not fail safely: %v", err)
+	}
 	p, _ = prepare(config())
 	prefix := strings.Split(p, "ATTACH 'ducklake:")[0]
 	if err := l.Exec(ctx, prefix); err != nil {

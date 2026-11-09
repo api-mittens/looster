@@ -98,6 +98,12 @@ specify a port for every host if any host has an explicit port. Pgx-only pool
 parameters and unsupported connector options must be removed from the bootstrap
 connection string, while retaining the same server, database and TLS policy.
 These restrictions affect DuckLake opt-in only, not ordinary PostgreSQL commands.
+The embedded connector does not mutate process-wide `PG*` variables. Standard
+resolved connection fields override their environment defaults. An ambient libpq
+setting that cannot be represented faithfully is rejected before provisioning,
+with its variable name only, rather than silently changing TLS or authentication.
+Password-file lookup is explicitly disabled for DuckLake. Keep credentials in
+the resolved connection environment, not `.pgpass` or service profiles.
 
 ### Pinned engine and extensions
 

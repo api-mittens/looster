@@ -242,7 +242,7 @@ func prepare(c Config) (string, error) {
 		"LOAD httpfs;\nINSTALL postgres FROM 'https://extensions.duckdb.org'; LOAD postgres;\nINSTALL ducklake FROM 'https://extensions.duckdb.org'; LOAD ducklake;\n" +
 		"SELECT CASE WHEN (SELECT count(*) FROM duckdb_extensions() WHERE loaded AND ((extension_name='ducklake' AND extension_version='" + DuckLakeExtensionVersion + "') OR (extension_name='postgres_scanner' AND extension_version='" + PostgresExtensionVersion + "') OR (extension_name='httpfs' AND extension_version='" + HTTPFSExtensionVersion + "'))) = 3 THEN true ELSE error('extension version mismatch') END;\n" +
 		"CREATE TEMPORARY SECRET looster_s3 (TYPE s3, PROVIDER config, KEY_ID " + quote(s.AccessKey) + ", SECRET " + quote(s.SecretKey) + ", SESSION_TOKEN " + quote(s.SessionToken) + ", REGION " + quote(s.Region) + ", URL_STYLE 'path', SCOPE " + quote(c.DataPath) + endpoint + ");\n" +
-		"CREATE TEMPORARY SECRET looster_lake (TYPE ducklake, METADATA_PATH " + quote("postgres:"+c.CatalogConnection+" passfile='/dev/null'") + ", DATA_PATH " + quote(c.DataPath) + ");\n" +
+		"CREATE TEMPORARY SECRET looster_lake (TYPE ducklake, METADATA_PATH " + quote("postgres:"+c.CatalogConnection+" passfile='"+os.DevNull+"'") + ", DATA_PATH " + quote(c.DataPath) + ");\n" +
 		"ATTACH 'ducklake:looster_lake' AS lake (DATA_INLINING_ROW_LIMIT 0, OVERRIDE_DATA_PATH false);\n", nil
 }
 

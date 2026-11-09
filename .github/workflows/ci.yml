@@ -64,6 +64,18 @@ jobs:
           LOOSTER_BROWSER_TEST: '1'
           LOOSTER_PRODUCTION_TEST: '1'
         run: go test -count=1 -timeout=10m ./...
+      - name: Verify embedded DuckLake with isolated PostgreSQL and S3 fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          pg_bin=/usr/lib/postgresql/16/bin
+          if [[ ! -x "$pg_bin/initdb" ]]; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends postgresql-16
+          fi
+          export LOOSTER_TEST_PG_BIN="$pg_bin"
+          export JCODE_SCRATCH_DIR="$RUNNER_TEMP/ducklake-fixtures"
+          bash scripts/test-ducklake.sh
       - name: Test incremental lint diagnostic comparison
         working-directory: scripts/lint-audit
         run: go test ./...
