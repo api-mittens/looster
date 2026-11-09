@@ -38,9 +38,11 @@ The release matrix is:
 | --- | --- | --- |
 | `linux` | `amd64`, `arm64` | `.tar.gz` |
 | `darwin` | `amd64`, `arm64` | `.tar.gz` |
-| `windows` | `amd64`, `arm64` | `.zip` |
 
-Archives contain the platform's executable (`looster` or `looster.exe`). The
+Windows is not supported. CI and release publication cover exactly these four
+Linux and macOS targets.
+
+Archives contain the platform's `looster` executable. The
 release also includes checksums for the archives so downloads can be verified.
 The dashboard and migrations are embedded, so users need no Go toolchain to run
 the release binary. Each archive also includes Looster's `LICENSE`, the complete
@@ -61,37 +63,18 @@ or framework static. No `duckdb_use_lib` build is publishable.
 | Linux arm64 | Ubuntu 24.04 ARM | Official version-pinned prebuilt static archive |
 | macOS amd64 | macOS 15 Intel | Official version-pinned prebuilt static archive |
 | macOS arm64 | macOS 15 ARM | Official version-pinned prebuilt static archive |
-| Windows amd64 | Windows 2025, MSYS2 shell with checksum-pinned GCC 14.2.0 POSIX/SEH/UCRT toolchain | Official version-pinned prebuilt static archive |
-| Windows arm64 | Windows 11 ARM, MSYS2 CLANGARM64 | Source-pinned custom static archive with `duckdb_use_static_lib` |
-
-Windows ARM64 has no upstream prebuilt Go archive. Its explicit recipe is
-`scripts/build-duckdb-windows-arm64.sh`, using the same exact DuckDB source as
-the pinned driver and including the generated extension loader. It must compile,
-link, execute the native tests, and acquire matching **signed** extensions on
-that native runner before the target is release-ready. A source recipe alone is
-not evidence of support. Unavailable signed extensions or any failing target
-block the entire six-artifact release, rather than silently omitting Windows ARM64.
-
-**Current Windows release blocker:** the pinned official Windows AMD64 core uses
-`windows_amd64_mingw`, for which upstream explicitly excludes the required
-PostgreSQL extension. The CLANGARM64 source recipe has the distinct
-`windows_arm64_mingw` C++ ABI, for which all three required extension artifacts
-are unavailable. MSVC extension artifacts cannot be substituted by overriding
-the platform identity. These targets are not release-ready, even when core
-compilation and CLI smoke tests pass. See the
-[exact source and artifact evidence](../scripts/licenses/windows-mingw-postgres-blocker.md)
-and the additional source/static-library work required to resolve them. The
-six-target release gate intentionally remains blocking.
 
 Every native build runs `scripts/release-archive.sh`, which inspects runtime
-imports with `readelf`, `otool` or `objdump`. Unbundled DuckDB/C++/pthread
+imports with `readelf` or `otool`. Unbundled DuckDB/C++/pthread
 libraries are rejected. System C libraries/frameworks are allowed. Linux builds
 use the GNU/glibc environment, not musl or Alpine, and statically link the C++
-runtime. Windows runtime imports must be system DLLs only. The resulting binary
+runtime. The resulting binary
 runs `--help`, and engine lifecycle and cold-cache signed extension tests run
 without a host DuckDB CLI. CI also runs an isolated PostgreSQL/S3 write/reopen
-harness, never production catalog cleanup. All six native jobs run on PRs as
-well as tags, and release publication requires all six archives.
+harness, never production catalog cleanup. All four native jobs run on PRs as
+well as tags, and release publication requires exactly all four archives.
+`scripts/check-release-archives.sh` rejects missing, empty or unexpected files
+before checksumming the exact four archive byte streams.
 
 Archives retain native engine notices, runtime-specific compiler library notices,
 and the existing HCL source ZIP. See
@@ -102,12 +85,12 @@ inside the release binary. First-use networking and offline cache limitations
 are documented in [storage](storage.md).
 
 Before publishing, record actual native CI results for this commit. A local
-macOS ARM64 build validates only that platform, not the other five. Never bypass
+macOS ARM64 build validates only that platform, not the other three. Never bypass
 failed signed-extension, linking, dependency, or disposable write/reopen gates.
 
 ## Verify the published release
 
-- Confirm CI tests passed before the release builds, all six archives exist, and
+- Confirm CI tests passed before the release builds, all four archives exist, and
   every archive has a matching checksum entry.
 - Download and verify an archive, extract it, and run `looster --help` and
   `looster licenses`. Check the MIT/dependency notices and the HCL source archive.

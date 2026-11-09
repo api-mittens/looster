@@ -67,16 +67,24 @@ func TestPlatformTestInventoryIsHostIndependent(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
+	for _, module := range []string{
+		"github.com/duckdb/duckdb-go/v2@v2.10502.0",
+		"github.com/duckdb/duckdb-go-bindings@v0.10502.0",
+	} {
+		if !strings.Contains(text, "## "+module+"\n") {
+			t.Errorf("missing shared driver module license %q", module)
+		}
+	}
 	if strings.Contains(text, "Inventories: native tests") || strings.Contains(text, ", native tests") {
 		t.Fatal("host-dependent native test membership reintroduced")
 	}
-	for _, target := range []string{"darwin/amd64", "darwin/arm64", "linux/amd64", "linux/arm64", "windows/amd64"} {
+	for _, target := range []string{"darwin/amd64", "darwin/arm64", "linux/amd64", "linux/arm64"} {
 		expected := "Inventories: " + target + ", " + target + " tests."
 		if !strings.Contains(text, expected) {
 			t.Errorf("missing deterministic platform binding membership %q", expected)
 		}
 	}
-	if !strings.Contains(text, "windows/arm64 tests") {
-		t.Fatal("custom static target test graph omitted")
+	if strings.Contains(text, "windows/") || strings.Contains(text, "github.com/duckdb/duckdb-go-bindings/windows-") {
+		t.Fatal("unsupported Windows release graph inventoried")
 	}
 }

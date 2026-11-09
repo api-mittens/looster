@@ -4,7 +4,7 @@ The upstream static archives include TPC benchmark extensions. Their restricted 
 
 ## DuckDB v1.5.2 native static engine
 
-Usage: **build**, all six release targets. Official duckdb-go/v2 v2.10502.0 uses bindings v0.10502.0. Five targets use upstream prebuilt archives. Windows arm64 builds the same source with ICU, JSON, Parquet, Autocomplete, TPC-H and TPC-DS statically linked. Source: https://github.com/duckdb/duckdb/tree/8a5851971fae891f292c2714d86046ee018e9737
+Usage: **build**, all four release targets (linux and darwin, amd64 and arm64). Official duckdb-go/v2 v2.10502.0 uses bindings v0.10502.0. All four targets use upstream prebuilt static archives, including their bundled extension libraries. Source: https://github.com/duckdb/duckdb/tree/8a5851971fae891f292c2714d86046ee018e9737
 
 Conservative source inventory includes DuckDB LICENSE, all third_party and extension notices. These native notices are additional to Go module licenses. Runtime-downloaded extensions are not part of the release archive and retain their own licensing.
 

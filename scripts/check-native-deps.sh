@@ -15,11 +15,6 @@ case "$os" in
     printf '%s\n' "$dependencies"
     unexpected=$(printf '%s\n' "$dependencies" | tail -n +2 | awk '{print $1}' | grep -Ev '^(/usr/lib/|/System/Library/)' || true)
     ;;
-  windows)
-    dependencies=$("${OBJDUMP:-objdump}" -p "$binary")
-    printf '%s\n' "$dependencies"
-    unexpected=$(printf '%s\n' "$dependencies" | awk '/DLL Name:/ {print tolower($3)}' | grep -Ev '^(api-ms-win-.*|kernel32|ntdll|user32|advapi32|rstrtmgr|ws2_32|wsock32|bcrypt|crypt32|secur32|shell32|ole32|oleaut32|version|shlwapi|msvcrt|ucrtbase|iphlpapi|userenv|normaliz|setupapi|winmm|gdi32)\.dll$' || true)
-    ;;
   *) echo "Unsupported OS: $os" >&2; exit 1 ;;
 esac
 if [[ -n "$unexpected" ]]; then

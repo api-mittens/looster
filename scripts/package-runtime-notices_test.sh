@@ -3,48 +3,45 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d "${JCODE_SCRATCH_DIR:-${TMPDIR:-/tmp}}/runtime-notices.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
-mkdir -p "$tmp/tools" "$tmp/stage"
-for compiler in clang gcc; do
-  cat > "$tmp/tools/$compiler" <<'MOCK'
+mkdir -p "$tmp/tools" "$tmp/stage" "$tmp/fixtures"
+real_cp=$(command -v cp)
+export RUNTIME_NOTICE_REAL_CP="$real_cp" RUNTIME_NOTICE_FIXTURES="$tmp/fixtures"
+printf 'fixture GCC copyright including runtime exception\n' > "$tmp/fixtures/copyright"
+printf 'fixture GNU GPL version 3\n' > "$tmp/fixtures/GPL-3"
+cat > "$tmp/tools/g++" <<'MOCK'
 #!/usr/bin/env bash
-echo 'fixture compiler version'
+case "$1" in
+  -dumpversion) echo 14.2.0 ;;
+  --version) echo 'fixture g++ 14.2.0' ;;
+  *) exit 1 ;;
+esac
 MOCK
-  chmod +x "$tmp/tools/$compiler"
+cat > "$tmp/tools/cp" <<'MOCK'
+#!/usr/bin/env bash
+if [[ $1 == -L ]]; then shift; fi
+case "$1" in
+  /usr/share/doc/gcc-14-base/copyright) source="$RUNTIME_NOTICE_FIXTURES/copyright" ;;
+  /usr/share/common-licenses/GPL-3) source="$RUNTIME_NOTICE_FIXTURES/GPL-3" ;;
+  *) echo "unexpected runtime notice source: $1" >&2; exit 1 ;;
+esac
+"$RUNTIME_NOTICE_REAL_CP" "$source" "$2"
+MOCK
+chmod +x "$tmp/tools/"*
+export PATH="$tmp/tools:$PATH"
+for arch in amd64 arm64; do
+  stage="$tmp/linux-$arch"
+  bash "$root/scripts/package-runtime-notices.sh" linux "$arch" "$stage"
+  cmp "$tmp/fixtures/copyright" "$stage/NATIVE_RUNTIME_LICENSES/GCC-copyright"
+  cmp "$tmp/fixtures/GPL-3" "$stage/NATIVE_RUNTIME_LICENSES/GPL-3"
+  grep -Fx 'fixture g++ 14.2.0' "$stage/NATIVE_RUNTIME_LICENSES/compiler-version.txt" > /dev/null
+  bash "$root/scripts/package-runtime-notices.sh" darwin "$arch" "$tmp/darwin-$arch"
+  [[ ! -e "$tmp/darwin-$arch/NATIVE_RUNTIME_LICENSES" ]]
 done
-export PATH="$tmp/tools:$PATH" MINGW_PREFIX="$tmp/prefix"
-for name in 'libc++' libunwind compiler-rt; do
-  mkdir -p "$MINGW_PREFIX/share/licenses/$name"
-  echo "fixture license for $name" > "$MINGW_PREFIX/share/licenses/$name/LICENSE"
-done
-bash "$root/scripts/package-runtime-notices.sh" windows arm64 "$tmp/stage"
-for name in 'libc++' libunwind compiler-rt; do
-  cmp "$MINGW_PREFIX/share/licenses/$name/LICENSE" "$tmp/stage/NATIVE_RUNTIME_LICENSES/$name/LICENSE"
-done
-rm "$MINGW_PREFIX/share/licenses/compiler-rt/LICENSE"
-if bash "$root/scripts/package-runtime-notices.sh" windows arm64 "$tmp/stage"; then
-  echo 'missing LLVM license was accepted' >&2; exit 1
+rm "$tmp/fixtures/copyright"
+if bash "$root/scripts/package-runtime-notices.sh" linux amd64 "$tmp/missing" > "$tmp/output" 2>&1; then
+  echo 'missing GCC notice was accepted' >&2; exit 1
 fi
-mkdir -p "$MINGW_PREFIX/share/licenses/gcc"
-echo 'fixture runtime exception' > "$MINGW_PREFIX/share/licenses/gcc/COPYING.RUNTIME"
-bash "$root/scripts/package-runtime-notices.sh" windows amd64 "$tmp/stage"
-cmp "$MINGW_PREFIX/share/licenses/gcc/COPYING.RUNTIME" "$tmp/stage/NATIVE_RUNTIME_LICENSES/gcc/COPYING.RUNTIME"
-rm "$MINGW_PREFIX/share/licenses/gcc/COPYING.RUNTIME"
-if bash "$root/scripts/package-runtime-notices.sh" windows amd64 "$tmp/stage"; then
-  echo 'missing GCC runtime exception was accepted' >&2; exit 1
-fi
-export LOOSTER_MINGW_ROOT="$tmp/pinned-mingw"
-mkdir -p "$LOOSTER_MINGW_ROOT/bin"
-cp "$tmp/tools/gcc" "$LOOSTER_MINGW_ROOT/bin/gcc.exe"
-for name in gcc mingw-w64 winpthreads; do
-  mkdir -p "$LOOSTER_MINGW_ROOT/licenses/$name"
-  echo "pinned compiler notice $name" > "$LOOSTER_MINGW_ROOT/licenses/$name/COPYING.RUNTIME"
-done
-bash "$root/scripts/package-runtime-notices.sh" windows amd64 "$tmp/pinned-stage"
-cmp "$LOOSTER_MINGW_ROOT/licenses/gcc/COPYING.RUNTIME" "$tmp/pinned-stage/NATIVE_RUNTIME_LICENSES/gcc/COPYING.RUNTIME"
-test -s "$tmp/pinned-stage/NATIVE_RUNTIME_LICENSES/mingw-w64/COPYING.RUNTIME"
-test -s "$tmp/pinned-stage/NATIVE_RUNTIME_LICENSES/winpthreads/COPYING.RUNTIME"
-rm "$LOOSTER_MINGW_ROOT/licenses/gcc/COPYING.RUNTIME"
-if bash "$root/scripts/package-runtime-notices.sh" windows amd64 "$tmp/pinned-stage"; then
-  echo 'missing pinned GCC runtime exception was accepted' >&2; exit 1
+if bash "$root/scripts/package-runtime-notices.sh" linux riscv64 "$tmp/unsupported" > "$tmp/output" 2>&1; then
+  echo 'unsupported runtime license target was accepted' >&2; exit 1
 fi
 echo 'runtime notice packaging: all cases passed'

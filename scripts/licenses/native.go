@@ -25,7 +25,7 @@ func nativeNotices(root, source string) ([]byte, error) {
 	}
 	var out bytes.Buffer
 	out.WriteString("# THE TPC SOFTWARE IS AVAILABLE WITHOUT CHARGE FROM TPC.\n\nThe upstream static archives include TPC benchmark extensions. Their restricted EULA is reproduced below, not represented as MIT. No separate fee is charged for this software.\n\n")
-	fmt.Fprintf(&out, "## DuckDB %s native static engine\n\nUsage: **build**, all six release targets. Official duckdb-go/v2 v2.10502.0 uses bindings v0.10502.0. Five targets use upstream prebuilt archives. Windows arm64 builds the same source with ICU, JSON, Parquet, Autocomplete, TPC-H and TPC-DS statically linked. Source: https://github.com/duckdb/duckdb/tree/%s\n\nConservative source inventory includes DuckDB LICENSE, all third_party and extension notices. These native notices are additional to Go module licenses. Runtime-downloaded extensions are not part of the release archive and retain their own licensing.\n\n", duckdbVersion, duckdbCommit)
+	fmt.Fprintf(&out, "## DuckDB %s native static engine\n\nUsage: **build**, all four release targets (linux and darwin, amd64 and arm64). Official duckdb-go/v2 v2.10502.0 uses bindings v0.10502.0. All four targets use upstream prebuilt static archives, including their bundled extension libraries. Source: https://github.com/duckdb/duckdb/tree/%s\n\nConservative source inventory includes DuckDB LICENSE, all third_party and extension notices. These native notices are additional to Go module licenses. Runtime-downloaded extensions are not part of the release archive and retain their own licensing.\n\n", duckdbVersion, duckdbCommit)
 	for _, dir := range []string{".", "third_party", "extension"} {
 		var ns []notice
 		if dir == "." {
@@ -76,4 +76,4 @@ func appendNative(out *bytes.Buffer, root string) error {
 	return nil
 }
 
-const nativeNoticesSHA256 = "793cb9fa24b91b25133a05913813de23357f424c7ef6cc61cc71df182f3f2d95"
+const nativeNoticesSHA256 = "719be24b34b1370817a1c38b48885477f74049af8949fccfa604c3e8d6f4cb10"
