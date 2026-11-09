@@ -125,6 +125,8 @@ func runJSProbe(t *testing.T, source string) {
 		return cache[path]
 	}
 	vm.Set("require", func(name string) goja.Value { return load(name, ".") })
+	// Match index.html: the pinned renderer is loaded before UI modules.
+	vm.Set("markdownit", load("./static/vendor/markdown-it.v15.0.3.min.js", "."))
 	if _, err := vm.RunString(jsTestHost); err != nil {
 		t.Fatal(err)
 	}
