@@ -50,7 +50,17 @@ or separate database server is needed. The removed `--duckdb-binary` option is
 not accepted. On first opt-in, Looster installs the required signed `ducklake`,
 `postgres` and `httpfs` extensions from the official HTTPS extension repository
 into its user cache, then loads and checks their exact build IDs. PostgreSQL-only
-commands never initialize the engine or download extensions.
+commands never initialize a DuckLake catalog or download extensions.
+
+Every opened core database has a **256 MiB DuckDB buffer-manager memory limit**
+set at connection creation. This is not a total-process RSS limit: native
+allocations and some query operators can use memory outside the buffer manager.
+`looster serve` owns one bounded in-memory core database for its entire run,
+shared across the server lifetime rather than reopened per worker or job. It
+closes after workers stop, including on cancellation and error. This core
+handle does not attach DuckLake, install extensions, contact its catalog/S3, or
+move application data. Catalog initialization still requires explicit
+`configure storage --ducklake` and remains separate from the server handle.
 
 Keep PostgreSQL passwords, S3 access/secret keys and optional session tokens in
 the environment. Existing `LOOSTER_S3_*` settings are used, with the same explicit
