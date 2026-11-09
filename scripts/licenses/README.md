@@ -35,6 +35,9 @@ The Windows ARM64 recipe follows the official custom-static-library approach.
 It includes the generated extension-loader archive added in DuckDB 1.5, plus the
 same benchmark extensions referenced by the five official archive link lists.
 MSYS2 CLANGARM64 supplies the native GNU-ABI compiler and static C++ runtime.
+The recipe builds only DuckDB's static engine, generated extension loader and
+the seven static extension targets, not the default target's loadable DLLs.
+The bundle explicitly excludes the dummy loader used by loadable extensions.
 Each archive that embeds a compiler runtime also carries its actual runner's
 `NATIVE_RUNTIME_LICENSES` directory. Linux retains GCC copyright and GPL text
 including the runtime exception. Windows retains GCC runtime exception notices

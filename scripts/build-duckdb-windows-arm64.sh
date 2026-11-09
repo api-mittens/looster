@@ -13,14 +13,20 @@ cmake -S "$source_dir" -B "$source_dir/build/release" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
   -DBUILD_SHELL=OFF -DBUILD_UNITTESTS=OFF -DENABLE_JEMALLOC=OFF \
   '-DBUILD_EXTENSIONS=icu;json;parquet;autocomplete;tpch;tpcds' -DDUCKDB_EXPLICIT_PLATFORM=windows_arm64
-cmake --build "$source_dir/build/release" --parallel 2
+# Do not build the default `all` target: it also links loadable extension DLLs
+# with GNU-only linker flags that are not supported by Windows ARM64 lld.
+cmake --build "$source_dir/build/release" --parallel 2 --target \
+  duckdb_static duckdb_generated_extension_loader \
+  icu_extension json_extension parquet_extension autocomplete_extension \
+  tpch_extension tpcds_extension core_functions_extension
 # Combine complete archives, preserving duplicate object basenames. This is the
-# llvm-ar MRI equivalent of upstream's bundle-library target.
+# llvm-ar MRI equivalent of upstream's bundle-library target. The dummy loader
+# belongs only to separately loadable extensions, never the embedded engine.
 bundle="$source_dir/build/release/libduckdb_bundle.a"
 {
   printf 'CREATE %s\n' "$(cygpath -m "$bundle")"
   find "$source_dir/build/release/src" "$source_dir/build/release/third_party" "$source_dir/build/release/extension" \
-    -name '*.a' -type f -print | sort | while IFS= read -r archive; do
+    -name '*.a' ! -name '*dummy_static_extension_loader*' -type f -print | sort | while IFS= read -r archive; do
       printf 'ADDLIB %s\n' "$(cygpath -m "$archive")"
     done
   printf 'SAVE\nEND\n'

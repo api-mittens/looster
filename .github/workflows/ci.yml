@@ -46,6 +46,7 @@ jobs:
         run: |
           go mod verify
           bash scripts/static-cxx-cc_test.sh
+          bash scripts/build-duckdb-windows-arm64_test.sh
           bash scripts/check-native-deps_test.sh
           bash scripts/package-runtime-notices_test.sh
           go run ./scripts/licenses -check
