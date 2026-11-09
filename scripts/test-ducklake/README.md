@@ -25,9 +25,12 @@ are generated locally and supplied explicitly. The only runner override is
 `createdb`. PostgreSQL cannot run as root.
 
 The runner shuts down the fixture and cluster and removes its scratch directory
-on success, failure, timeout, SIGINT or SIGTERM. SIGKILL cannot be trapped. The
-usual Go module/build caches and DuckDB signed-extension cache may remain.
-Official HTTPS extension installation requires network access on a cold cache.
+on success, failure, timeout, SIGINT or SIGTERM. SIGKILL cannot be trapped. If
+cluster shutdown fails, its directory is preserved and the runner fails with
+its location rather than deleting a possibly live cluster. Only the usual Go
+module/build caches remain. Test HOME and the DuckDB signed-extension cache are
+disposable, so official HTTPS extension installation requires network access
+each run.
 
 The fixture implements path-style PUT, GET, HEAD, DELETE, byte ranges,
 ListObjectsV2 prefix filtering, and multipart initiate/upload/complete/abort.

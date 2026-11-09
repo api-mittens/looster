@@ -106,6 +106,28 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		xmlReply(w, result)
 		return
 	}
+	if r.Method == "POST" && q.Has("delete") {
+		var request struct {
+			Objects []struct{ Key string } `xml:"Object"`
+			Quiet   bool
+		}
+		if err := xml.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&request); err != nil {
+			http.Error(w, "MalformedXML", 400)
+			return
+		}
+		result := struct {
+			XMLName xml.Name `xml:"DeleteResult"`
+			Deleted []struct{ Key string }
+		}{}
+		for _, item := range request.Objects {
+			delete(s.objects, bucket+"/"+item.Key)
+			if !request.Quiet {
+				result.Deleted = append(result.Deleted, item)
+			}
+		}
+		xmlReply(w, result)
+		return
+	}
 	if r.Method == "POST" && q.Has("uploads") {
 		s.next++
 		id := strconv.Itoa(s.next)
@@ -129,9 +151,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "InvalidPart", 400)
 				return
 			}
-			b, err := io.ReadAll(io.LimitReader(r.Body, 128<<20))
-			if err != nil {
-				http.Error(w, "read", 400)
+			b, err := io.ReadAll(io.LimitReader(r.Body, (128<<20)+1))
+			if err != nil || len(b) > 128<<20 {
+				http.Error(w, "fixture part limit", http.StatusRequestEntityTooLarge)
 				return
 			}
 			parts[n] = b

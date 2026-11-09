@@ -70,6 +70,26 @@ func TestObjectLifecycle(t *testing.T) {
 	if string(b) != "part" {
 		t.Fatal("multipart data", string(b))
 	}
+	res, b = request("POST", "/bucket?delete", "<Delete><Object><Key>multipart</Key></Object></Delete>", nil)
+	if res.StatusCode != 200 || !strings.Contains(string(b), "<Deleted><Key>multipart</Key></Deleted>") {
+		t.Fatal("batch delete", res.Status, string(b))
+	}
+	res, _ = request("HEAD", "/bucket/multipart", "", nil)
+	if res.StatusCode != 404 {
+		t.Fatal("batch deleted object still present")
+	}
+	_, b = request("POST", "/bucket/aborted?uploads", "", nil)
+	if err := xml.Unmarshal(b, &upload); err != nil {
+		t.Fatal(err)
+	}
+	res, _ = request("DELETE", "/bucket/aborted?uploadId="+upload.UploadId, "", nil)
+	if res.StatusCode != 204 {
+		t.Fatal("abort", res.Status)
+	}
+	res, _ = request("PUT", "/bucket/aborted?uploadId="+upload.UploadId+"&partNumber=1", "part", nil)
+	if res.StatusCode != 404 {
+		t.Fatal("aborted upload accepted part", res.Status)
+	}
 	request("DELETE", "/bucket/prefix/a", "", nil)
 	res, _ = request("GET", "/bucket/prefix/a", "", nil)
 	if res.StatusCode != 404 {

@@ -47,13 +47,7 @@ func run() (result error) {
 	}()
 	// Deliberately allowlist process environment: no PG*, AWS*, LOOSTER* or
 	// application config can redirect this runner to a production service.
-	env := []string{}
-	for _, key := range []string{"PATH", "HOME", "TMPDIR", "GOCACHE", "GOMODCACHE", "GOPATH", "GOTOOLCHAIN", "SDKROOT", "DEVELOPER_DIR"} {
-		if value := os.Getenv(key); value != "" {
-			env = append(env, key+"="+value)
-		}
-	}
-	env = append(env, "TMPDIR="+root, "LC_ALL=C", "LANG=C")
+	env := commandEnvironment(root)
 	command := func(ctx context.Context, name string, args ...string) error {
 		c := exec.CommandContext(ctx, name, args...)
 		c.Env = env
@@ -107,6 +101,23 @@ func run() (result error) {
 	}
 	defer s3.Close()
 	defer func() { fmt.Println("Disposable S3 operations:", s3.Requests()) }()
+	// Resolve only Go's cache paths before isolating HOME. Native extensions and
+	// all home-directory configuration for tests must be disposable as well.
+	cacheCommand := exec.CommandContext(ctx, "go", "env", "GOCACHE", "GOMODCACHE")
+	cacheCommand.Env = env
+	cacheOutput, err := cacheCommand.Output()
+	if err != nil {
+		return fmt.Errorf("resolve Go caches: %w", err)
+	}
+	caches := strings.Split(strings.TrimSpace(string(cacheOutput)), "\n")
+	if len(caches) != 2 {
+		return fmt.Errorf("unexpected Go cache paths")
+	}
+	home := filepath.Join(root, "home")
+	if err := os.MkdirAll(home, 0700); err != nil {
+		return err
+	}
+	env = append(env, "HOME="+home, "GOCACHE="+caches[0], "GOMODCACHE="+caches[1])
 	env = append(env,
 		"LOOSTER_TEST_PROVISION_DATABASE_URL=postgres://fixture@127.0.0.1:"+port+"/postgres?sslmode=disable",
 		"LOOSTER_DUCKLAKE_DISPOSABLE_PROBE=yes",
@@ -121,4 +132,14 @@ func run() (result error) {
 		}
 	}
 	return nil
+}
+
+func commandEnvironment(root string) []string {
+	env := []string{}
+	for _, key := range []string{"PATH", "HOME", "GOCACHE", "GOMODCACHE", "GOPATH", "GOTOOLCHAIN", "SDKROOT", "DEVELOPER_DIR"} {
+		if value := os.Getenv(key); value != "" {
+			env = append(env, key+"="+value)
+		}
+	}
+	return append(env, "TMPDIR="+root, "LC_ALL=C", "LANG=C")
 }

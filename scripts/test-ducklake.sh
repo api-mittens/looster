@@ -17,6 +17,8 @@ cleanup() {
 trap cleanup 0
 trap 'exit 130' INT
 trap 'exit 143' TERM
+TMPDIR="$runner"
+export TMPDIR
 # A real binary, rather than go run, ensures signals reach the cleanup owner.
 go build -o "$runner/harness" ./scripts/test-ducklake
 "$runner/harness" &
