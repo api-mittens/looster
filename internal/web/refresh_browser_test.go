@@ -31,6 +31,7 @@ func TestRefreshPreservesUIBrowser(t *testing.T) {
  let revision=0, reverse=false;
  const task=id=>({id,name:'Task '+id+' revision '+revision,status:'todo',description:'Description '+revision,tags:['a','b']});
  b.api=async path=>{
+  if(path.startsWith('/api/palette/tasks?')) return {tasks:[task(1),task(2)]};
   if(path.startsWith('/api/board/list?')) {
    const tasks=[task(1),task(2)], sessions=[{task_id:1,agent:'aaa-offline',status:'running'},{task_id:1,agent:'coder',status:'running'}];
    return {tasks:[],agents:[{name:'aaa-offline'},{name:'coder'}],sessions,columns:['planning','todo','validated','closed','agent:aaa-offline','agent:coder'].map(key=>({key,tasks:key==='todo'?tasks:key.startsWith('agent:')?[tasks[0]]:[],total:key==='todo'?2:key.startsWith('agent:')?1:0,page:1,page_size:15}))};

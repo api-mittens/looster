@@ -254,6 +254,7 @@ func dashboardHandler(repo Repository, objects app.Objects, selected string) htt
 		write(w, map[string]any{"agents": agentViews, "tags": tagViews}, nil)
 	})
 	mux.HandleFunc("GET /api/board/list", listBoard(repo, write))
+	mux.HandleFunc("GET /api/palette/tasks", paletteTasks(repo, write))
 	mux.HandleFunc("GET /api/board", func(w http.ResponseWriter, r *http.Request) {
 		tasks, err := repo.Tasks(r.Context())
 		if err != nil {
