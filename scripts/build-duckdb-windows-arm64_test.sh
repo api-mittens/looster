@@ -43,6 +43,10 @@ MOCK
 chmod +x "$tmp/tools/"*
 PATH="$tmp/tools:$PATH" bash "$root/scripts/build-duckdb-windows-arm64.sh"
 [[ $(wc -l < "$ARM_TEST_LOG" | tr -d ' ') == 2 ]]
+if grep -F DUCKDB_EXPLICIT_PLATFORM "$ARM_TEST_LOG" > /dev/null; then
+  echo 'ARM compiler ABI was overridden' >&2
+  exit 1
+fi
 for archive in libduckdb_static.a libduckdb_generated_extension_loader.a libdependency.a; do
   grep -F "/$archive" "$ARM_TEST_MRI" > /dev/null
 done

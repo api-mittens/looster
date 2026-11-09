@@ -12,7 +12,9 @@ git -C "$source_dir" checkout 8a5851971fae891f292c2714d86046ee018e9737
 cmake -S "$source_dir" -B "$source_dir/build/release" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
   -DBUILD_SHELL=OFF -DBUILD_UNITTESTS=OFF -DENABLE_JEMALLOC=OFF \
-  '-DBUILD_EXTENSIONS=icu;json;parquet;autocomplete;tpch;tpcds' -DDUCKDB_EXPLICIT_PLATFORM=windows_arm64
+  '-DBUILD_EXTENSIONS=icu;json;parquet;autocomplete;tpch;tpcds'
+# Preserve upstream's actual windows_arm64_mingw platform detection. Calling
+# this MSVC-compatible windows_arm64 would bypass the C++ extension ABI guard.
 # Do not build the default `all` target: it also links loadable extension DLLs
 # with GNU-only linker flags that are not supported by Windows ARM64 lld.
 cmake --build "$source_dir/build/release" --parallel 2 --target \

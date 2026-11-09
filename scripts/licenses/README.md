@@ -31,6 +31,13 @@ or changing distribution of the TPC components.
 5. Run `go test ./scripts/licenses`, `bash scripts/check-native-deps_test.sh`, and
    all six CI build jobs. A local macOS build does not validate Windows ARM64.
 
+Windows extension compatibility remains a release blocker. See
+`windows-mingw-postgres-blocker.md` for exact upstream exclusions and evidence.
+The CLANGARM64 recipe also preserves its real `windows_arm64_mingw` identity,
+not the MSVC `windows_arm64` identity. Its built-in engine archives do not prove
+compatibility with the official MSVC C++ extension binaries. Do not override
+the ABI identifier or weaken signature/bootstrap gates to publish either target.
+
 The Windows ARM64 recipe follows the official custom-static-library approach.
 It includes the generated extension-loader archive added in DuckDB 1.5, plus the
 same benchmark extensions referenced by the five official archive link lists.
