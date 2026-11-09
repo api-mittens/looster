@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/api-mittens/looster/internal/agent"
+	"github.com/api-mittens/looster/internal/app"
 	"github.com/api-mittens/looster/internal/task"
 )
 
@@ -79,6 +80,36 @@ func (p *performanceTestRepo) PerformanceData(_ context.Context, start, end time
 	p.end = end
 	return p.tasks, nil, p.err
 }
+
+type permissionPerformanceRepo struct {
+	app.Repository
+	source *performanceTestRepo
+}
+
+func (p *permissionPerformanceRepo) PerformanceData(ctx context.Context, start, end time.Time) ([]task.Task, []agent.SessionLog, error) {
+	return p.source.PerformanceData(ctx, start, end)
+}
+
+func TestPerformanceAPIWithPermissions(t *testing.T) {
+	raw := &performanceTestRepo{tasks: []task.Task{{ID: 1, Status: task.Validated, LastActivityAt: time.Now().UTC().Add(-time.Minute)}}}
+	wrapped, err := app.WithPermissions(&permissionPerformanceRepo{source: raw}, app.Actor{Role: app.Human})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	Handler(wrapped).ServeHTTP(rec, httptest.NewRequest("GET", "/api/performance", nil))
+	var got performanceResponse
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &got) != nil || got.Week.Validated != 1 || raw.calls != 1 {
+		t.Fatalf("wrapped performance: %d %s, calls=%d", rec.Code, rec.Body.String(), raw.calls)
+	}
+	raw.err = errors.New("performance query failed")
+	rec = httptest.NewRecorder()
+	Handler(wrapped).ServeHTTP(rec, httptest.NewRequest("GET", "/api/performance", nil))
+	if rec.Code != 500 {
+		t.Fatalf("query error: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestPerformanceAPIIsolationAndErrors(t *testing.T) {
 	now := time.Now().UTC().Add(-time.Minute)
 	base := &performanceTestRepo{}

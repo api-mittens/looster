@@ -14,3 +14,11 @@ import (
 type PerformanceRepository interface {
 	PerformanceData(context.Context, time.Time, time.Time) ([]task.Task, []agent.SessionLog, error)
 }
+
+func (r *accessRepository) PerformanceData(ctx context.Context, start, end time.Time) ([]task.Task, []agent.SessionLog, error) {
+	repo, ok := r.Repository.(PerformanceRepository)
+	if !ok {
+		return nil, nil, ErrSessionHistoryUnavailable
+	}
+	return repo.PerformanceData(ctx, start, end)
+}
