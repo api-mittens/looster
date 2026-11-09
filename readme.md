@@ -64,8 +64,9 @@ through `github.com/api-mittens/looster/internal/cli.Version`.
 
 ## Install
 
-Release binaries need **no Go toolchain**. On Linux or macOS, download the installer
-to a file, inspect it, then run it:
+Release binaries support **Linux and macOS, amd64 and arm64**, and need **no Go
+toolchain or separate DuckDB executable**. Windows support has been removed.
+Download the installer to a file, inspect it, then run it:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/api-mittens/looster/master/scripts/install.sh -o install-looster.sh
