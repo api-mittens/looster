@@ -72,6 +72,17 @@ that native runner before the target is release-ready. A source recipe alone is
 not evidence of support. Unavailable signed extensions or any failing target
 block the entire six-artifact release, rather than silently omitting Windows ARM64.
 
+**Current Windows release blocker:** the pinned official Windows AMD64 core uses
+`windows_amd64_mingw`, for which upstream explicitly excludes the required
+PostgreSQL extension. The CLANGARM64 source recipe has the distinct
+`windows_arm64_mingw` C++ ABI, for which all three required extension artifacts
+are unavailable. MSVC extension artifacts cannot be substituted by overriding
+the platform identity. These targets are not release-ready, even when core
+compilation and CLI smoke tests pass. See the
+[exact source and artifact evidence](../scripts/licenses/windows-mingw-postgres-blocker.md)
+and the additional source/static-library work required to resolve them. The
+six-target release gate intentionally remains blocking.
+
 Every native build runs `scripts/release-archive.sh`, which inspects runtime
 imports with `readelf`, `otool` or `objdump`. Unbundled DuckDB/C++/pthread
 libraries are rejected. System C libraries/frameworks are allowed. Linux builds
