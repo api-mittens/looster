@@ -115,7 +115,7 @@ func TestCredentialPolicy(t *testing.T) {
 
 func engine(t *testing.T) *Lake {
 	t.Helper()
-	l, err := openEngine(context.Background())
+	l, err := OpenEngine(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,6 +147,40 @@ func TestEmbeddedLifetime(t *testing.T) {
 	fresh := engine(t)
 	if fresh.Exec(ctx, "SELECT * FROM retained") == nil {
 		t.Fatal("fresh engine retained temp table")
+	}
+}
+
+func TestOpenEngineMemoryLimitAndIsolation(t *testing.T) {
+	l := engine(t)
+	ctx := context.Background()
+	var limit string
+	if err := l.conn.QueryRowContext(ctx, "SELECT current_setting('memory_limit')").Scan(&limit); err != nil {
+		t.Fatal(err)
+	}
+	if limit != "256.0 MiB" {
+		t.Fatalf("memory_limit = %q, want 256.0 MiB", limit)
+	}
+	for _, query := range []string{
+		"SELECT CASE WHEN count(*)=0 THEN true ELSE error('unexpected extension') END FROM duckdb_extensions() WHERE loaded AND extension_name IN ('httpfs', 'postgres_scanner', 'ducklake')",
+		"SELECT CASE WHEN count(*)=0 THEN true ELSE error('unexpected secret') END FROM duckdb_secrets()",
+		"SELECT CASE WHEN count(*)=0 THEN true ELSE error('unexpected catalog') END FROM duckdb_databases() WHERE database_name='lake'",
+	} {
+		if err := l.Exec(ctx, query); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestOpenEngineCanceledInitialization(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	l, err := OpenEngine(ctx)
+	if l != nil {
+		_ = l.Close()
+		t.Fatal("canceled initialization returned an engine")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("initialization cancellation lost: %v", err)
 	}
 }
 

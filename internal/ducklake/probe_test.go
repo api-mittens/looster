@@ -105,7 +105,7 @@ func TestProbeReportsReaderCloseFailure(t *testing.T) {
 
 func TestOpenContextDoesNotOwnLifetime(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	l, err := openEngine(ctx)
+	l, err := OpenEngine(ctx)
 	if err != nil {
 		cancel()
 		t.Fatal(err)

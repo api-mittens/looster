@@ -26,6 +26,10 @@ import (
 const EngineVersion = "v1.5.2"
 const DuckLakeVersion = "1.0"
 
+// EngineMemoryLimit caps DuckDB's buffer manager, not total process RSS.
+// Apply it in the native engine configuration before any session is opened.
+const EngineMemoryLimit = "256MiB"
+
 // Official core extension build IDs verified against EngineVersion. Runtime
 // requires these exact signed artifacts, not a moving extension release label.
 const DuckLakeExtensionVersion = "415a9ebd"
@@ -82,7 +86,7 @@ func Open(ctx context.Context, c Config) (*Lake, error) {
 	if err = os.MkdirAll(directory, 0700); err != nil {
 		return nil, operationError("extension cache creation")
 	}
-	l, err := openEngine(ctx)
+	l, err := OpenEngine(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -107,11 +111,19 @@ func Open(ctx context.Context, c Config) (*Lake, error) {
 	return l, nil
 }
 
+// OpenEngine opens a bounded in-memory DuckDB engine and retained SQL session.
+// It does not install extensions, attach a catalog, or configure S3. The caller
+// owns its lifetime and must Close it, typically after service.Serve returns.
+// ctx controls initialization only. Canceling it does not close the engine.
+func OpenEngine(ctx context.Context) (*Lake, error) {
+	return openEngine(ctx)
+}
+
 func openEngine(ctx context.Context) (*Lake, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("duckdb", "")
+	db, err := sql.Open("duckdb", "?memory_limit="+EngineMemoryLimit)
 	if err != nil {
 		return nil, operationError("engine initialization")
 	}
