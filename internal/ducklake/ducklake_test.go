@@ -13,12 +13,11 @@ import (
 )
 
 func config() Config {
-	return Config{CatalogConnection: "host=localhost dbname=ducklake user=test password='pg-secret' sslmode=verify-full sslrootcert='/tmp/root.crt'", DataPath: "s3://bucket/disposable/", S3: objectstore.Config{AccessKey: "access-canary", SecretKey: "secret-canary", SessionToken: "token-canary", Endpoint: "http://localhost:4566"}}
+	return Config{CatalogConnection: "host=localhost port=5432 dbname=ducklake user=test password='pg-secret' sslmode=verify-full sslrootcert='/tmp/root.crt'", DataPath: "s3://bucket/disposable/", S3: objectstore.Config{AccessKey: "access-canary", SecretKey: "secret-canary", SessionToken: "token-canary", Endpoint: "http://localhost:4566"}}
 }
 
 func TestValidateOffline(t *testing.T) {
 	c := config()
-	c.Binary = "/nonexistent/duckdb"
 	if err := Validate(c); err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +49,7 @@ func TestPrepare(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"version() = 'v1.5.2'", "allow_unsigned_extensions=false", "INSTALL httpfs FROM 'https://extensions.duckdb.org'", "INSTALL postgres FROM 'https://extensions.duckdb.org'", "INSTALL ducklake FROM 'https://extensions.duckdb.org'", "LOAD ducklake", "CREATE TEMPORARY SECRET", "PROVIDER config", "URL_STYLE 'path'", "USE_SSL false", "REGION 'us-east-1'", "SESSION_TOKEN 'token-canary'", "passfile=''/dev/null''", "DATA_INLINING_ROW_LIMIT 0", DuckLakeExtensionVersion, PostgresExtensionVersion, HTTPFSExtensionVersion} {
+	for _, want := range []string{"version() = 'v1.5.2'", "allow_unsigned_extensions=false", "LOAD httpfs", "INSTALL postgres FROM 'https://extensions.duckdb.org'", "INSTALL ducklake FROM 'https://extensions.duckdb.org'", "LOAD ducklake", "CREATE TEMPORARY SECRET", "PROVIDER config", "URL_STYLE 'path'", "USE_SSL false", "REGION 'us-east-1'", "SESSION_TOKEN 'token-canary'", "passfile=''/dev/null''", "DATA_INLINING_ROW_LIMIT 0", DuckLakeExtensionVersion, PostgresExtensionVersion, HTTPFSExtensionVersion} {
 		if !strings.Contains(p, want) {
 			t.Errorf("missing %s", want)
 		}
@@ -214,13 +213,21 @@ func TestOfficialExtensions(t *testing.T) {
 	l := engine(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	if err := l.Exec(ctx, "SET extension_directory="+quote(t.TempDir())); err != nil {
+	directory := t.TempDir()
+	if err := l.Exec(ctx, "SET extension_directory="+quote(directory)); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"httpfs", "postgres", "ducklake"} {
-		if _, err := l.conn.ExecContext(ctx, "INSTALL "+name+" FROM 'https://extensions.duckdb.org'; LOAD "+name); err != nil {
-			t.Fatal("official extension installation", name, err)
-		}
+	p, err := prepare(config())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrap := strings.SplitN(p, "CREATE TEMPORARY SECRET", 2)[0]
+	// Use the actual production bootstrap on an empty extension directory.
+	if err := l.bootstrapHTTPFS(ctx, directory); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.conn.ExecContext(ctx, bootstrap); err != nil {
+		t.Fatal("fresh official extension bootstrap", err)
 	}
 	rows, err := l.conn.QueryContext(ctx, "SELECT extension_name, extension_version FROM duckdb_extensions() WHERE loaded")
 	if err != nil {
@@ -244,13 +251,35 @@ func TestOfficialExtensions(t *testing.T) {
 		}
 	}
 	rows.Close()
-	p, _ := prepare(config())
+	p, _ = prepare(config())
 	prefix := strings.Split(p, "ATTACH 'ducklake:")[0]
 	if err := l.Exec(ctx, prefix); err != nil {
 		t.Fatal("production bootstrap failed", err)
 	}
 	if err := l.Exec(ctx, "SELECT CASE WHEN count(*)=2 AND bool_and(NOT persistent AND storage='memory') THEN true ELSE error('secret persistence') END FROM duckdb_secrets() WHERE name IN ('looster_s3','looster_lake')"); err != nil {
 		t.Fatal("temporary secret policy failed", err)
+	}
+}
+
+func TestFreshOpenBootstrap(t *testing.T) {
+	if os.Getenv("LOOSTER_TEST_DUCKLAKE_EXTENSIONS") != "yes" {
+		t.Skip("opt-in fresh HTTPS Open bootstrap")
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	c := config()
+	c.CatalogConnection = "host=127.0.0.1 port=1 dbname=unreachable user=test password='resolved-password' sslmode=disable connect_timeout=1"
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	for i := 0; i < 2; i++ {
+		lake, err := Open(ctx, c)
+		if lake != nil {
+			lake.Close()
+			t.Fatal("unreachable catalog unexpectedly opened")
+		}
+		if err == nil || !strings.Contains(err.Error(), "temporary secrets/catalog attachment") {
+			t.Fatalf("fresh/cached Open did not pass extension bootstrap: %v", err)
+		}
 	}
 }
 

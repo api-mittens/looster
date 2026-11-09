@@ -112,13 +112,46 @@ func TestQueuedCancellation(t *testing.T) {
 	}
 }
 
-func TestAmbientLibpqRejected(t *testing.T) {
-	t.Setenv("PGPASSWORD", "ambient-secret-canary")
-	if err := Validate(config()); err != nil {
-		t.Fatal("offline validation changed", err)
+func TestAmbientLibpqOverrides(t *testing.T) {
+	for environment := range libpqEnvironment {
+		t.Setenv(environment, "")
 	}
-	_, err := Open(context.Background(), config())
-	if err == nil || !strings.Contains(err.Error(), "ambient PG*") || strings.Contains(err.Error(), "canary") {
-		t.Fatal("ambient libpq credentials not safely rejected")
+	for _, environment := range []string{"PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD", "PGSSLMODE", "PGSSLROOTCERT"} {
+		t.Setenv(environment, "ambient-secret-canary")
+	}
+	c := config()
+	if err := Validate(c); err != nil {
+		t.Fatal("explicit resolved settings must override libpq environment", err)
+	}
+	p, err := prepare(c)
+	if err != nil || strings.Contains(p, "ambient-secret-canary") {
+		t.Fatal("ambient defaults were substituted into resolved settings")
+	}
+	t.Setenv("PGAPPNAME", "ambient-app-canary")
+	if err := Validate(c); err == nil || !strings.Contains(err.Error(), "PGAPPNAME") || strings.Contains(err.Error(), "canary") {
+		t.Fatal("offline validation accepted unrepresented ambient default")
+	}
+	if _, err := Open(context.Background(), c); err == nil || !strings.Contains(err.Error(), "PGAPPNAME") {
+		t.Fatal("unsafe ambient default reached engine")
+	}
+	c.CatalogConnection += " application_name='resolved-app'"
+	if err := Validate(c); err != nil {
+		t.Fatal("explicit application name did not override environment", err)
+	}
+	c.CatalogConnection += " application_name=''"
+	if err := Validate(c); err == nil {
+		t.Fatal("empty final override accepted ambient default")
+	}
+	t.Setenv("PGAPPNAME", "")
+	t.Setenv("PGSERVICE", "ambient-service-canary")
+	if err := Validate(config()); err == nil || !strings.Contains(err.Error(), "PGSERVICE") {
+		t.Fatal("ambient service accepted")
+	}
+	t.Setenv("PGSERVICE", "")
+	t.Setenv("PGPASSFILE", "/ambient-secret-canary")
+	t.Setenv("PGSERVICEFILE", "/ambient-service-canary")
+	t.Setenv("PG_APPLICATION_CUSTOM", "not-a-libpq-default")
+	if err := Validate(config()); err != nil {
+		t.Fatal("disabled password file or inactive service file rejected", err)
 	}
 }

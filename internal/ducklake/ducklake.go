@@ -35,12 +35,10 @@ const HTTPFSExtensionVersion = "13e18b3"
 // Config must not be logged or serialized. CatalogConnection is a fully resolved
 // libpq KEY=VALUE string from the caller's PostgreSQL resolver, not a pgx TLS
 // config translated back to a URL. Explicit sslmode and identity/root settings
-// are passed through unchanged. Open rejects ambient libpq PG* variables rather
-// than mutating process-wide environment. Password files are disabled.
+// are passed through unchanged. Ambient libpq connection defaults are accepted
+// only when overridden by explicit resolved fields. Password files are disabled.
 // Namespace is empty or "default" only.
 type Config struct {
-	// Deprecated: Binary is ignored by the embedded engine.
-	Binary            string
 	CatalogConnection string
 	Namespace         string
 	DataPath          string
@@ -76,14 +74,6 @@ func Open(ctx context.Context, c Config) (*Lake, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	// libpq reads process-wide defaults. Unlike a subprocess we cannot safely
-	// scrub them per connection without racing unrelated PostgreSQL users.
-	for _, entry := range os.Environ() {
-		key, value, _ := strings.Cut(entry, "=")
-		if strings.HasPrefix(key, "PG") && value != "" {
-			return nil, errors.New("embedded DuckLake requires ambient PG* variables to be unset; supply resolved libpq settings explicitly")
-		}
-	}
 	cache, err := os.UserCacheDir()
 	if err != nil {
 		return nil, operationError("extension cache location")
@@ -97,6 +87,10 @@ func Open(ctx context.Context, c Config) (*Lake, error) {
 		return nil, err
 	}
 	if err = l.Exec(ctx, "SET extension_directory="+quote(directory)); err != nil {
+		_ = l.Close()
+		return nil, err
+	}
+	if err = l.bootstrapHTTPFS(ctx, directory); err != nil {
 		_ = l.Close()
 		return nil, err
 	}
@@ -207,6 +201,9 @@ func prepare(c Config) (string, error) {
 	if strings.IndexByte(c.CatalogConnection, 0) >= 0 || !validConnection(c.CatalogConnection) {
 		return "", errors.New("DuckLake requires fully resolved libpq keyword settings with explicit host, dbname, user and sslmode; unsupported or file-provider settings rejected")
 	}
+	if err := validateAmbientConnection(c.CatalogConnection); err != nil {
+		return "", err
+	}
 	u, err := url.Parse(c.DataPath)
 	if err != nil || u.Scheme != "s3" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path == "" || u.Path == "/" {
 		return "", errors.New("DuckLake requires an s3://bucket/dedicated-prefix/ data path")
@@ -242,7 +239,7 @@ func prepare(c Config) (string, error) {
 	// Temporary secrets, no persistent secret storage. Never emit this SQL.
 	return "SELECT CASE WHEN version() = '" + EngineVersion + "' THEN true ELSE error('engine version mismatch') END;\n" +
 		"SET allow_unsigned_extensions=false; SET autoinstall_known_extensions=false; SET autoload_known_extensions=false;\n" +
-		"INSTALL httpfs FROM 'https://extensions.duckdb.org'; LOAD httpfs;\nINSTALL postgres FROM 'https://extensions.duckdb.org'; LOAD postgres;\nINSTALL ducklake FROM 'https://extensions.duckdb.org'; LOAD ducklake;\n" +
+		"LOAD httpfs;\nINSTALL postgres FROM 'https://extensions.duckdb.org'; LOAD postgres;\nINSTALL ducklake FROM 'https://extensions.duckdb.org'; LOAD ducklake;\n" +
 		"SELECT CASE WHEN (SELECT count(*) FROM duckdb_extensions() WHERE loaded AND ((extension_name='ducklake' AND extension_version='" + DuckLakeExtensionVersion + "') OR (extension_name='postgres_scanner' AND extension_version='" + PostgresExtensionVersion + "') OR (extension_name='httpfs' AND extension_version='" + HTTPFSExtensionVersion + "'))) = 3 THEN true ELSE error('extension version mismatch') END;\n" +
 		"CREATE TEMPORARY SECRET looster_s3 (TYPE s3, PROVIDER config, KEY_ID " + quote(s.AccessKey) + ", SECRET " + quote(s.SecretKey) + ", SESSION_TOKEN " + quote(s.SessionToken) + ", REGION " + quote(s.Region) + ", URL_STYLE 'path', SCOPE " + quote(c.DataPath) + endpoint + ");\n" +
 		"CREATE TEMPORARY SECRET looster_lake (TYPE ducklake, METADATA_PATH " + quote("postgres:"+c.CatalogConnection+" passfile='/dev/null'") + ", DATA_PATH " + quote(c.DataPath) + ");\n" +
@@ -253,6 +250,13 @@ func prepare(c Config) (string, error) {
 // deliberately rejects URLs, services and unsupported pgx-only options rather
 // than weakening TLS or changing their meaning. Values are not reconstructed.
 func validConnection(raw string) bool {
+	seen := connectionFields(raw)
+	return seen["host"] && seen["dbname"] && seen["user"] && seen["sslmode"]
+}
+
+// connectionFields tracks the last value of each keyword, just like libpq.
+// A nonempty explicit value overrides the corresponding environment default.
+func connectionFields(raw string) map[string]bool {
 	allowed := strings.Fields("host hostaddr port dbname user password sslmode sslcert sslkey sslrootcert sslpassword sslcrl sslcrldir sslsni ssl_min_protocol_version ssl_max_protocol_version connect_timeout application_name target_session_attrs channel_binding options")
 	keys := map[string]bool{}
 	for _, k := range allowed {
@@ -264,11 +268,11 @@ func validConnection(raw string) bool {
 		s = strings.TrimSpace(s)
 		i := strings.IndexByte(s, '=')
 		if i < 1 {
-			return false
+			return nil
 		}
 		k := strings.TrimSpace(s[:i])
 		if !keys[k] {
-			return false
+			return nil
 		}
 		s = strings.TrimLeft(s[i+1:], " \t\r\n")
 		value := ""
@@ -282,7 +286,7 @@ func validConnection(raw string) bool {
 			s = s[1:]
 			if b == '\\' {
 				if len(s) == 0 {
-					return false
+					return nil
 				}
 				value += s[:1]
 				s = s[1:]
@@ -298,14 +302,14 @@ func validConnection(raw string) bool {
 			value += string(b)
 		}
 		if !closed {
-			return false
+			return nil
 		}
 		if quoted && len(s) > 0 && !strings.ContainsRune(" \t\r\n", rune(s[0])) {
-			return false
+			return nil
 		}
 		seen[k] = value != ""
 	}
-	return seen["host"] && seen["dbname"] && seen["user"] && seen["sslmode"]
+	return seen
 }
 
 // ProbeDisposable writes a real Parquet-backed table, closes the writer engine,
