@@ -251,6 +251,11 @@ func TestDisposableIntegration(t *testing.T) {
 	if err = l.Exec(ctx, "SELECT CASE WHEN count(*)=0 THEN true ELSE error('probe table remains') END FROM duckdb_tables() WHERE database_name='lake' AND table_name LIKE 'looster_probe_%';"); err != nil {
 		t.Fatal(err)
 	}
+	conflicting := c
+	conflicting.DataPath = c.DataPath + "conflicting/"
+	if _, err := Open(ctx, conflicting); err == nil {
+		t.Fatal("existing catalog accepted a conflicting S3 data path")
+	}
 	// ATTACH alone must still succeed with an unreachable endpoint. A real
 	// write, unlike metadata initialization, must fail with sanitized diagnostics.
 	bad := c
@@ -267,5 +272,14 @@ func TestDisposableIntegration(t *testing.T) {
 		if secret != "" && strings.Contains(err.Error(), secret) {
 			t.Fatal("S3 failure leaked configured values")
 		}
+	}
+	missing := c
+	missing.Binary = filepath.Join(t.TempDir(), "missing-duckdb")
+	if _, err := Open(ctx, missing); err == nil {
+		t.Fatal("missing engine accepted")
+	}
+	t.Setenv("HOME", t.TempDir())
+	if _, err := Open(ctx, c); err == nil {
+		t.Fatal("missing installed extensions accepted")
 	}
 }

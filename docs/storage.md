@@ -82,7 +82,13 @@ TOML, command output or persistent DuckDB secrets. Child diagnostics are
 suppressed because PostgreSQL/DuckDB errors can echo secrets. Errors identify
 which stage failed, but troubleshooting must not involve logging SQL or resolved
 connection strings. TLS and PostgreSQL options that cannot be faithfully passed
-to the libpq connector are rejected rather than silently weakened.
+to the libpq connector are rejected rather than silently weakened. Verified TLS
+(`verify-ca`/`verify-full`) requires an explicit `PGSSLROOTCERT` or `sslrootcert`
+path, rather than implicit home-directory certificates. Multi-host URLs must
+specify a port for every host if any host has an explicit port. Pgx-only pool
+parameters and unsupported connector options must be removed from the bootstrap
+connection string, while retaining the same server, database and TLS policy.
+These restrictions affect DuckLake opt-in only, not ordinary PostgreSQL commands.
 
 ### Pinned engine and extensions
 
