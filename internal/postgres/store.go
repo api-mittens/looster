@@ -342,6 +342,15 @@ func (s *Store) RemoveMemory(ctx context.Context, kind, name string, id int64) e
 	return affected(s.Pool.Exec(ctx, `DELETE FROM memories WHERE `+where+` AND id=$2`, name, id))
 }
 func (s *Store) Sessions(ctx context.Context, name string) ([]agent.Session, error) {
+	return s.sessions(ctx, name, false)
+}
+
+// BoardSessions returns placement metadata without hydrating run summaries or errors.
+func (s *Store) BoardSessions(ctx context.Context) ([]agent.Session, error) {
+	return s.sessions(ctx, "", true)
+}
+
+func (s *Store) sessions(ctx context.Context, name string, metadataOnly bool) ([]agent.Session, error) {
 	// Stored task sessions survive process crashes. Taskless runs instead use
 	// their durable job identity and disappear when processing finishes. Match
 	// Claim's lock identity, including notification jobs with a context task.
@@ -349,6 +358,16 @@ func (s *Store) Sessions(ctx context.Context, name string) ([]agent.Session, err
 	// An executing job wins over newer queued jobs. Otherwise choose the latest
 	// queued run or result matching the binding, including history whose job was
 	// removed. Join summary/error by that job ID only, not by shared session ID.
+	preview := `coalesce(h.summary,j.summary,''),
+ coalesce(h.summary_status,CASE WHEN j.summary<>'' THEN 'available'
+ WHEN j.state IN ('pending','running','archiving') THEN 'pending'
+ WHEN j.state='failed' THEN 'failed' ELSE 'missing' END),
+ coalesce(h.error,j.error,'')`
+	joins := ` LEFT JOIN jobs j ON j.id=s.job_id LEFT JOIN agent_session_runs h ON h.job_id=s.job_id`
+	if metadataOnly {
+		preview = `''::text,''::text,''::text`
+		joins = ""
+	}
 	query := `WITH candidates AS (
  SELECT s.task_id,coalesce(r.job_id,0) AS job_id,s.agent_name,s.session_id,s.status,
  'looster:session:'||s.task_id||':'||s.agent_name AS lock_key FROM sessions s
@@ -376,15 +395,7 @@ func (s *Store) Sessions(ctx context.Context, name string) ([]agent.Session, err
  AND l.classid=((hashtextextended((CASE WHEN current_schema()='public' THEN '' ELSE current_schema()||':' END)||s.lock_key,0)>>32)&4294967295)::oid
  AND l.objid=(hashtextextended((CASE WHEN current_schema()='public' THEN '' ELSE current_schema()||':' END)||s.lock_key,0)&4294967295)::oid
  AND l.objsubid=1) THEN 'interrupted'
- ELSE 'running' END,
- coalesce(h.summary,j.summary,''),
- coalesce(h.summary_status,CASE WHEN j.summary<>'' THEN 'available'
- WHEN j.state IN ('pending','running','archiving') THEN 'pending'
- WHEN j.state='failed' THEN 'failed' ELSE 'missing' END),
- coalesce(h.error,j.error,'')
- FROM candidates s
- LEFT JOIN jobs j ON j.id=s.job_id
- LEFT JOIN agent_session_runs h ON h.job_id=s.job_id`
+ ELSE 'running' END,` + preview + ` FROM candidates s` + joins
 	var args []any
 	if name != "" {
 		query += ` WHERE s.agent_name=$1`

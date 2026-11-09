@@ -30,6 +30,26 @@ func (s *testRepo) Tasks(context.Context) ([]task.Task, error) {
 	}
 	return []task.Task{{ID: 1, Name: "Example", Status: task.Todo, CreatedAt: time.Unix(100, 0), LastActivityAt: time.Unix(200, 0), StatusChanges: 3, CommentCount: 2}}, nil
 }
+
+// These fixtures contain one task. Production List has no Tasks fallback.
+func (s *testRepo) ColumnTasks(ctx context.Context, q task.ColumnQuery) (task.ColumnPage, error) {
+	out := task.ColumnPage{Key: q.Key, Page: 1, PageSize: 15, Tasks: []task.Task{}}
+	rows, err := s.Tasks(ctx)
+	if err != nil {
+		return out, err
+	}
+	for _, row := range rows {
+		if string(row.Status) == q.Key {
+			out.Tasks = append(out.Tasks, row)
+		}
+	}
+	out.Total = int64(len(out.Tasks))
+	return out, nil
+}
+func (s *testRepo) BoardSessions(ctx context.Context) ([]agent.Session, error) {
+	return s.Sessions(ctx, "")
+}
+
 func (*testRepo) Task(_ context.Context, id int64) (task.Task, error) {
 	if id != 1 {
 		return task.Task{}, app.ErrNotFound

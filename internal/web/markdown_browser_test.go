@@ -50,7 +50,7 @@ func TestMarkdownBrowser(t *testing.T) {
 		case "/api/namespaces":
 			w.Header().Set("X-Default-Namespace", "default")
 			data = []string{"default"}
-		case "/api/board":
+		case "/api/board", "/api/board/list":
 			data = map[string]any{"tasks": []any{taskData(1), taskData(2)}, "agents": []any{}, "sessions": []any{}}
 		case "/api/status", "/api/system", "/api/library":
 			data = map[string]any{}
@@ -82,7 +82,7 @@ func TestMarkdownBrowser(t *testing.T) {
 				data = result
 			}
 		}
-		if err := json.NewEncoder(w).Encode(data); err != nil {
+		if err := json.NewEncoder(w).Encode(paginatedBoardFixture(t, r, data)); err != nil {
 			t.Errorf("fixture response: %v", err)
 		}
 	}))
@@ -112,7 +112,7 @@ func TestMarkdownBrowser(t *testing.T) {
 			evaluateTrue(t, `(() => {const d=document.querySelector('.detail'), m=document.querySelector('#task-description'), p=m.querySelector('pre'), table=m.querySelector('table');return d.scrollWidth<=d.clientWidth+1 && m.getBoundingClientRect().right<=d.getBoundingClientRect().right+1 && ['auto','scroll'].includes(getComputedStyle(p).overflowX) && ['auto','scroll'].includes(getComputedStyle(table).overflowX) && getComputedStyle(m).color!==getComputedStyle(document.querySelector('dialog')).backgroundColor;})()`)
 			evaluateTrue(t, `document.querySelector('looster-board').comments.get(1).body===`+strconv.Quote(existing))
 			sourceJSON, _ := json.Marshal(source)
-			evaluateTrue(t, `document.querySelector('looster-board').data.tasks.find(t=>t.id===1).description===`+string(sourceJSON))
+			evaluateTrue(t, `document.querySelector('looster-board').data.columns.flatMap(c=>c.tasks).find(t=>t.id===1).description===`+string(sourceJSON))
 		})
 	}
 	// Submit through the real form handler, then refresh the page and reopen details.

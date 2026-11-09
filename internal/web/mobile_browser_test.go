@@ -38,7 +38,7 @@ func TestMobileTouchBrowser(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/namespaces":
 			data = []string{"default"}
-		case "/api/board":
+		case "/api/board", "/api/board/list":
 			data = map[string]any{"tasks": tasks, "agents": []any{map[string]any{"name": "coder"}}, "sessions": sessions}
 		case "/api/status":
 			data = map[string]any{"workers": []any{map[string]any{"agents": []string{"coder"}}}}
@@ -53,7 +53,7 @@ func TestMobileTouchBrowser(t *testing.T) {
 				data = map[string]any{"task": tasks[0], "sessions": sessions}
 			}
 		}
-		_ = json.NewEncoder(w).Encode(data)
+		_ = json.NewEncoder(w).Encode(paginatedBoardFixture(t, r, data))
 	}))
 	defer server.Close()
 	for _, size := range []struct {

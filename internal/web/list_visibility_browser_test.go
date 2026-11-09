@@ -30,7 +30,7 @@ func TestListVisibilityBrowser(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/namespaces":
 			data = []string{"default"}
-		case "/api/board":
+		case "/api/board", "/api/board/list":
 			data = map[string]any{"tasks": []any{map[string]any{"id": 1, "name": "Visibility fixture", "status": "todo"}}, "agents": []any{map[string]any{"name": "coder"}, map[string]any{"name": "reviewer"}}, "sessions": []any{map[string]any{"task_id": 1, "agent": "coder", "status": "running"}, map[string]any{"task_id": 1, "agent": "reviewer", "status": "running"}}}
 		case "/api/status":
 			names := []string{"coder"}
@@ -43,7 +43,7 @@ func TestListVisibilityBrowser(t *testing.T) {
 		case "/api/library":
 			data = map[string]any{"agents": []any{}, "tags": []any{}}
 		}
-		json.NewEncoder(w).Encode(data)
+		json.NewEncoder(w).Encode(paginatedBoardFixture(t, r, data))
 	}))
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)

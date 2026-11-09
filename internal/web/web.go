@@ -137,6 +137,8 @@ func dashboardHandler(repo Repository, objects app.Objects, selected string) htt
 				code, message = http.StatusNotFound, "Resource not found"
 			} else if errors.Is(err, app.ErrForbidden) {
 				code, message = http.StatusForbidden, "Permission denied"
+			} else if errors.Is(err, app.ErrColumnPaginationUnavailable) {
+				code, message = http.StatusNotImplemented, "Column pagination unavailable"
 			}
 			w.WriteHeader(code)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
@@ -251,6 +253,8 @@ func dashboardHandler(repo Repository, objects app.Objects, selected string) htt
 		}
 		write(w, map[string]any{"agents": agentViews, "tags": tagViews}, nil)
 	})
+	mux.HandleFunc("GET /api/board/list", listBoard(repo, write))
+	mux.HandleFunc("GET /api/palette/tasks", paletteTasks(repo, write))
 	mux.HandleFunc("GET /api/board", func(w http.ResponseWriter, r *http.Request) {
 		tasks, err := repo.Tasks(r.Context())
 		if err != nil {

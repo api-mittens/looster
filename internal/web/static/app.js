@@ -3,8 +3,9 @@ import {appendOutput} from './output.mjs';
 import {patchHTML} from './refresh.mjs';
 import {renderMarkdown} from './markdown.mjs';
 import {serversHTML,behavioursHTML,ruleLabel} from './views.mjs';
+import {columnPaginationHTML} from './pagination.mjs';
 import {searchItems} from './search.mjs';
-import {sortTasksForColumn,sortTasksByLatestActivity,taskCardHTML,sessionCardHTML,boardAgentNames,activeTasklessSessions,isTasklessSession,taskSessionCardHTML} from './board.mjs';
+import {taskCardHTML,sessionCardHTML,boardAgentNames,activeTasklessSessions,isTasklessSession,taskSessionCardHTML} from './board.mjs';
 import {attachmentsHTML,attachmentUploadHTML} from './attachments.mjs';
 import {runHistoryHTML,runDetailHTML} from './agent-runs.mjs';
 import './workflow.js';
@@ -35,7 +36,7 @@ class LoosterBoard extends HTMLElement {
     this.querySelector('#global-search').onclick = () => this.openPalette();
     this.querySelector('#create-close').onclick = () => this.createDialog.close();
     this.querySelector('#create-form').onsubmit = e => this.submitCreate(e);
-    this.paletteInput.oninput = () => this.renderPalette();
+    this.paletteInput.oninput = () => { this.renderPalette(); this.loadPaletteTasks(); };
     this.paletteInput.onkeydown = e => this.paletteKey(e);
     this.palette.querySelector('.palette-results').onclick = e => { const row = e.target.closest('[data-index]'); if(row) this.selectPalette(Number(row.dataset.index)); };
     this.querySelector('header > span').outerHTML = '<nav aria-label="Main navigation"><a href="#graph">Graph <kbd>gg</kbd></a><a href="#board">List <kbd>gl</kbd></a><a href="#servers">Servers <kbd>gs</kbd></a><a href="#system">Behaviours <kbd>gb</kbd></a></nav>';
@@ -81,12 +82,12 @@ class LoosterBoard extends HTMLElement {
       e.preventDefault(); const form=e.target, id=this.detailID;
       if(await this.saveCreation(form,async () => ({taskID:id,eventID:(await this.post(`/api/tasks/TSK-${id}/comments`,{body:form.elements.body.value})).event_id}))) await this.loadDetail(id);
     };
-    this.search.oninput = () => this.render();
+    this.search.oninput = () => this.filterTasks();
     this.querySelector('#refresh').onclick = () => this.refresh();
     this.querySelector('#close').onclick = () => this.dialog.close();
     this.querySelector('#help').onclick = () => this.showHelp();
     this.dialog.onclose = () => { if(this.dialog.open) return; this.agentInspection = null; this.detailID = null; if(this.page === 'board') this.focus(); else if(this.returnFocus?.isConnected) this.returnFocus.focus(); };
-    this.board.onclick = e => { const card = e.target.closest('task-card'); if(card && !card.dataset.id) { const button = card.querySelector('[data-session-agent]'); if(button) this.openAgent(button.dataset.sessionAgent,button.dataset.sessionJob); } else if (card?.dataset.id) this.open(Number(card.dataset.id),card.dataset.key.startsWith('agent:') ? card.dataset.key.slice(6).split('/')[0] : ''); };
+    this.board.onclick = e => { const page = e.target.closest('[data-column-page]'); if(page) { this.changeColumnPage(page.dataset.column,Number(page.dataset.columnPage)); return; } const retry = e.target.closest('[data-column-retry]'); if(retry) { this.refresh(); return; } const card = e.target.closest('task-card'); if(card && !card.dataset.id) { const button = card.querySelector('[data-session-agent]'); if(button) this.openAgent(button.dataset.sessionAgent,button.dataset.sessionJob); } else if (card?.dataset.id) this.open(Number(card.dataset.id),card.dataset.key.startsWith('agent:') ? card.dataset.key.slice(6).split('/')[0] : ''); };
     this.board.onpointerover = e => this.highlight(e.target.closest('task-card')?.dataset.id);
     this.board.onpointerleave = () => this.highlight(document.activeElement.closest('task-card')?.dataset.id);
     this.board.addEventListener('focusin',e => { const c = e.target.closest('task-card'); if (c) { this.selected = c.dataset.key; this.highlight(c.dataset.id); this.roving(c); } });
@@ -127,7 +128,7 @@ class LoosterBoard extends HTMLElement {
   switchNamespace(namespace) {
     this.agentInspection = null; this.sessionInspection = null;
     this.controller.abort(); this.controller = new AbortController(); this.generation++;
-    this.namespace = namespace; this.goPrefix = 0; this.scheduleRuns = {};
+    this.namespace = namespace; this.columnPages = {}; this.listRevision = (this.listRevision || 0)+1; this.paletteTasks = []; this.listError = ''; this.goPrefix = 0; this.scheduleRuns = {};
     for(const dialog of this.querySelectorAll('dialog')) if(dialog.open) dialog.close();
     this.detailID = null; this.outputs = new Map(); this.comments = new Map(); this.detailQueued = false;
     this.cursor = 0; this.commentCursor = 0; this.logAgent = ''; this.selected = null;
@@ -172,20 +173,30 @@ class LoosterBoard extends HTMLElement {
   }
   async refresh() {
     if (this.loading) { this.refreshQueued = true; return; } this.loading = true;
-    const generation = this.generation;
+    const generation = this.generation, route = this.page, revision = this.listRevision || 0;
+    const list = route !== 'graph';
+    this.listPending = list; this.listError = ''; if(list) this.render();
     try {
-      const requests = [['board','/api/board'],['status','/api/status'],['system','/api/system']];
+      const params = `search=${encodeURIComponent(this.search.value.trim())}&pages=${encodeURIComponent(JSON.stringify(this.columnPages || {}))}`;
+      const requests = [['board',list ? '/api/board/list?'+params : '/api/board'],['status','/api/status'],['system','/api/system']];
       requests.push(['library','/api/library'],['manifests','/api/manifests']);
       const results = await Promise.allSettled(requests.map(([,path]) => this.api(path)));
       if(generation !== this.generation) return;
       const failures=[];
       for(let i=0;i<requests.length;i++) {
         const [name] = requests[i], result=results[i];
-        if(result.status==='fulfilled') this[name === 'board' ? 'data' : name]=result.value;
-        else failures.push(name+' data unavailable');
+        if(name === 'board' && (route !== this.page || revision !== (this.listRevision || 0))) continue;
+        if(result.status==='fulfilled') {
+          this[name === 'board' ? 'data' : name]=result.value;
+          if(name === 'board' && list) {
+            this.columnPages ||= {};
+            for(const column of result.value.columns || []) this.columnPages[column.key] = column.page;
+          }
+        } else { failures.push(name+' data unavailable'); if(name === 'board' && list) this.listError = 'Could not load columns. Retry or wait for automatic refresh.'; }
       }
+      this.listPending = false;
       if(this.data) {for(const k of ['tasks','agents','sessions']) this.data[k] ||= [];this.render();}
-      if(this.palette.open) this.renderPalette();
+      if(this.palette.open) { if(list) await this.loadPaletteTasks(); else this.renderPalette(); }
       this.querySelector('#notice').textContent = failures.join(' · ');
       this.querySelector('#sync').textContent = 'Updated ' + new Date().toLocaleTimeString();
       if(this.sessionDialog?.open && this.sessionInspection) {
@@ -195,10 +206,19 @@ class LoosterBoard extends HTMLElement {
       if (this.detailID) await this.loadDetail(this.detailID);
     }
     catch (e) { if(generation === this.generation) this.querySelector('#notice').textContent = e.message; }
-    finally { this.loading = false; if(this.refreshQueued) { this.refreshQueued=false; queueMicrotask(() => this.refresh()); } }
+    finally { this.loading = false; this.listPending = false; if(this.refreshQueued) { this.refreshQueued=false; queueMicrotask(() => this.refresh()); } }
+  }
+  filterTasks() {
+    if(this.page === 'graph') { this.render(); return; }
+    this.columnPages = {}; this.listRevision = (this.listRevision || 0)+1; this.refresh();
+  }
+  changeColumnPage(key,page) {
+    if(this.listPending || !Number.isInteger(page) || page < 1) return;
+    this.columnPages = {...this.columnPages,[key]:page}; this.listRevision = (this.listRevision || 0)+1;
+    this.refresh();
   }
   render() {
-    if (!this.data) return;
+    if (!this.data) { this.querySelector('#notice').textContent = this.listError || 'Loading…'; return; }
     this.querySelectorAll('nav a').forEach(a => { if(a.hash === '#'+this.page) a.setAttribute('aria-current','page'); else a.removeAttribute('aria-current'); });
     const other = ['graph','servers','system'].includes(this.page);
     this.board.hidden = other; this.querySelector('#page').hidden = !other;
@@ -211,13 +231,15 @@ class LoosterBoard extends HTMLElement {
     this.querySelector('h1').textContent = this.page === 'graph' ? 'Task graph' : this.page === 'servers' ? 'Servers & agents' : this.page === 'system' ? 'Behaviours' : 'Task list';
     this.querySelector('main > p').textContent = this.page === 'graph' ? 'Explore tasks by status, tags and search. Planning and todo are shown by default. Animated links show active work, quiet links show past sessions.' : this.page === 'servers' ? 'Live workers, agent coverage, and interrupted sessions.' : this.page === 'system' ? 'How work moves through the factory.' : 'Follow tasks from planning through closure.';
     if(other) { this.renderPage(); return; }
-    const focused = this.board.contains(document.activeElement), q = this.search.value.toLowerCase().trim();
-    const tasks = sortTasksByLatestActivity(this.data.tasks.filter(t => [t.name,t.description,t.status,`TSK-${t.id}`,...(t.tags || []),...this.data.sessions.filter(s => s.task_id === t.id).map(s => s.agent)].join(' ').toLowerCase().includes(q)));
+    const focused = this.board.contains(document.activeElement);
+    const pages = new Map((this.data.columns || []).map(column => [column.key,column]));
+    const column = key => pages.get(key) || {key,tasks:[],total:0,page:1,page_size:15};
     const names = boardAgentNames(this.data.agents,this.data.sessions);
-    const cols = [...(this.stagesCollapsed ? [] : stages.map(s => ({key:s,label:s[0].toUpperCase()+s.slice(1),rows:sortTasksForColumn(tasks.filter(t => t.status === s),s).map(task => ({task}))}))),...names.map(n => ({key:'agent:'+n,label:'@ '+n,agent:true,online:(this.status?.workers || []).some(w => w.agents.includes(n)),rows:sortTasksForColumn(tasks,'agent').flatMap(task => this.data.sessions.filter(s => s.task_id === task.id && s.agent === n && s.status === 'running').map(session => ({task,session})))}))];
+    const cols = [...(this.stagesCollapsed ? [] : stages.map(s => ({...column(s),label:s[0].toUpperCase()+s.slice(1),rows:column(s).tasks.map(task => ({task}))}))),...names.map(n => ({...column('agent:'+n),label:'@ '+n,agent:true,online:(this.status?.workers || []).some(w => w.agents.includes(n)),rows:column('agent:'+n).tasks.map(task => ({task,session:this.data.sessions.find(s => s.task_id === task.id && s.agent === n && s.status === 'running')}))}))];
     cols.push({key:'other-sessions',label:'Other sessions',rows:activeTasklessSessions(this.data.sessions).map(session => ({session}))});
-    this.querySelector('#summary').textContent = `${tasks.length} tasks · ${this.data.sessions.filter(s => s.status === 'running').length} running`;
-    patchHTML(this.board,cols.filter(col => !col.agent || col.online || !this.offlineAgentsCollapsed).map(col => `<section data-refresh-key="${esc(col.key)}" class="column${col.agent ? ' agent' : ''}"><h2><span class="dot ${col.agent && !col.online ? 'offline' : ''}"></span>${esc(col.label)}${col.agent ? `<span class="muted">${col.online ? 'online' : 'offline'}</span>` : ''}<span class="count">${col.rows.length}</span></h2><div class="cards">${col.rows.map(row => `<task-card ${row.task ? `data-id="${esc(row.task.id)}"` : ''}${row.session?.job_id != null ? ` data-job-id="${esc(row.session.job_id)}"` : ''} data-key="${esc(col.key+'/'+(row.session?.job_id != null ? 'job:'+row.session.job_id : row.task.id))}">${row.task ? taskCardHTML(row.task,row.session) : sessionCardHTML(row.session)}</task-card>`).join('') || '<div class="empty">No tasks here</div>'}</div></section>`).join(''));
+    const total = stages.reduce((sum,key) => sum+column(key).total,0);
+    this.querySelector('#summary').textContent = `${total} tasks · ${this.data.sessions.filter(s => s.status === 'running').length} running`;
+    patchHTML(this.board,cols.filter(col => !col.agent || col.online || !this.offlineAgentsCollapsed).map(col => `<section data-refresh-key="${esc(col.key)}" class="column${col.agent ? ' agent' : ''}"><h2><span class="dot ${col.agent && !col.online ? 'offline' : ''}"></span>${esc(col.label)}${col.agent ? `<span class="muted">${col.online ? 'online' : 'offline'}</span>` : ''}<span class="count">${col.total ?? col.rows.length}</span></h2><div class="cards" aria-busy="${!!this.listPending}">${col.rows.map(row => `<task-card ${row.task ? `data-id="${esc(row.task.id)}"` : ''}${row.session?.job_id != null ? ` data-job-id="${esc(row.session.job_id)}"` : ''} data-key="${esc(col.key+'/'+(row.session?.job_id != null ? 'job:'+row.session.job_id : row.task.id))}">${row.task ? taskCardHTML(row.task,row.session) : sessionCardHTML(row.session)}</task-card>`).join('') || '<div class="empty">No tasks here</div>'}</div>${col.key === 'other-sessions' ? '' : columnPaginationHTML(col,{pending:!!this.listPending,error:this.listError})}</section>`).join(''));
     const cards = [...this.board.querySelectorAll('task-card')], current = cards.find(c => c.dataset.key === this.selected) || cards[0];
     this.selected = current?.dataset.key; this.roving(current); if (focused && !this.board.contains(document.activeElement)) current?.querySelector('button').focus({preventScroll:true}); this.highlight(this.board.querySelector('task-card:hover')?.dataset.id || (focused ? current?.dataset.id : null));
   }
@@ -246,7 +268,8 @@ class LoosterBoard extends HTMLElement {
       const title = `TSK-${id} · ${d.task.name}`;
       patchHTML(this.querySelector('#dialog-title'),esc(title));
       if (!this.panel.querySelector('#task-status')) this.panel.innerHTML = '<div class="task-status-control"><label for="task-status">Status</label><select id="task-status" aria-label="Task status"><option value="planning">Planning</option><option value="todo">Todo</option><option value="validated">Validated</option><option value="closed">Closed</option></select><span id="status-error" class="form-error" role="alert"></span></div><div class="description markdown-body" id="task-description"></div><div id="description-attachments"></div><p id="attachment-notice" class="form-error" role="status"></p><div id="tag-context"></div><h3>Comments</h3><div id="task-comments"></div><form id="comment-form"><label>Add comment <textarea name="body" rows="3" required aria-describedby="comment-mention-hint"></textarea></label><p id="comment-mention-hint" class="muted">Mention @registered-agent to request a run on this task. Unknown agent names are ignored.</p>'+attachmentUploadHTML()+'<p class="form-error" role="alert"></p><button type="submit">Post comment</button></form><h3>Sessions</h3><div id="sessions"></div>';
-      if(!this.panel.querySelector('#task-status').disabled) this.panel.querySelector('#task-status').value = d.task.status;
+      const statusSelect = this.panel.querySelector('#task-status');
+      if(!statusSelect.disabled) { statusSelect.value = d.task.status; statusSelect.dataset.previous = d.task.status; }
       patchHTML(this.panel.querySelector('#task-description'),renderMarkdown(d.task.description || 'No description.'));
       const contextHTML = (d.context?.tags || []).map(t => `<details class="context-card" data-refresh-key="${esc(t.id ?? t.name)}"><summary>Tag: ${esc(t.name)} · ${(t.memories || []).length} memories</summary><pre>${esc(t.description)}</pre>${this.memoryHTML(t.memories)}</details>`).join('');
       patchHTML(this.panel.querySelector('#tag-context'),contextHTML);
@@ -353,7 +376,7 @@ class LoosterBoard extends HTMLElement {
     }
   }
   async changeStatus(select) {
-    const id = this.detailID, previous = this.data?.tasks?.find(t => t.id === id)?.status || select.dataset.previous || 'planning';
+    const id = this.detailID, previous = select.dataset.previous || this.data?.tasks?.find(t => t.id === id)?.status || 'planning';
     select.disabled = true; this.panel.querySelector('#status-error').textContent = '';
     try { await this.post(`/api/tasks/TSK-${id}/status`,{status:select.value}); select.dataset.previous = select.value; await this.refresh(); }
     catch(err) { if(err.name !== 'AbortError' && select.isConnected) { select.value = previous; this.panel.querySelector('#status-error').textContent = err.message; } }
@@ -490,7 +513,7 @@ class LoosterBoard extends HTMLElement {
   }
   searchIndex() {
     const items = [];
-    for(const t of this.data?.tasks || []) items.push({key:`task:${t.id}`,kind:'Task',label:`TSK-${t.id} · ${t.name}`,detail:t.description || t.status,search:`TSK-${t.id} ${t.name} ${t.description} ${t.status} ${(t.tags || []).join(' ')}`,open:() => this.open(t.id)});
+    for(const t of (this.page === 'graph' ? this.data?.tasks : this.paletteTasks) || []) items.push({key:`task:${t.id}`,kind:'Task',label:`TSK-${t.id} · ${t.name}`,detail:t.description || t.status,search:`TSK-${t.id} ${t.name} ${t.description} ${t.status} ${(t.tags || []).join(' ')}`,open:() => this.open(t.id)});
     for(const a of this.library?.agents || this.data?.agents || []) items.push({key:`agent:${a.name}`,kind:'Agent',label:`@ ${a.name}`,detail:a.description || '',search:`agent ${a.name} ${a.description || ''} ${(a.memories || []).map(m => m.body).join(' ')}`,open:() => this.openAgent(a.name)});
     for(const t of this.library?.tags || []) items.push({key:`tag:${t.name}`,kind:'Tag',label:`# ${t.name}`,detail:t.description || '',search:`tag ${t.name} ${t.description || ''} ${(t.memories || []).map(m => m.body).join(' ')}`,open:() => { location.hash = 'system'; setTimeout(() => this.querySelector(`[data-tag="${CSS.escape(t.name)}"]`)?.scrollIntoView({block:'center'}),0); }});
     for(const r of (this.system?.behaviours || []).filter(r => !['prompt','agent','tag'].includes(r.trigger))) items.push({key:`workflow:${JSON.stringify([r.trigger,r.source || '',r.target,r.interval_seconds || 0,r.tag_pattern || '',Boolean(r.tag_negated)])}`,kind:'Workflow',label:ruleLabel(r),detail:r.prompt || '',search:`workflow ${ruleLabel(r)} ${r.trigger.startsWith('stop_') ? 'verified stop pinging' : ''} ${r.source || ''} ${r.prompt || ''}`,open:() => { location.hash = 'system'; setTimeout(() => this.querySelector('workflow-graph')?.scrollIntoView({block:'center'}),0); }});
@@ -499,7 +522,18 @@ class LoosterBoard extends HTMLElement {
     items.unshift({key:'action:create',kind:'Action',label:'Create task',detail:'Add a new task',search:'new create add task',open:() => this.openCreate('task')});
     return items;
   }
-  openPalette() { this.paletteReturnFocus = document.activeElement; this.paletteInput.value=''; this.paletteItems = []; this.paletteQuery = null; this.paletteSelection=0; this.palette.showModal(); this.renderPalette(); this.paletteInput.focus(); }
+  async loadPaletteTasks() {
+    if(this.page === 'graph') return;
+    const query = this.paletteInput.value.trim(), generation = this.generation;
+    const request = this.paletteRequest = (this.paletteRequest || 0)+1;
+    try {
+      const data = await this.api('/api/palette/tasks?search='+encodeURIComponent(query));
+      if(generation !== this.generation || request !== this.paletteRequest || !this.palette.open) return;
+      this.paletteTasks = data.tasks || [];
+      this.renderPalette();
+    } catch(e) { if(e.name !== 'AbortError' && generation === this.generation && request === this.paletteRequest) this.palette.querySelector('.palette-results').insertAdjacentHTML('beforeend','<p class="muted" role="status">Task search unavailable. Try again.</p>'); }
+  }
+  openPalette() { this.paletteReturnFocus = document.activeElement; this.paletteInput.value=''; this.paletteTasks=[]; this.paletteItems = []; this.paletteQuery = null; this.paletteSelection=0; this.palette.showModal(); this.renderPalette(); this.loadPaletteTasks(); this.paletteInput.focus(); }
   renderPalette() {
     const selected = this.paletteItems?.[this.paletteSelection]?.key;
     const sameQuery = this.paletteQuery === this.paletteInput.value;
@@ -559,7 +593,7 @@ class LoosterBoard extends HTMLElement {
     if(this.sessionDialog?.open) { if(e.target.matches('select,input,textarea,[contenteditable]')) return; this.scrollMotion(e,e.target.closest('#task-session-output') || this.sessionDialog.querySelector('.detail')); return; }
     if (this.dialog.open) { if(e.target.matches('select,input,textarea,[contenteditable]')) return; this.scrollMotion(e,this.panel); return; }
     if (e.target.matches('select')) return;
-    if (e.target.matches('input,textarea,[contenteditable]')) { if (e.key === 'Escape') { e.preventDefault(); this.search.value = ''; this.render(); this.focus(); } if (e.key === 'Enter') { e.preventDefault(); this.focus(); } return; }
+    if (e.target.matches('input,textarea,[contenteditable]')) { if (e.key === 'Escape') { e.preventDefault(); this.search.value = ''; this.filterTasks(); this.focus(); } if (e.key === 'Enter') { e.preventDefault(); this.focus(); } return; }
     if(e.repeat && (e.key === 'g' || this.goPrefix)) { e.preventDefault(); return; }
     const goPage = {g:'graph',l:'board',s:'servers',b:'system'};
     if(this.goPrefix && Date.now()-this.goPrefix < 700) {
@@ -572,7 +606,7 @@ class LoosterBoard extends HTMLElement {
     if (e.key === 'r') { e.preventDefault(); this.refresh(); return; }
     if(e.key === 'n' && ['board','graph'].includes(this.page)) { e.preventDefault(); this.openCreate('task'); return; }
     if (e.key === 's' && this.page === 'board') { e.preventDefault(); this.toggleStages(); return; }
-    if (e.key === 'Escape') { this.search.value = ''; this.render(); this.focus(); return; }
+    if (e.key === 'Escape') { this.search.value = ''; this.filterTasks(); this.focus(); return; }
     if (['graph','servers','system'].includes(this.page)) {
       this.scrollMotion(e,document.scrollingElement || document.documentElement); return;
     }
