@@ -136,7 +136,7 @@ func (a *application) command() *cobra.Command {
 		fmt.Fprintln(c.OutOrStdout(), "Database migrated")
 		return nil
 	}})
-	root.AddCommand(db)
+	root.AddCommand(db, a.configureCommand())
 	return root
 }
 func (a *application) load() error {

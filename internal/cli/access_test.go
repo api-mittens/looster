@@ -20,6 +20,8 @@ func TestAgentAdministrativeCommandsDeniedBeforeDatabase(t *testing.T) {
 		{"behaviour", "create"},
 		{"serve"},
 		{"db", "migrate"},
+		{"configure", "storage"},
+		{"configure", "storage", "--ducklake"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
