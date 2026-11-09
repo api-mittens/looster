@@ -185,7 +185,7 @@ func TestColumnPaginationPostgresBrowser(t *testing.T) {
 	check(`document.querySelector('[data-refresh-key="validated"] [aria-label="Next page for validated"]').disabled && !document.querySelector('[data-refresh-key="todo"] [aria-label="Next page for todo"]').disabled`)
 	// Controls sit after cards and are ordinary keyboard-operable buttons.
 	check(`document.querySelector('[data-refresh-key="todo"] .cards').nextElementSibling.classList.contains('column-pagination')`)
-	evaluate(`{const b=document.querySelector('looster-board');b.openPalette();b.paletteInput.value='Needle beyond';b.paletteInput.dispatchEvent(new Event('input'));}`)
+	evaluate(`{const b=document.querySelector('looster-board');b.openPalette();b.paletteInput.value='ndlbynd';b.paletteInput.dispatchEvent(new Event('input'));}`)
 	check(`document.querySelector('#palette').open && document.querySelector('#palette .palette-results').textContent.includes('Needle beyond first page')`)
 	evaluate(`document.querySelector('#palette').close()`)
 	delay.Store(true)

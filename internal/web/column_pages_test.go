@@ -98,3 +98,19 @@ func TestListBoardValidationAndErrors(t *testing.T) {
 		t.Fatalf("unbounded fallback: %d", response.Code)
 	}
 }
+
+func TestListBoardFuzzyIsExplicitOptIn(t *testing.T) {
+	for _, flag := range []string{"", "false", "true"} {
+		repo := &pagedRepo{}
+		response := httptest.NewRecorder()
+		Handler(repo).ServeHTTP(response, httptest.NewRequest("GET", "/api/board/list?search=ndlbynd&fuzzy="+flag, nil))
+		if response.Code != 200 || len(repo.queries) == 0 {
+			t.Fatalf("fuzzy=%q: %d %s", flag, response.Code, response.Body)
+		}
+		for _, q := range repo.queries {
+			if q.Fuzzy != (flag == "true") {
+				t.Fatalf("fuzzy flag not forwarded: %+v", q)
+			}
+		}
+	}
+}

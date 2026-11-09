@@ -527,7 +527,7 @@ class LoosterBoard extends HTMLElement {
     const query = this.paletteInput.value.trim(), generation = this.generation;
     const request = this.paletteRequest = (this.paletteRequest || 0)+1;
     try {
-      const data = await this.api('/api/board/list?search='+encodeURIComponent(query));
+      const data = await this.api('/api/board/list?fuzzy=true&search='+encodeURIComponent(query));
       if(generation !== this.generation || request !== this.paletteRequest || !this.palette.open) return;
       this.paletteTasks = [...new Map((data.columns || []).filter(c => stages.includes(c.key)).flatMap(c => c.tasks).map(t => [t.id,t])).values()];
       this.renderPalette();

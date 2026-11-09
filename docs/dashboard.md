@@ -73,6 +73,10 @@ are removed or move between columns, the server clamps an unavailable last page
 to the new last page, including an empty first page.
 
 List search runs against the entire selected namespace, not just loaded cards.
+List uses case-insensitive substring matching. The global command palette opts
+into `fuzzy=true` on the same bounded endpoint for ordered-character matching,
+then ranks returned candidates with its existing client-side fuzzy scorer.
+Regex-shaped input remains literal, not executable regular expression syntax.
 It matches task name, description, status, `TSK-ID`, tags and associated agents.
 Planning, todo and agent columns promote historical blocker logs before question
 logs, then sort by latest activity with ascending task ID as a tie-breaker.

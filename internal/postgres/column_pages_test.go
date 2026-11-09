@@ -122,6 +122,24 @@ func TestColumnTasksBoundariesSearchAndClamp(t *testing.T) {
 				}
 			}
 			if n == 31 {
+				for _, fuzzy := range []bool{false, true} {
+					got, err := s.ColumnTasks(ctx, task.ColumnQuery{Key: "todo", Search: "dscrptn30", Fuzzy: fuzzy})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if fuzzy && (got.Total != 1 || len(got.Tasks) != 1 || got.Tasks[0].ID != ids[30]) {
+						t.Fatalf("off-page fuzzy match: %+v", got)
+					}
+					if !fuzzy && got.Total != 0 {
+						t.Fatalf("List must remain substring search: %+v", got)
+					}
+				}
+				for _, search := range []string{".*", "[", "\\", "(a+)+$"} {
+					got, err := s.ColumnTasks(ctx, task.ColumnQuery{Key: "todo", Search: search, Fuzzy: true})
+					if err != nil || got.Total != 0 {
+						t.Fatalf("regex input must remain literal %q: %+v %v", search, got, err)
+					}
+				}
 				for _, search := range []string{"Task 30", "Description 30", task.ID(ids[30])} {
 					got, err := s.ColumnTasks(ctx, task.ColumnQuery{Key: "todo", Page: 3, Search: search})
 					if err != nil {

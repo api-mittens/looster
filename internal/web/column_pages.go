@@ -85,7 +85,7 @@ func listBoard(repo Repository, write func(http.ResponseWriter, any, error)) htt
 			if page == 0 {
 				page = 1
 			}
-			column, err := pager.ColumnTasks(r.Context(), task.ColumnQuery{Key: key, Search: search, Page: page, ActiveTaskIDs: active[strings.TrimPrefix(key, "agent:")]})
+			column, err := pager.ColumnTasks(r.Context(), task.ColumnQuery{Key: key, Search: search, Fuzzy: r.URL.Query().Get("fuzzy") == "true", Page: page, ActiveTaskIDs: active[strings.TrimPrefix(key, "agent:")]})
 			if err != nil {
 				write(w, nil, err)
 				return

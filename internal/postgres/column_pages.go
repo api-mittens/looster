@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/api-mittens/looster/internal/app"
@@ -32,11 +33,25 @@ func (s *Store) ColumnTasks(ctx context.Context, q task.ColumnQuery) (task.Colum
 	if ids == nil {
 		ids = []int64{}
 	}
-	filter := ` FROM tasks t WHERE (($1::boolean AND t.id=ANY($2::bigint[])) OR (NOT $1 AND t.status=$3))
- AND ($4='' OR strpos(lower(concat_ws(' ',t.name,t.description,t.status,'TSK-'||t.id,
+	haystack := `lower(concat_ws(' ',t.name,t.description,t.status,'TSK-'||t.id,
  (SELECT string_agg(g.name,' ') FROM tags g JOIN task_tags tt ON tt.tag_id=g.id WHERE tt.task_id=t.id),
- (SELECT string_agg(s.agent_name,' ') FROM sessions s WHERE s.task_id=t.id))),$4)>0)`
-	args := []any{agentColumn, ids, q.Key, strings.ToLower(strings.TrimSpace(q.Search))}
+ (SELECT string_agg(s.agent_name,' ') FROM sessions s WHERE s.task_id=t.id)))`
+	search := strings.ToLower(strings.TrimSpace(q.Search))
+	match := "strpos(" + haystack + ",$4)>0"
+	if q.Fuzzy {
+		haystack = strings.Replace(haystack, "t.name,t.description,t.status,'TSK-'||t.id", "'TSK-'||t.id,t.name,t.description,t.status", 1)
+		// Quote each character before joining so user input cannot introduce
+		// regex operators, repetitions or pathological backtracking patterns.
+		characters := []string{}
+		for _, character := range search {
+			characters = append(characters, regexp.QuoteMeta(string(character)))
+		}
+		search = strings.Join(characters, ".*")
+		match = haystack + " ~ $4"
+	}
+	filter := ` FROM tasks t WHERE (($1::boolean AND t.id=ANY($2::bigint[])) OR (NOT $1 AND t.status=$3))
+ AND ($4='' OR ` + match + `)`
+	args := []any{agentColumn, ids, q.Key, search}
 	tx, err := s.Pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return out, err

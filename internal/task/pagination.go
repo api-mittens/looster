@@ -6,7 +6,9 @@ const ColumnPageSize = 15
 type ColumnQuery struct {
 	Key    string
 	Search string
-	Page   int
+	// Fuzzy enables ordered-character matching for the command palette only.
+	Fuzzy bool
+	Page  int
 	// ActiveTaskIDs comes from the server's live session metadata, not the client.
 	ActiveTaskIDs []int64
 }
