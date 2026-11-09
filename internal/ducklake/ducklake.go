@@ -1,8 +1,11 @@
 // Package ducklake provides an optional, external DuckDB CLI boundary. Nothing
 // is started until Open is called. It does not provision PostgreSQL databases.
 //
-// Prerequisites: DuckDB 1.5.2 with official ducklake 1.0, postgres and httpfs
-// extensions installed for that engine. Installation is deliberately an operator
+// Prerequisites: DuckDB 1.5.2 with official DuckLake format 1.0 extensions:
+// ducklake build 415a9ebd, postgres_scanner c89234f and httpfs 13e18b3.
+// Install with the pinned CLI using stdin SQL: INSTALL ducklake; INSTALL postgres;
+// INSTALL httpfs; then retain those signed artifacts in its extension directory.
+// Installation is deliberately an operator
 // task, not an implicit download. See https://ducklake.select/release_calendar
 // and https://ducklake.select/docs/1.0/duckdb/usage/connecting.
 package ducklake
@@ -23,6 +26,12 @@ import (
 
 const EngineVersion = "v1.5.2"
 const DuckLakeVersion = "1.0"
+
+// Official core extension build IDs verified against EngineVersion. Runtime
+// requires these exact signed artifacts, not a moving extension release label.
+const DuckLakeExtensionVersion = "415a9ebd"
+const PostgresExtensionVersion = "c89234f"
+const HTTPFSExtensionVersion = "13e18b3"
 
 // Config must not be logged or serialized. CatalogConnection is a fully resolved
 // libpq KEY=VALUE string from the caller's PostgreSQL resolver, not a pgx TLS
@@ -53,6 +62,9 @@ func (l *Lake) String() string   { return "ducklake.Lake{values redacted}" }
 func (l *Lake) GoString() string { return l.String() }
 
 type runner func(context.Context, string, string) error
+
+// Validate checks configuration without starting DuckDB or contacting services.
+func Validate(c Config) error { _, err := prepare(c); return err }
 
 // Open initializes or attaches metadata. It does not prove S3 write access.
 func Open(ctx context.Context, c Config) (*Lake, error) { return open(ctx, c, runCLI) }
@@ -128,7 +140,7 @@ func prepare(c Config) (string, error) {
 	// Temporary secrets, no persistent secret storage. Never emit this SQL.
 	return "SELECT CASE WHEN version() = '" + EngineVersion + "' THEN true ELSE error('engine version mismatch') END;\n" +
 		"SET autoinstall_known_extensions=false; SET autoload_known_extensions=false;\nLOAD ducklake; LOAD postgres; LOAD httpfs;\n" +
-		"SELECT CASE WHEN EXISTS (SELECT 1 FROM duckdb_extensions() WHERE extension_name='ducklake' AND regexp_full_match(extension_version, 'v?" + strings.ReplaceAll(DuckLakeVersion, ".", "[.]") + "([.]0)?')) THEN true ELSE error('extension version mismatch') END;\n" +
+		"SELECT CASE WHEN (SELECT count(*) FROM duckdb_extensions() WHERE loaded AND ((extension_name='ducklake' AND extension_version='" + DuckLakeExtensionVersion + "') OR (extension_name='postgres_scanner' AND extension_version='" + PostgresExtensionVersion + "') OR (extension_name='httpfs' AND extension_version='" + HTTPFSExtensionVersion + "'))) = 3 THEN true ELSE error('extension version mismatch') END;\n" +
 		"CREATE TEMPORARY SECRET looster_s3 (TYPE s3, PROVIDER config, KEY_ID " + quote(s.AccessKey) + ", SECRET " + quote(s.SecretKey) + ", SESSION_TOKEN " + quote(s.SessionToken) + ", REGION " + quote(s.Region) + ", URL_STYLE 'path', SCOPE " + quote(c.DataPath) + endpoint + ");\n" +
 		"CREATE TEMPORARY SECRET looster_lake (TYPE ducklake, METADATA_PATH " + quote("postgres:"+c.CatalogConnection+" passfile='/dev/null'") + ", DATA_PATH " + quote(c.DataPath) + ");\n" +
 		"ATTACH 'ducklake:looster_lake' AS lake (DATA_INLINING_ROW_LIMIT 0, OVERRIDE_DATA_PATH false);\n", nil

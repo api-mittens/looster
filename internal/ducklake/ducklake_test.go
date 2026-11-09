@@ -17,6 +17,18 @@ func config() Config {
 	return Config{CatalogConnection: "host=localhost dbname=ducklake user=test password='pg-secret' sslmode=verify-full sslrootcert='/tmp/root.crt'", DataPath: "s3://bucket/disposable/", S3: objectstore.Config{AccessKey: "access-canary", SecretKey: "secret-canary", SessionToken: "token-canary", Endpoint: "http://localhost:4566"}}
 }
 
+func TestValidateOffline(t *testing.T) {
+	c := config()
+	c.Binary = "/nonexistent/duckdb"
+	if err := Validate(c); err != nil {
+		t.Fatal(err)
+	}
+	c.Namespace = "other"
+	if err := Validate(c); err == nil {
+		t.Fatal("expected validation failure")
+	}
+}
+
 func TestPrepare(t *testing.T) {
 	c := config()
 	sql, err := prepare(c)
@@ -226,5 +238,29 @@ func TestDisposableIntegration(t *testing.T) {
 	c := Config{Binary: os.Getenv("LOOSTER_TEST_DUCKDB"), CatalogConnection: os.Getenv("LOOSTER_TEST_DUCKLAKE_LIBPQ"), DataPath: os.Getenv("LOOSTER_TEST_DUCKLAKE_DATA_PATH"), S3: objectstore.Config{Endpoint: os.Getenv("LOOSTER_TEST_S3_ENDPOINT"), Region: os.Getenv("LOOSTER_TEST_S3_REGION"), AccessKey: os.Getenv("LOOSTER_TEST_S3_ACCESS_KEY"), SecretKey: os.Getenv("LOOSTER_TEST_S3_SECRET_KEY"), SessionToken: os.Getenv("LOOSTER_TEST_S3_SESSION_TOKEN")}}
 	if err := ProbeDisposable(ctx, c, true); err != nil {
 		t.Fatal(err)
+	}
+	l, err := Open(ctx, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = l.Exec(ctx, "SELECT CASE WHEN count(*)=0 THEN true ELSE error('probe table remains') END FROM duckdb_tables() WHERE database_name='lake' AND table_name LIKE 'looster_probe_%';"); err != nil {
+		t.Fatal(err)
+	}
+	// ATTACH alone must still succeed with an unreachable endpoint. A real
+	// write, unlike metadata initialization, must fail with sanitized diagnostics.
+	bad := c
+	bad.S3.Endpoint = "http://127.0.0.1:1"
+	l, err = Open(ctx, bad)
+	if err != nil {
+		t.Fatal("metadata-only attach unexpectedly required S3")
+	}
+	err = l.Exec(ctx, "COPY (SELECT 42 AS id) TO "+quote(c.DataPath+"bad-endpoint-probe.parquet")+" (FORMAT parquet);")
+	if err == nil {
+		t.Fatal("unreachable S3 endpoint accepted write")
+	}
+	for _, secret := range []string{c.CatalogConnection, c.S3.AccessKey, c.S3.SecretKey, c.S3.SessionToken, bad.S3.Endpoint} {
+		if secret != "" && strings.Contains(err.Error(), secret) {
+			t.Fatal("S3 failure leaked configured values")
+		}
 	}
 }
