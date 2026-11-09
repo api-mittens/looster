@@ -77,11 +77,14 @@ header{position:sticky;top:0;z-index:50;display:grid;grid-template-columns:minma
 .markdown-body hr{border:0;border-top:1px solid #d4d4d8;margin:1.5em 0}
 .run-list{display:grid;gap:.5rem}
 #sessions .session{width:100%;text-align:left;align-items:center}
-.task-session-summary{flex-basis:100%;white-space:pre-wrap;overflow-wrap:anywhere}
+.task-session-summary{flex-basis:100%;min-width:0}
+#sessions .session>*{min-width:0;max-width:100%;overflow-wrap:anywhere}
+#sessions .session>button{margin-left:auto}
 #session-dialog .detail{min-height:120px}
 .run-list button{text-align:left;overflow-wrap:anywhere}
 .run-pagination{display:flex;gap:.5rem;margin:1rem 0}
-.run-summary{white-space:pre-wrap;overflow-wrap:anywhere}
+.run-summary{min-width:0;max-width:100%;overflow-wrap:anywhere}
+pre.run-summary{white-space:pre-wrap}
 #selected-run dd{margin-bottom:.6rem;overflow-wrap:anywhere}
 /* Phones scroll the page vertically and each column's cards horizontally. */
 @media(max-width:650px){
