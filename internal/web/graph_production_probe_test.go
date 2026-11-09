@@ -9,8 +9,11 @@ const graphproductionProbe = `  await call('Network.enable');await call('Page.na
   await call('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:false});
   check(await evaluate(` + "`" + `(()=>{const r=board.querySelector('nav').getBoundingClientRect();return Math.abs(r.x+r.width/2-document.documentElement.clientWidth/2)<1&&document.documentElement.scrollWidth<=innerWidth&&[...board.querySelectorAll('.header-actions button')].every(b=>b.getBoundingClientRect().right<=innerWidth)})()` + "`" + `),'narrow header wraps centered navigation without horizontal overflow');
   await evaluate(` + "`" + `window.scrollTo(0,document.documentElement.scrollHeight)` + "`" + `);
-  check(await evaluate(` + "`" + `window.scrollY>0&&Math.abs(board.querySelector('header').getBoundingClientRect().top)<1&&board.querySelector('header').contains(document.elementFromPoint(20,20))` + "`" + `),'mobile header remains visible above content while scrolled');
+  // CDP evaluation can finish before Chromium applies the requested scroll.
+  await until(()=>evaluate(` + "`" + `window.scrollY>0&&Math.abs(window.scrollY-(document.documentElement.scrollHeight-innerHeight))<1` + "`" + `));
+  check(await evaluate(` + "`" + `window.scrollY>0&&getComputedStyle(board.querySelector('header')).position==='sticky'&&Math.abs(board.querySelector('header').getBoundingClientRect().top)<1&&board.querySelector('header').contains(document.elementFromPoint(20,20))` + "`" + `),'mobile header remains visible above content while scrolled');
   await evaluate(` + "`" + `window.scrollTo(0,0)` + "`" + `);
+  await until(()=>evaluate(` + "`" + `window.scrollY===0` + "`" + `));
   await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1100,deviceScaleFactor:1,mobile:false});
   for(const page of ['board','graph']){
    check(await evaluate(` + "`" + `(()=>{board.page='${page}';board.render();return board.querySelector('#refresh kbd')?.textContent==='r'&&board.querySelector('#new-task kbd')?.textContent==='n'&&board.querySelectorAll('nav a kbd').length===4&&!board.querySelector('.nav-hint')})()` + "`" + `),page+' shows header hints and Refresh r / New task n keycaps');
