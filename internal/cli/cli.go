@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/api-mittens/looster/internal/app"
+	"github.com/api-mittens/looster/internal/ducklake"
 	"github.com/api-mittens/looster/internal/jcode"
 	"github.com/api-mittens/looster/internal/namespace"
 	"github.com/api-mittens/looster/internal/objectstore"
@@ -31,13 +32,14 @@ import (
 var Version = "dev"
 
 type application struct {
-	v      *viper.Viper
-	repo   app.Repository
-	store  *postgres.Store
-	config string
+	v        *viper.Viper
+	repo     app.Repository
+	store    *postgres.Store
+	payloads *ducklake.PayloadStore
+	config   string
 }
 
-func Execute(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer) error {
+func Execute(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer) (retErr error) {
 	a := &application{v: viper.New()}
 	root := a.command()
 	root.SetArgs(args)
@@ -45,6 +47,9 @@ func Execute(ctx context.Context, args []string, in io.Reader, out, errOut io.Wr
 	root.SetOut(out)
 	root.SetErr(errOut)
 	defer func() {
+		if a.payloads != nil {
+			retErr = errors.Join(retErr, a.payloads.Close())
+		}
 		if a.store != nil {
 			a.store.Close()
 		}
@@ -104,6 +109,12 @@ func (a *application) command() *cobra.Command {
 			return e
 		}
 		a.store = s
+		payloads, e := a.openPayloadStore(cmd.Context(), v.GetString("namespace"))
+		if e != nil {
+			return fmt.Errorf("mandatory DuckLake startup: %w", e)
+		}
+		a.payloads = payloads
+		s.SetPayloadStore(payloads)
 		if actor.Role == app.Agent {
 			if _, err = s.Agent(cmd.Context(), actor.Name); err != nil {
 				return fmt.Errorf("agent %q: %w", actor.Name, err)

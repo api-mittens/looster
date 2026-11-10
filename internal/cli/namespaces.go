@@ -2,9 +2,11 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/api-mittens/looster/internal/app"
+	"github.com/api-mittens/looster/internal/ducklake"
 	"github.com/api-mittens/looster/internal/postgres"
 	"github.com/spf13/cobra"
 )
@@ -33,6 +35,8 @@ type webNamespaces struct {
 	mu            sync.Mutex
 	stores        map[string]*postgres.Store
 	repos         map[string]app.Repository
+	payloads      map[string]*ducklake.PayloadStore
+	openPayloads  func(context.Context, string) (*ducklake.PayloadStore, error)
 }
 
 var _ app.NamespaceProvider = (*webNamespaces)(nil)
@@ -51,18 +55,41 @@ func (p *webNamespaces) Repository(ctx context.Context, name string) (app.Reposi
 	if err != nil {
 		return nil, err
 	}
+	var payloads *ducklake.PayloadStore
+	if p.openPayloads != nil {
+		payloads, err = p.openPayloads(ctx, name)
+		if err != nil {
+			store.Close()
+			return nil, err
+		}
+		store.SetPayloadStore(payloads)
+	}
 	repo, err := app.WithPermissions(store, app.Actor{Role: app.Human})
 	if err != nil {
+		if payloads != nil {
+			err = errors.Join(err, payloads.Close())
+		}
 		store.Close()
 		return nil, err
+	}
+	if payloads != nil {
+		if p.payloads == nil {
+			p.payloads = map[string]*ducklake.PayloadStore{}
+		}
+		p.payloads[name] = payloads
 	}
 	p.stores[name], p.repos[name] = store, repo
 	return repo, nil
 }
-func (p *webNamespaces) Close() {
+func (p *webNamespaces) Close() error {
+	var closeErr error
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	for _, payloads := range p.payloads {
+		closeErr = errors.Join(closeErr, payloads.Close())
+	}
 	for _, store := range p.stores {
 		store.Close()
 	}
+	return closeErr
 }

@@ -23,7 +23,7 @@ func TestValidateOffline(t *testing.T) {
 	if err := Validate(c); err != nil {
 		t.Fatal(err)
 	}
-	c.Namespace = "other"
+	c.Namespace = "Invalid namespace"
 	if err := Validate(c); err == nil {
 		t.Fatal("expected validation failure")
 	}
@@ -62,7 +62,7 @@ func TestRejectBeforeEngine(t *testing.T) {
 		name   string
 		mutate func(*Config)
 	}{
-		{"namespace", func(c *Config) { c.Namespace = "tenant" }},
+		{"namespace", func(c *Config) { c.Namespace = "INVALID" }},
 		{"url", func(c *Config) { c.CatalogConnection = "postgres://password@localhost/db" }},
 		{"missing TLS policy", func(c *Config) { c.CatalogConnection = "host=x dbname=d user=u" }},
 		{"service", func(c *Config) { c.CatalogConnection += " service=canary" }},
@@ -279,7 +279,7 @@ func TestDisposableIntegration(t *testing.T) {
 		t.Fatal("missing engine accepted")
 	}
 	t.Setenv("HOME", t.TempDir())
-	if _, err := Open(ctx, c); err == nil {
-		t.Fatal("missing installed extensions accepted")
+	if _, err := Open(ctx, c); err != nil {
+		t.Fatal("automatic extension installation failed")
 	}
 }

@@ -16,13 +16,13 @@ import (
 
 func (a *application) webCommand() *cobra.Command {
 	var address string
-	cmd := &cobra.Command{Use: "web", Short: "Serve the task dashboard", Args: cobra.NoArgs, Annotations: map[string]string{"human": "true"}, RunE: func(c *cobra.Command, _ []string) error {
+	cmd := &cobra.Command{Use: "web", Short: "Serve the task dashboard", Args: cobra.NoArgs, Annotations: map[string]string{"human": "true"}, RunE: func(c *cobra.Command, _ []string) (retErr error) {
 		listener, err := net.Listen("tcp", address)
 		if err != nil {
 			return err
 		}
-		provider := &webNamespaces{url: a.v.GetString("database_url"), selected: a.v.GetString("namespace"), stores: map[string]*postgres.Store{}, repos: map[string]app.Repository{a.v.GetString("namespace"): a.repo}}
-		defer provider.Close()
+		provider := &webNamespaces{openPayloads: a.openPayloadStore, url: a.v.GetString("database_url"), selected: a.v.GetString("namespace"), stores: map[string]*postgres.Store{}, repos: map[string]app.Repository{a.v.GetString("namespace"): a.repo}}
+		defer func() { retErr = errors.Join(retErr, provider.Close()) }()
 		var objects app.Objects
 		if a.v.GetString("s3.bucket") != "" {
 			objects, err = a.objects(c.Context())

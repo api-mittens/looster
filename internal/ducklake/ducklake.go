@@ -1,26 +1,20 @@
-// Package ducklake provides an optional, external DuckDB CLI boundary. Nothing
-// is started until Open is called. It does not provision PostgreSQL databases.
-//
-// Prerequisites: DuckDB 1.5.2 with official DuckLake format 1.0 extensions:
-// ducklake build 415a9ebd, postgres_scanner c89234f and httpfs 13e18b3.
-// Install with the pinned CLI using stdin SQL: INSTALL ducklake; INSTALL postgres;
-// INSTALL httpfs; then retain those signed artifacts in its extension directory.
-// Installation is deliberately an operator
-// task, not an implicit download. See https://ducklake.select/release_calendar
-// and https://ducklake.select/docs/1.0/duckdb/usage/connecting.
+// Package ducklake bootstraps a pinned DuckDB CLI with signed extensions.
 package ducklake
 
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net/url"
 	"os"
 	"os/exec"
 	"strings"
 
+	"github.com/api-mittens/looster/internal/namespace"
 	"github.com/api-mittens/looster/internal/objectstore"
 )
 
@@ -37,7 +31,7 @@ const HTTPFSExtensionVersion = "13e18b3"
 // libpq KEY=VALUE string from the caller's PostgreSQL resolver, not a pgx TLS
 // config translated back to a URL. Explicit sslmode and identity/root settings
 // are passed through unchanged. Ambient PG variables and credential files are
-// not used. Namespace is empty or "default" only.
+// not used. Namespace selects an isolated metadata schema.
 type Config struct {
 	Binary            string
 	CatalogConnection string
@@ -67,7 +61,30 @@ type runner func(context.Context, string, string) error
 func Validate(c Config) error { _, err := prepare(c); return err }
 
 // Open initializes or attaches metadata. It does not prove S3 write access.
-func Open(ctx context.Context, c Config) (*Lake, error) { return open(ctx, c, runCLI) }
+func Open(ctx context.Context, c Config) (*Lake, error) {
+	if err := Validate(c); err != nil {
+		return nil, err
+	}
+	if c.Binary == "" {
+		binary, err := acquireEngine(ctx)
+		if err != nil {
+			return nil, err
+		}
+		c.Binary = binary
+	}
+	// Official signed extensions only, with no insecure transport fallback.
+	install, err := extensionInstallSQL(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := runCLI(ctx, c.Binary, install); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, errors.New("DuckDB signed extension bootstrap failed (details suppressed)")
+	}
+	return open(ctx, c, runCLI)
+}
 func open(ctx context.Context, c Config, run runner) (*Lake, error) {
 	p, err := prepare(c)
 	if err != nil {
@@ -99,8 +116,11 @@ func (l *Lake) Exec(ctx context.Context, sql string) error {
 
 func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
 func prepare(c Config) (string, error) {
-	if c.Namespace != "" && c.Namespace != "default" {
-		return "", errors.New("DuckLake currently supports only the default namespace")
+	if c.Namespace == "" {
+		c.Namespace = namespace.Default
+	}
+	if err := namespace.Validate(c.Namespace); err != nil {
+		return "", err
 	}
 	if strings.IndexByte(c.CatalogConnection, 0) >= 0 || !validConnection(c.CatalogConnection) {
 		return "", errors.New("DuckLake requires fully resolved libpq keyword settings with explicit host, dbname, user and sslmode; unsupported or file-provider settings rejected")
@@ -143,29 +163,31 @@ func prepare(c Config) (string, error) {
 		"SELECT CASE WHEN (SELECT count(*) FROM duckdb_extensions() WHERE loaded AND ((extension_name='ducklake' AND extension_version='" + DuckLakeExtensionVersion + "') OR (extension_name='postgres_scanner' AND extension_version='" + PostgresExtensionVersion + "') OR (extension_name='httpfs' AND extension_version='" + HTTPFSExtensionVersion + "'))) = 3 THEN true ELSE error('extension version mismatch') END;\n" +
 		"CREATE TEMPORARY SECRET looster_s3 (TYPE s3, PROVIDER config, KEY_ID " + quote(s.AccessKey) + ", SECRET " + quote(s.SecretKey) + ", SESSION_TOKEN " + quote(s.SessionToken) + ", REGION " + quote(s.Region) + ", URL_STYLE 'path', SCOPE " + quote(c.DataPath) + endpoint + ");\n" +
 		"CREATE TEMPORARY SECRET looster_lake (TYPE ducklake, METADATA_PATH " + quote("postgres:"+c.CatalogConnection+" passfile='/dev/null'") + ", DATA_PATH " + quote(c.DataPath) + ");\n" +
-		"ATTACH 'ducklake:looster_lake' AS lake (DATA_INLINING_ROW_LIMIT 0, OVERRIDE_DATA_PATH false);\n", nil
+		"ATTACH 'ducklake:looster_lake' AS lake (METADATA_SCHEMA " + quote(metadataSchema(c.Namespace)) + ", DATA_INLINING_ROW_LIMIT 0, OVERRIDE_DATA_PATH false);\n", nil
 }
 
 // validConnection accepts only libpq keyword syntax and known parameters. It
 // deliberately rejects URLs, services and unsupported pgx-only options rather
 // than weakening TLS or changing their meaning. Values are not reconstructed.
-func validConnection(raw string) bool {
+func validConnection(raw string) bool { _, ok := connectionSettings(raw); return ok }
+
+func connectionSettings(raw string) (map[string]string, bool) {
 	allowed := strings.Fields("host hostaddr port dbname user password sslmode sslcert sslkey sslrootcert sslpassword sslcrl sslcrldir sslsni ssl_min_protocol_version ssl_max_protocol_version connect_timeout application_name target_session_attrs channel_binding options")
 	keys := map[string]bool{}
 	for _, k := range allowed {
 		keys[k] = true
 	}
-	seen := map[string]bool{}
+	seen := map[string]string{}
 	s := raw
 	for strings.TrimSpace(s) != "" {
 		s = strings.TrimSpace(s)
 		i := strings.IndexByte(s, '=')
 		if i < 1 {
-			return false
+			return nil, false
 		}
 		k := strings.TrimSpace(s[:i])
 		if !keys[k] {
-			return false
+			return nil, false
 		}
 		s = strings.TrimLeft(s[i+1:], " \t\r\n")
 		value := ""
@@ -179,7 +201,7 @@ func validConnection(raw string) bool {
 			s = s[1:]
 			if b == '\\' {
 				if len(s) == 0 {
-					return false
+					return nil, false
 				}
 				value += s[:1]
 				s = s[1:]
@@ -195,14 +217,30 @@ func validConnection(raw string) bool {
 			value += string(b)
 		}
 		if !closed {
-			return false
+			return nil, false
 		}
 		if quoted && len(s) > 0 && !strings.ContainsRune(" \t\r\n", rune(s[0])) {
-			return false
+			return nil, false
 		}
-		seen[k] = value != ""
+		seen[k] = value
 	}
-	return seen["host"] && seen["dbname"] && seen["user"] && seen["sslmode"]
+	return seen, seen["host"] != "" && seen["dbname"] != "" && seen["user"] != "" && seen["sslmode"] != ""
+}
+
+// CatalogIdentity is an opaque spool identity independent of authentication and
+// TLS settings, so credential rotation does not strand acknowledged payloads.
+func CatalogIdentity(c Config) (string, error) {
+	settings, ok := connectionSettings(c.CatalogConnection)
+	if !ok {
+		return "", errors.New("invalid DuckLake catalog settings")
+	}
+	h := sha256.Sum256([]byte(settings["host"] + "\x00" + settings["hostaddr"] + "\x00" + settings["port"] + "\x00" + settings["dbname"] + "\x00" + c.DataPath + "\x00" + c.Namespace))
+	return fmt.Sprintf("%x", h[:16]), nil
+}
+
+func metadataSchema(ns string) string {
+	h := sha256.Sum256([]byte(ns))
+	return fmt.Sprintf("looster_ducklake_%x", h[:16])
 }
 
 func runCLI(ctx context.Context, binary, sql string) error {
