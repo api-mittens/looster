@@ -27,13 +27,19 @@ func (a *application) configureCommand() *cobra.Command {
 		configure:  postgres.ConfigureDatabasesNamespace,
 		connection: postgres.DatabaseConnectionString,
 		validate:   ducklake.Validate,
-		attach:     func(ctx context.Context, cfg ducklake.Config) error { _, err := ducklake.Open(ctx, cfg); return err },
+		attach: func(ctx context.Context, cfg ducklake.Config) error {
+			lake, err := ducklake.Open(ctx, cfg)
+			if err != nil {
+				return err
+			}
+			return lake.Close()
+		},
 	})
 }
 
 func (a *application) configureCommandWith(actions storageActions) *cobra.Command {
 	root := &cobra.Command{Use: "configure", Short: "Configure infrastructure (human only)"}
-	var database, catalog, dataPath, binary string
+	var database, catalog, dataPath string
 	var enabled bool
 	storage := &cobra.Command{
 		Use: "storage", Short: "Create missing application database and migrate storage, optionally prewarm automatic DuckLake",
@@ -50,7 +56,7 @@ func (a *application) configureCommandWith(actions storageActions) *cobra.Comman
 			catalogName := ""
 			var lake ducklake.Config
 			if !enabled {
-				for _, flag := range []string{"ducklake-database", "ducklake-data-path", "duckdb-binary"} {
+				for _, flag := range []string{"ducklake-database", "ducklake-data-path"} {
 					if c.Flags().Changed(flag) {
 						return fmt.Errorf("--%s requires explicit --ducklake opt-in", flag)
 					}
@@ -60,10 +66,6 @@ func (a *application) configureCommandWith(actions storageActions) *cobra.Comman
 					return errors.New("--ducklake-database must not be empty")
 				}
 				resolvedPath := dataPath
-				resolvedBinary := binary
-				if !c.Flags().Changed("duckdb-binary") {
-					resolvedBinary = a.v.GetString("ducklake.binary")
-				}
 				if !c.Flags().Changed("ducklake-data-path") && a.v.GetString("ducklake.data_path") != "" {
 					resolvedPath = a.v.GetString("ducklake.data_path")
 				}
@@ -90,7 +92,7 @@ func (a *application) configureCommandWith(actions storageActions) *cobra.Comman
 					return err
 				}
 				lake = ducklake.Config{
-					Binary: resolvedBinary, CatalogConnection: connection, Namespace: ns, DataPath: resolvedPath,
+					CatalogConnection: connection, Namespace: ns, DataPath: resolvedPath,
 					S3: objectstore.Config{
 						Endpoint: a.v.GetString("s3.endpoint"), Region: a.v.GetString("s3.region"), Bucket: a.v.GetString("s3.bucket"),
 						AccessKey: a.v.GetString("s3.access_key"), SecretKey: a.v.GetString("s3.secret_key"), SessionToken: a.v.GetString("s3.session_token"),
@@ -120,7 +122,6 @@ func (a *application) configureCommandWith(actions storageActions) *cobra.Comman
 	storage.Flags().BoolVar(&enabled, "ducklake", false, "Prewarm automatic DuckLake bootstrap (normal application commands always initialize it)")
 	storage.Flags().StringVar(&catalog, "ducklake-database", "", "Legacy separate catalog database override (default: configured application database; requires --ducklake)")
 	storage.Flags().StringVar(&dataPath, "ducklake-data-path", "", "Dedicated S3 data path (default: s3://<configured s3.bucket>/ducklake/; requires --ducklake)")
-	storage.Flags().StringVar(&binary, "duckdb-binary", "", "Pinned DuckDB CLI override (default: automatic verified download; requires --ducklake)")
 	root.AddCommand(storage)
 	return root
 }

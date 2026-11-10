@@ -33,7 +33,7 @@ func (a *application) runtimeLakeConfig(ns string) (ducklake.Config, error) {
 	}
 	// A configured path is a root, never a shared per-namespace catalog path.
 	dataPath := strings.TrimRight(base, "/") + "/namespaces/" + ns + "/"
-	cfg := ducklake.Config{Binary: a.v.GetString("ducklake.binary"), CatalogConnection: conn, Namespace: ns, DataPath: dataPath, S3: objectstore.Config{
+	cfg := ducklake.Config{CatalogConnection: conn, Namespace: ns, DataPath: dataPath, S3: objectstore.Config{
 		Endpoint: a.v.GetString("s3.endpoint"), Region: a.v.GetString("s3.region"), Bucket: bucket, AccessKey: a.v.GetString("s3.access_key"), SecretKey: a.v.GetString("s3.secret_key"), SessionToken: a.v.GetString("s3.session_token"),
 	}}
 	return cfg, ducklake.Validate(cfg)
@@ -65,5 +65,10 @@ func (a *application) openPayloadStore(ctx context.Context, ns string) (*ducklak
 	if err != nil {
 		return nil, err
 	}
-	return ducklake.NewPayloadStore(ctx, lake, ducklake.PayloadOptions{SpoolDir: spool})
+	payloads, err := ducklake.NewPayloadStore(ctx, lake, ducklake.PayloadOptions{SpoolDir: spool})
+	if err != nil {
+		_ = lake.Close()
+		return nil, err
+	}
+	return payloads, nil
 }

@@ -4,9 +4,9 @@ Application commands, including `looster serve` and `looster web`, require
 PostgreSQL and S3-compatible credentials. DuckLake is initialized automatically
 before a repository is exposed. The selected application namespace is created
 and migrated automatically, then the durable payload-writer fence is enabled.
-Startup errors are fatal, not a switch back to
-PostgreSQL JSON payload storage. Offline commands and local administrative
-commands such as `db migrate` do not start DuckLake.
+Startup errors are fatal, not a switch back to PostgreSQL JSON payload storage.
+Offline commands and local administrative commands such as `db migrate` do not
+start DuckLake.
 
 ## Credentials-only setup
 
@@ -33,26 +33,22 @@ Hyphens and underscores in namespace names remain distinct. Different Looster
 installations sharing a bucket should use different `ducklake.data_path` roots.
 The configured PostgreSQL TLS settings are preserved for DuckLake's native
 connector. Verification modes require an explicit root certificate path, and
-unsupported connector settings fail closed rather than weaken TLS.
+unsupported connector settings fail closed rather than weaken TLS. Password-file
+lookup is disabled. Keep credentials in the resolved connection environment,
+not `.pgpass` or service profiles. The embedded connector does not mutate
+process-wide `PG*` variables.
 
-## Automatic engine and extension acquisition
+## Embedded engine and signed extensions
 
-No DuckDB package, separate catalog database, extra service or manual extension
-installation is needed. On first startup Looster downloads the pinned DuckDB
-**v1.5.2** CLI release from GitHub over verified HTTPS and verifies its compiled-in
-SHA256 archive digest before extraction/execution. Supported automatic platforms
-are macOS, Linux and Windows on arm64 and amd64. Windows artifacts and extension
-platforms are pinned, but Windows execution must be validated on Windows CI. Cached archives are rehashed before use,
-and the executable is reconstructed atomically from verified bytes. A corrupt
-cache fails closed. Remove the affected local cache archive to retry downloading.
+All lake operations use the built-in official `github.com/duckdb/duckdb-go/v2`
+client through `database/sql`, with a statically linked DuckDB core. No separate
+DuckDB executable, package, catalog server or engine download is required.
+Release binaries support Linux and macOS on amd64 and arm64, not Windows.
+Source builds and native engine tests require CGO and a C/C++ toolchain.
 
-Official extensions are downloaded over verified HTTPS by Go, then loaded
-by absolute cache path with DuckDB's normal signature checks. Looster never
-modifies the user's ordinary DuckDB extension installation directory. This avoids the
-HTTP bootstrap that remote `INSTALL` would otherwise need to obtain `httpfs`.
-Unsigned extensions, HTTP extension mirrors, TLS-verification bypasses and
-insecure retry paths are not enabled. The engine and extension build IDs are
-checked before attaching the catalog:
+The pinned Go client is **v2.10502.0**, embedding **DuckDB v1.5.2**. This is an
+explicit compatibility selection for DuckLake 1.0, not a claim that it is the
+latest engine. Engine and signed extension build IDs are checked before attach:
 
 | Component | Pin |
 | --- | --- |
@@ -62,35 +58,38 @@ checked before attaching the catalog:
 | postgres_scanner | c89234f |
 | httpfs | 13e18b3 |
 
-Artifacts are cached under the OS user cache directory in `looster/duckdb/`.
-Network access to GitHub release assets and `extensions.duckdb.org` is required
-for a cold start. Subsequent starts use cached signed artifacts. Errors suppress
-engine diagnostics because SQL diagnostics can
-contain PostgreSQL or S3 credentials.
+Signed native extensions still require outbound HTTPS to the official
+`extensions.duckdb.org` repository on first use and a writable user cache.
+Subsequent initialization can use compatible cached extensions. An empty cache
+cannot initialize offline. Unsigned/community extensions, HTTP mirrors,
+TLS-verification bypasses and insecure retries are not enabled. Protect cached
+extensions from modification by other users. Incompatible cached artifacts fail
+closed. Native diagnostics are suppressed because SQL errors can echo credentials.
+Do not log resolved connection strings, credential-bearing config or SQL.
+
+Each core database has a **256 MiB DuckDB buffer-manager memory limit** at
+connection creation. This is not a total-process RSS limit: native allocations
+and some operators can allocate outside the buffer manager.
 
 ## Optional non-secret configuration
 
 ```toml
 [ducklake]
-# binary = "/opt/duckdb/duckdb" # Explicit trusted pinned executable override
 # database = "existing_catalog" # Default: application database, not a new DB
 # data_path = "s3://my-bucket/custom-ducklake-root/"
 # spool_dir = "/durable/local/looster-spool"
 ```
 
-Equivalent environment keys are `LOOSTER_DUCKLAKE_BINARY`,
-`LOOSTER_DUCKLAKE_DATABASE`, `LOOSTER_DUCKLAKE_DATA_PATH`, and
-`LOOSTER_DUCKLAKE_SPOOL_DIR`. A data path is a **root**: Looster appends
-`namespaces/<namespace>/`, even when overridden. A separate catalog override must
-refer to an existing database at runtime. An explicit binary override is
-operator-trusted, still version checked, and does not disable signed extension
-verification.
+Equivalent environment keys are `LOOSTER_DUCKLAKE_DATABASE`,
+`LOOSTER_DUCKLAKE_DATA_PATH`, and `LOOSTER_DUCKLAKE_SPOOL_DIR`. A data path is a
+**root**: Looster appends `namespaces/<namespace>/`, even when overridden. A
+separate catalog override must refer to an existing database at runtime.
 
 Pending payloads are durably spooled locally while bounded DuckLake batch
 writes execute. A successful Put acknowledges **remote commit**, not merely a
 local spool write, so another host can immediately resolve a PostgreSQL payload
-reference. Failed writes preserve pending spool records for retry. The default spool root is
-`$XDG_STATE_HOME/looster/ducklake-spool`, or
+reference. Failed writes preserve pending spool records for retry. The default
+spool root is `$XDG_STATE_HOME/looster/ducklake-spool`, or
 `~/.local/state/looster/ducklake-spool`. Keep it on durable local storage. Spools
 are isolated by catalog, S3 path and namespace, independent of credentials so
 password rotation does not strand pending writes. Shutdown attempts a final
@@ -100,43 +99,56 @@ reads, and access to its namespace prefix.
 ## Existing configuration command
 
 `looster configure storage` remains a human-only, local PostgreSQL provisioning
-and migration command. It does not need S3 or download the engine unless asked
+and migration command. It does not need S3 or download extensions unless asked
 to prewarm DuckLake. It retains existing databases. Provisioning may require
-`CONNECT` to the `postgres` maintenance database and `CREATEDB` **only when an
-application database is actually missing**. For managed installations, have the
-administrator create the application database first and use `looster db migrate`.
+`CONNECT` to the `postgres` maintenance database and `CREATEDB` **only when a
+database is actually missing**. For managed installations, have the administrator
+create the application database first and use `looster db migrate`.
 Normal application startup never provisions PostgreSQL databases.
 
 ```sh
 looster configure storage
+looster configure storage --database my_existing_looster
 looster configure storage --ducklake
 looster configure storage --ducklake --ducklake-data-path s3://my-bucket/custom-root/
 ```
 
-`--ducklake` is now a prewarm option, not runtime opt-in. The legacy
-`--ducklake-database`, `--ducklake-data-path`, and `--duckdb-binary` flags remain
-accepted with `--ducklake`. The default catalog is now the application database,
-and the default binary is automatically acquired. An explicitly requested
-separate catalog database is still provisioned by this administrative command.
-Overrides are not persisted. Configure the corresponding runtime environment or
-TOML keys consistently afterward. Old standalone probe catalogs and payload-free
-TSK-57 catalogs are not automatically migrated or deleted.
+The default is the resolved, explicitly configured database. A fresh installation
+without a database selection uses `looster`. The `--database` option changes only
+the database component, retaining host, TLS and authentication settings. It does
+not persist runtime configuration. Set `PGDATABASE` or the database component of
+`LOOSTER_DATABASE_URL` consistently afterward. Explicit connection-string fields
+take precedence over environment fallbacks.
+
+`--ducklake` is a prewarm option, not runtime opt-in. The
+`--ducklake-database` and `--ducklake-data-path` flags remain accepted with
+`--ducklake`. An explicitly requested separate catalog database is still
+provisioned by this administrative command. Overrides are not persisted.
+Configure the corresponding runtime environment or TOML keys consistently
+afterward. Old standalone probe catalogs and payload-free TSK-57 catalogs are
+not automatically migrated or deleted. `looster db migrate` only migrates the
+selected existing application database/namespace, never provisions databases
+or initializes DuckLake.
 
 ## Safe verification
 
-For coordinated upgrades, historical backfill and the explicit schema-removal
-safety gate, see [Lake payload cutover and historical migration](storage-migration.md).
+For coordinated upgrades, guarded historical backfill and the explicit
+schema-removal safety gate, see
+[Lake payload cutover and historical migration](storage-migration.md).
 
 Unit tests do not require or mutate PostgreSQL/S3 infrastructure:
 
 ```sh
 go test ./internal/ducklake ./internal/cli
-# Downloads only public artifacts into temporary local directories:
-LOOSTER_TEST_ENGINE_BOOTSTRAP=yes go test ./internal/ducklake -run TestEngineBootstrapArtifacts -count=1
 ```
+
+For a reproducible native-engine run using fresh PostgreSQL and loopback S3
+fixtures, see [the disposable harness](../scripts/test-ducklake/README.md).
+The harness never loads normal application connection settings.
 
 A real Parquet write/reopen probe remains explicitly opt-in:
 `TestDisposableIntegration` requires `LOOSTER_DUCKLAKE_DISPOSABLE_PROBE=yes` and
 all its `LOOSTER_TEST_*` credentials. Use only an exclusively owned disposable
 catalog and S3 prefix. The probe expires snapshots and deletes files. Never run
-it against live task infrastructure, shared storage or production.
+it against live task infrastructure, shared storage or production. This probe's
+destructive cleanup does not authorize cleanup of application payload storage.

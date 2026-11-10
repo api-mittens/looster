@@ -569,6 +569,9 @@ func (a *application) serveCommand() *cobra.Command {
 		}
 		childEnv := a.workerEnvironment()
 		service := app.Service{Log: slog.New(slog.NewTextHandler(c.ErrOrStderr(), nil)), Repo: a.repo, Queue: a.store, Harness: &jcode.Harness{Binary: v.GetString("jcode.binary"), SessionsDir: v.GetString("jcode.sessions_dir"), DatabaseURL: v.GetString("database_url"), Objects: objects, Environment: childEnv}, Objects: objects}
+		// PersistentPreRun initialized the mandatory lake engine. Execute closes
+		// its payload store only after Serve has stopped every worker, so opening
+		// another unused core database here would duplicate native resources.
 		return service.Serve(c.Context(), app.WorkerConfig{Namespace: v.GetString("namespace"), Harness: v.GetString("harness"), ID: randomID(), Agents: names, Concurrency: concurrency, Workdir: workdir, Poll: v.GetDuration("poll_interval"), RunTimeout: v.GetDuration("run_timeout")})
 	}}
 	return cmd

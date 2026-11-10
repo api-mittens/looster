@@ -59,8 +59,12 @@ type PayloadStore struct {
 	done      chan struct{}
 	closed    bool
 	closeErr  error
+	ownedLake *Lake
 }
 
+// NewPayloadStore transfers ownership of lake on success. Close flushes durable
+// retries before closing that engine. On construction failure the caller retains
+// ownership. Do not share the transferred Lake with another owner or store.
 func NewPayloadStore(ctx context.Context, lake *Lake, opts PayloadOptions) (*PayloadStore, error) {
 	if lake == nil {
 		return nil, errors.New("DuckLake lake is required")
@@ -68,7 +72,12 @@ func NewPayloadStore(ctx context.Context, lake *Lake, opts PayloadOptions) (*Pay
 	if err := lake.Exec(ctx, "CREATE TABLE IF NOT EXISTS lake.main.looster_payloads (payload_key VARCHAR, payload BLOB); CALL lake.set_option('data_inlining_row_limit', 0, table_name => 'looster_payloads'); ALTER TABLE lake.main.looster_payloads SET PARTITIONED BY (bucket(256, payload_key));"); err != nil {
 		return nil, err
 	}
-	return newPayloadStoreContext(ctx, lakePayloadSink{lake}, opts)
+	s, err := newPayloadStoreContext(ctx, lakePayloadSink{lake}, opts)
+	if err != nil {
+		return nil, err
+	}
+	s.ownedLake = lake
+	return s, nil
 }
 func newPayloadStore(sink payloadSink, opts PayloadOptions) (*PayloadStore, error) {
 	return newPayloadStoreContext(context.Background(), sink, opts)
@@ -327,7 +336,7 @@ func (s *PayloadStore) Get(ctx context.Context, key string) ([]byte, error) {
 	return v, nil
 }
 
-// GetMany reads all missing keys with one COPY command, merging pending values.
+// GetMany reads missing keys with bounded parameterized queries, merging pending values.
 // Missing keys are omitted from the result. Duplicate requested keys are folded.
 func (s *PayloadStore) GetMany(ctx context.Context, keys []string) (map[string][]byte, error) {
 	s.mu.Lock()
@@ -366,7 +375,7 @@ func (s *PayloadStore) GetMany(ctx context.Context, keys []string) (map[string][
 		return result, nil
 	}
 	// Only test/custom sinks lack batch support. The production SQL sink always
-	// uses a single COPY, regardless of the number of requested references.
+	// uses bounded parameterized queries for requested references.
 	for _, k := range missing {
 		v, err := s.sink.get(ctx, k)
 		if errors.Is(err, ErrPayloadNotFound) {
@@ -393,7 +402,7 @@ func (s *PayloadStore) GetCommitted(ctx context.Context, key string) ([]byte, er
 	return v, nil
 }
 
-// GetManyCommitted verifies remote state in one COPY and never consults pending.
+// GetManyCommitted verifies remote state and never consults pending.
 func (s *PayloadStore) GetManyCommitted(ctx context.Context, keys []string) (map[string][]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -573,8 +582,9 @@ func (s *PayloadStore) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	err := s.flush(ctx)
 	cancel()
-	if e := s.lock.Close(); err == nil {
-		err = e
+	err = errors.Join(err, s.lock.Close())
+	if s.ownedLake != nil {
+		err = errors.Join(err, s.ownedLake.Close())
 	}
 	s.mu.Lock()
 	s.closeErr = err

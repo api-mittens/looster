@@ -23,7 +23,7 @@ func TestRuntimeLakeConfigCredentialsOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Binary != "" || c.DataPath != "s3://test-bucket/ducklake/namespaces/default/" || !strings.Contains(c.CatalogConnection, "dbname='existing'") {
+	if c.DataPath != "s3://test-bucket/ducklake/namespaces/default/" || !strings.Contains(c.CatalogConnection, "dbname='existing'") {
 		t.Fatalf("unexpected derived config path %q", c.DataPath)
 	}
 	other, err := a.runtimeLakeConfig("tenant-a")
@@ -47,12 +47,12 @@ func TestRuntimeLakeConfigOverrides(t *testing.T) {
 	a := runtimeApplication(t)
 	a.v.Set("ducklake.database", "legacy_catalog")
 	a.v.Set("ducklake.data_path", "s3://test-bucket/custom/root/")
-	a.v.Set("ducklake.binary", "/opt/duckdb")
+	a.v.Set("ducklake.binary", "/must-not-execute/duckdb") // Obsolete settings cannot select an external engine.
 	c, err := a.runtimeLakeConfig("tenant")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.DataPath != "s3://test-bucket/custom/root/namespaces/tenant/" || c.Binary != "/opt/duckdb" || !strings.Contains(c.CatalogConnection, "dbname='legacy_catalog'") {
+	if c.DataPath != "s3://test-bucket/custom/root/namespaces/tenant/" || !strings.Contains(c.CatalogConnection, "dbname='legacy_catalog'") {
 		t.Fatal("overrides not retained")
 	}
 }

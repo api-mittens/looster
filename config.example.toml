@@ -21,7 +21,7 @@ bucket = "looster"
 [ducklake]
 # Automatically uses the application PostgreSQL DB and a per-namespace S3 path.
 # No enabled flag or separate catalog database is required.
-# binary = "/opt/duckdb/duckdb" # Optional trusted pinned executable override
+# Uses the built-in DuckDB engine. Signed extensions download on first use.
 # database = "existing_catalog" # Optional existing separate catalog
 # data_path = "s3://looster/custom-ducklake-root/"
 # spool_dir = "/durable/local/looster-spool"

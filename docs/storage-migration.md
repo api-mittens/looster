@@ -13,8 +13,8 @@ for dispatch, pagination, authorization, deletion history and attachments.
    binaries cannot resolve lake references. A mixed-version rolling deployment
    is not supported. Back up PostgreSQL and preserve existing archive objects.
 2. Supply the normal PostgreSQL and S3 endpoint/bucket/region/credential settings.
-   Runtime automatically migrates the namespace, downloads and verifies the
-   pinned engine, loads signed extensions, initializes its namespace-specific
+   Runtime automatically migrates the namespace, opens the built-in DuckDB
+   engine, downloads signed extensions if needed, initializes its namespace-specific
    catalog schema and S3 prefix, and activates a durable PostgreSQL writer fence.
    The fence drains in-flight payload writers and rejects subsequent legacy
    inline writes. Startup requires schema migration and catalog permissions.

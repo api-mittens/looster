@@ -28,6 +28,9 @@ func TestStorageAcceptance(t *testing.T) {
 			t.Fatalf("provide explicit %s", key)
 		}
 	}
+	// The entire lake path must work without any host DuckDB executable. Signed
+	// extensions are loaded by the embedded engine, not a CLI found through PATH.
+	t.Setenv("PATH", t.TempDir())
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	ns := fmt.Sprintf("storage-%d", time.Now().UnixNano())

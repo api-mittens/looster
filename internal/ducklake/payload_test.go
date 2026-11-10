@@ -6,11 +6,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -211,36 +209,24 @@ func TestPayloadBackgroundRetry(t *testing.T) {
 	t.Fatal("background retry did not persist")
 }
 
-// Exercise the exact SQL adapter across real, separate DuckDB CLI processes.
-// DUCKLAKE_PAYLOAD_TEST_PRELUDE may attach a disposable real DuckLake catalog as
-// lake (with data inlining disabled) for the same end-to-end payload assertions.
-func TestPayloadSQLCLI(t *testing.T) {
-	binary := os.Getenv("DUCKLAKE_PAYLOAD_TEST_BINARY")
-	if binary == "" {
-		var e error
-		binary, e = exec.LookPath("duckdb")
-		if e != nil {
-			t.Skip("duckdb CLI not on PATH")
-		}
+// Exercise the production SQL adapter on the embedded engine without extensions,
+// subprocesses, PATH lookup, or external services.
+func TestPayloadSQLEmbedded(t *testing.T) {
+	lake, err := OpenEngine(context.Background())
+	if err != nil {
+		t.Fatal(err)
 	}
-	prelude := os.Getenv("DUCKLAKE_PAYLOAD_TEST_PRELUDE")
-	if prelude == "" {
-		prelude = "ATTACH " + quote(filepath.Join(t.TempDir(), "lake.db")) + " AS lake;"
-	}
-	var copies int32
-	lake := &Lake{binary: binary, prelude: prelude, run: func(ctx context.Context, binary, sql string) error {
-		if strings.Contains(sql, "COPY (") {
-			atomic.AddInt32(&copies, 1)
-		}
-		return runCLI(ctx, binary, sql)
-	}}
+	defer lake.Close()
 	ctx := context.Background()
+	if err := lake.Exec(ctx, "ATTACH ':memory:' AS lake"); err != nil {
+		t.Fatal(err)
+	}
 	if e := lake.Exec(ctx, "CREATE TABLE lake.main.looster_payloads(payload_key VARCHAR,payload BLOB);"); e != nil {
 		t.Fatal(e)
 	}
-	if os.Getenv("DUCKLAKE_PAYLOAD_TEST_PRELUDE") != "" {
+	{
 		root := t.TempDir()
-		store, err := NewPayloadStore(ctx, lake, PayloadOptions{SpoolDir: root, FlushInterval: time.Hour})
+		store, err := newPayloadStore(lakePayloadSink{lake}, PayloadOptions{SpoolDir: root, FlushInterval: time.Hour})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -248,7 +234,7 @@ func TestPayloadSQLCLI(t *testing.T) {
 		if err = store.Put(ctx, "store-roundtrip", []byte("durable")); err != nil {
 			t.Fatal(err)
 		}
-		other, err := NewPayloadStore(ctx, lake, PayloadOptions{SpoolDir: root, FlushInterval: time.Hour})
+		other, err := newPayloadStore(lakePayloadSink{lake}, PayloadOptions{SpoolDir: root, FlushInterval: time.Hour})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -301,13 +287,12 @@ func TestPayloadSQLCLI(t *testing.T) {
 	if e := sink.putBatch(ctx, records); e != nil {
 		t.Fatal("idempotent retry:", e)
 	}
-	before := atomic.LoadInt32(&copies)
 	rows, err := sink.getMany(ctx, []string{key, "empty", "missing", key})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if atomic.LoadInt32(&copies)-before != 1 || len(rows) != 2 || string(rows[key]) != string(value) {
-		t.Fatalf("GetMany COPY calls=%d rows=%d", atomic.LoadInt32(&copies)-before, len(rows))
+	if len(rows) != 2 || string(rows[key]) != string(value) {
+		t.Fatalf("GetMany rows=%d", len(rows))
 	}
 	for _, r := range records {
 		v, e := sink.get(ctx, r.Key)
@@ -329,15 +314,36 @@ func TestPayloadSQLCLI(t *testing.T) {
 		t.Fatal("conflict replaced content", e)
 	}
 }
-func TestPayloadSQLNoInlining(t *testing.T) {
-	var sql string
-	lake := &Lake{run: func(_ context.Context, _, q string) error { sql = q; return nil }}
-	s, e := NewPayloadStore(context.Background(), lake, PayloadOptions{SpoolDir: t.TempDir()})
-	if e != nil {
-		t.Fatal(e)
+func TestPayloadStoreClosesOwnedEngine(t *testing.T) {
+	ctx := context.Background()
+	lake, err := OpenEngine(ctx)
+	if err != nil {
+		t.Fatal(err)
 	}
-	defer s.Close()
-	if !strings.Contains(sql, "CREATE TABLE IF NOT EXISTS lake.main.looster_payloads") || !strings.Contains(sql, "data_inlining_row_limit', 0") || !strings.Contains(sql, "SET PARTITIONED BY (bucket(256, payload_key))") {
-		t.Fatal("missing real lake table or disabled inline storage")
+	defer lake.Close()
+	if err = lake.Exec(ctx, "ATTACH ':memory:' AS lake; CREATE TABLE lake.main.looster_payloads(payload_key VARCHAR,payload BLOB)"); err != nil {
+		t.Fatal(err)
+	}
+	s, err := newPayloadStore(lakePayloadSink{lake}, PayloadOptions{SpoolDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.ownedLake = lake
+	if err = s.Put(ctx, "owned", []byte("committed")); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := s.Close(); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if err := lake.Exec(ctx, "SELECT 1"); !errors.Is(err, ErrClosed) {
+		t.Fatalf("engine remains open: %v", err)
 	}
 }

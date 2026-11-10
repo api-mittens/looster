@@ -2,7 +2,6 @@ name: Test and release
 
 on:
   push:
-    # Feature branches are tested by pull_request, not a second push run.
     branches: [master]
     tags: ['v*']
   pull_request:
@@ -13,13 +12,17 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
-  # Only superseded PR runs are disposable. Never interrupt a tagged release.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
     name: Go tests and Cobra CLI build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    env:
+      CGO_ENABLED: '1'
+      CC: '${{ github.workspace }}/scripts/static-cxx-cc.sh'
+      CGO_LDFLAGS: '-static-libgcc'
+      LOOSTER_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/looster_test?sslmode=disable
     services:
       postgres:
         image: postgres:18-alpine
@@ -33,21 +36,24 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
-    env:
-      LOOSTER_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/looster_test?sslmode=disable
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
-      - name: Verify modules
-        run: go mod verify
-      - name: Check third-party license inventory
-        run: go run ./scripts/licenses -check
-      - name: Build Cobra CLI
+      - name: Verify modules and license inventory
+        run: |
+          go mod verify
+          bash scripts/static-cxx-cc_test.sh
+          bash scripts/check-native-deps_test.sh
+          bash scripts/check-release-archives_test.sh
+          bash scripts/package-runtime-notices_test.sh
+          go run ./scripts/licenses -check
+      - name: Build Cobra CLI and check native dependencies
         run: |
           go build -trimpath -o bin/looster ./cmd/looster
+          bash scripts/check-native-deps.sh bin/looster linux
           bin/looster --help
       - name: Configure browser acceptance tests
         shell: bash
@@ -85,17 +91,70 @@ jobs:
           LOOSTER_TEST_S3_ACCESS_KEY: looster-test
           LOOSTER_TEST_S3_SECRET_KEY: looster-test-password
         run: go test -count=1 -timeout=10m ./...
+      - name: Verify embedded DuckLake with isolated PostgreSQL and S3 fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          pg_bin=/usr/lib/postgresql/16/bin
+          if [[ ! -x "$pg_bin/initdb" ]]; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends postgresql-16
+          fi
+          export LOOSTER_TEST_PG_BIN="$pg_bin"
+          export JCODE_SCRATCH_DIR="$RUNNER_TEMP/ducklake-fixtures"
+          bash scripts/test-ducklake.sh
       - name: Test incremental lint diagnostic comparison
         working-directory: scripts/lint-audit
         run: go test ./...
       - name: Vet
         run: go vet ./...
 
+  # Build every supported platform on PRs, not just tags. CGO cannot be disabled
+  # or naively cross-compiled. Windows is not supported.
+  build:
+    name: Static DuckDB ${{ matrix.os }}/${{ matrix.arch }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: linux, arch: amd64, runner: ubuntu-24.04, shell: bash}
+          - {os: linux, arch: arm64, runner: ubuntu-24.04-arm, shell: bash}
+          - {os: darwin, arch: amd64, runner: macos-15-intel, shell: bash}
+          - {os: darwin, arch: arm64, runner: macos-15, shell: bash}
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    env:
+      CGO_ENABLED: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Force Linux explicit C++ libraries to static archives
+        if: matrix.os == 'linux'
+        run: |
+          echo "CC=$GITHUB_WORKSPACE/scripts/static-cxx-cc.sh" >> "$GITHUB_ENV"
+          echo 'CGO_LDFLAGS=-static-libgcc' >> "$GITHUB_ENV"
+      - name: Build, inspect, smoke-test and package
+        env:
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.0.0-ci' }}
+        run: bash scripts/release-archive.sh '${{ matrix.os }}' '${{ matrix.arch }}' "$RELEASE_TAG"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
   release:
     name: Publish tagged binaries
-    needs: test
+    needs: [test, build]
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     env:
@@ -104,41 +163,15 @@ jobs:
       RELEASE_TAG: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/download-artifact@v4
         with:
-          go-version-file: go.mod
-          cache: true
-      - name: Build release archives
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Require all four archives and checksum their published bytes
         shell: bash
         run: |
-          set -euo pipefail
-          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]] || { echo 'Expected a v-prefixed semantic version tag'; exit 1; }
-          mkdir -p dist
-          hcl_version=$(go list -m -f '{{.Version}}' github.com/hashicorp/hcl)
-          go mod download "github.com/hashicorp/hcl@$hcl_version"
-          hcl_source="$(go env GOMODCACHE)/cache/download/github.com/hashicorp/hcl/@v/$hcl_version.zip"
-          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
-            os=${target%/*}
-            arch=${target#*/}
-            name="looster_${RELEASE_TAG}_${os}_${arch}"
-            mkdir -p "dist/$name"
-            binary=looster
-            if [ "$os" = windows ]; then binary=looster.exe; fi
-            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags="-s -w -X github.com/api-mittens/looster/internal/cli.Version=$RELEASE_TAG" -o "dist/$name/$binary" ./cmd/looster
-            cp LICENSE THIRD_PARTY_NOTICES.md logo.svg readme.md config.example.toml behaviour.example behaviour_example.txt "dist/$name/"
-            mkdir -p "dist/$name/third_party_sources"
-            cp "$hcl_source" "dist/$name/third_party_sources/hashicorp-hcl-$hcl_version.zip"
-            cp -R docs "dist/$name/"
-            mkdir -p "dist/$name/scripts"
-            cp scripts/install.sh "dist/$name/scripts/"
-            if [ "$os" = windows ]; then
-              (cd "dist/$name" && zip -qr "../$name.zip" .)
-            else
-              tar -czf "dist/$name.tar.gz" -C "dist/$name" .
-            fi
-            rm -r "dist/$name"
-          done
-          (cd dist && sha256sum *.tar.gz *.zip > checksums.txt)
+          bash scripts/check-release-archives.sh dist "$RELEASE_TAG"
       - name: Publish GitHub Release
         shell: bash
         run: |
