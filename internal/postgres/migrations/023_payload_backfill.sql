@@ -5,7 +5,7 @@
 -- Stop old writers before running backfill: old binaries cannot hydrate refs.
 -- This is NOT permission to delete tables, payload columns or remote objects.
 -- +goose StatementBegin
-CREATE OR REPLACE FUNCTION looster_immutable_event() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION looster_immutable_event() RETURNS trigger LANGUAGE plpgsql SET search_path=public,pg_temp AS $$
 BEGIN
  IF TG_OP='UPDATE' AND current_setting('looster.payload_backfill',true)='on' THEN
   IF to_jsonb(NEW)-'body'=to_jsonb(OLD)-'body'
@@ -36,7 +36,7 @@ END; $$;
 -- +goose Down
 -- Reinstating stricter triggers never removes archived data or references.
 -- +goose StatementBegin
-CREATE OR REPLACE FUNCTION looster_immutable_event() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION looster_immutable_event() RETURNS trigger LANGUAGE plpgsql SET search_path=public,pg_temp AS $$
 BEGIN
  RAISE EXCEPTION 'Looster events are append-only';
 END; $$;
