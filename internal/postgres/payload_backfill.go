@@ -121,7 +121,7 @@ func (s *Store) BackfillPayloads(ctx context.Context, limit int) (report Payload
 				if e := s.payloads.Put(ctx, key, v.value); e != nil {
 					return fmt.Errorf("upload %s.%s/%d: %w", col.table, col.column, v.id, e)
 				}
-				remote, e := s.payloads.Get(ctx, key)
+				remote, e := s.committedPayload(ctx, key)
 				if e != nil {
 					return fmt.Errorf("reread payload %s: %w", key, e)
 				}
@@ -194,7 +194,7 @@ func (s *Store) VerifyPayloads(ctx context.Context, limit int) (report PayloadBa
 				rows.Close()
 				return report, fmt.Errorf("invalid payload reference in %s.%s", col.table, col.column)
 			}
-			remote, e := s.payloads.Get(ctx, key)
+			remote, e := s.committedPayload(ctx, key)
 			if e != nil {
 				rows.Close()
 				return report, fmt.Errorf("verify payload %s: %w", key, e)

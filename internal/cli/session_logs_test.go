@@ -18,6 +18,7 @@ import (
 	"github.com/api-mittens/looster/internal/task"
 	"github.com/api-mittens/looster/internal/web"
 	"github.com/jackc/pgx/v5"
+	"github.com/spf13/viper"
 )
 
 type cliLogRepo struct {
@@ -75,6 +76,17 @@ func TestSessionLogCLIHTTPPostgres(t *testing.T) {
 		t.Skip("set LOOSTER_TEST_DATABASE_URL to a disposable PostgreSQL database")
 	}
 	ctx := context.Background()
+	for _, name := range []string{"ENDPOINT", "BUCKET", "ACCESS_KEY", "SECRET_KEY"} {
+		value := os.Getenv("LOOSTER_TEST_S3_" + name)
+		if value == "" {
+			t.Skip("requires explicit disposable LOOSTER_TEST_S3_" + name)
+		}
+		t.Setenv("LOOSTER_S3_"+name, value)
+	}
+	t.Setenv("LOOSTER_S3_SESSION_TOKEN", "")
+	t.Setenv("LOOSTER_DUCKLAKE_DATABASE", "")
+	t.Setenv("LOOSTER_DUCKLAKE_DATA_PATH", "")
+	t.Setenv("LOOSTER_DUCKLAKE_SPOOL_DIR", t.TempDir())
 	ns := fmt.Sprintf("log_cli_%d", time.Now().UnixNano())
 	if err := postgres.EnsureNamespace(ctx, url, ns); err != nil {
 		t.Fatal(err)
@@ -112,6 +124,14 @@ func TestSessionLogCLIHTTPPostgres(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &saved); err != nil || saved.SessionID != "session-proof" || saved.TaskID != 0 || saved.JobID != jobID {
 		t.Fatalf("saved=%+v %s %v", saved, out.String(), err)
 	}
+	readerApp := &application{v: viper.New()}
+	_ = readerApp.command() // Configure environment resolution without running a command.
+	reader, err := readerApp.openPayloadStore(ctx, ns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	store.SetPayloadStore(reader)
 	repo, err := app.WithPermissions(store, app.Actor{Role: app.Human})
 	if err != nil {
 		t.Fatal(err)

@@ -20,6 +20,15 @@ type PayloadStore interface {
 
 const payloadPrefix = "looster-payload:v1:"
 
+func (s *Store) committedPayload(ctx context.Context, key string) ([]byte, error) {
+	if remote, ok := s.payloads.(interface {
+		GetCommitted(context.Context, string) ([]byte, error)
+	}); ok {
+		return remote.GetCommitted(ctx, key)
+	}
+	return s.payloads.Get(ctx, key)
+}
+
 func (s *Store) SetPayloadStore(p PayloadStore) { s.payloads = p }
 func payloadKey(value []byte) string            { h := sha256.Sum256(value); return hex.EncodeToString(h[:]) }
 func isPayloadReference(value string) bool {
