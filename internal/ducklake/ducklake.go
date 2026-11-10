@@ -38,6 +38,7 @@ type Config struct {
 	Namespace         string
 	DataPath          string
 	S3                objectstore.Config
+	extensions        string
 }
 
 func (c Config) String() string   { return "ducklake.Config{values redacted}" }
@@ -73,7 +74,7 @@ func Open(ctx context.Context, c Config) (*Lake, error) {
 		c.Binary = binary
 	}
 	// Official signed extensions only, with no insecure transport fallback.
-	install, err := extensionInstallSQL(ctx)
+	install, err := extensionLoadSQL(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -83,6 +84,7 @@ func Open(ctx context.Context, c Config) (*Lake, error) {
 		}
 		return nil, errors.New("DuckDB signed extension bootstrap failed (details suppressed)")
 	}
+	c.extensions = install
 	return open(ctx, c, runCLI)
 }
 func open(ctx context.Context, c Config, run runner) (*Lake, error) {
@@ -153,12 +155,16 @@ func prepare(c Config) (string, error) {
 			endpoint += "false"
 		}
 	}
+	loads := c.extensions
+	if loads == "" {
+		loads = "SET autoinstall_known_extensions=false; SET autoload_known_extensions=false; LOAD ducklake; LOAD postgres; LOAD httpfs;"
+	}
 	// Temporary secrets, no persistent secret storage. Never emit this SQL.
 	return "SELECT CASE WHEN version() = '" + EngineVersion + "' THEN true ELSE error('engine version mismatch') END;\n" +
-		"SET autoinstall_known_extensions=false; SET autoload_known_extensions=false;\nLOAD ducklake; LOAD postgres; LOAD httpfs;\n" +
+		loads + "\n" +
 		"SELECT CASE WHEN (SELECT count(*) FROM duckdb_extensions() WHERE loaded AND ((extension_name='ducklake' AND extension_version='" + DuckLakeExtensionVersion + "') OR (extension_name='postgres_scanner' AND extension_version='" + PostgresExtensionVersion + "') OR (extension_name='httpfs' AND extension_version='" + HTTPFSExtensionVersion + "'))) = 3 THEN true ELSE error('extension version mismatch') END;\n" +
 		"CREATE TEMPORARY SECRET looster_s3 (TYPE s3, PROVIDER config, KEY_ID " + quote(s.AccessKey) + ", SECRET " + quote(s.SecretKey) + ", SESSION_TOKEN " + quote(s.SessionToken) + ", REGION " + quote(s.Region) + ", URL_STYLE 'path', SCOPE " + quote(c.DataPath) + endpoint + ");\n" +
-		"CREATE TEMPORARY SECRET looster_lake (TYPE ducklake, METADATA_PATH " + quote("postgres:"+c.CatalogConnection+" passfile='/dev/null'") + ", DATA_PATH " + quote(c.DataPath) + ");\n" +
+		"CREATE TEMPORARY SECRET looster_lake (TYPE ducklake, METADATA_PATH " + quote("postgres:"+c.CatalogConnection+" passfile="+libpqQuote(os.DevNull)) + ", DATA_PATH " + quote(c.DataPath) + ");\n" +
 		"ATTACH 'ducklake:looster_lake' AS lake (METADATA_SCHEMA " + quote(metadataSchema(c.Namespace)) + ", DATA_INLINING_ROW_LIMIT 0, OVERRIDE_DATA_PATH false);\n", nil
 }
 
@@ -239,10 +245,14 @@ func metadataSchema(ns string) string {
 	return fmt.Sprintf("looster_ducklake_%x", h[:16])
 }
 
+func libpqQuote(s string) string {
+	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(s) + "'"
+}
+
 func runCLI(ctx context.Context, binary, sql string) error {
 	// -init /dev/null prevents ~/.duckdbrc, -batch avoids interactive history.
 	// Secrets are only on stdin, never argv or inherited credential variables.
-	cmd := exec.CommandContext(ctx, binary, "-init", "/dev/null", "-batch", "-bail", ":memory:")
+	cmd := exec.CommandContext(ctx, binary, "-init", os.DevNull, "-batch", "-bail", ":memory:")
 	cmd.Stdin = strings.NewReader(sql)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard

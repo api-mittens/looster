@@ -88,6 +88,7 @@ func TestEngineBootstrapArtifacts(t *testing.T) {
 	}
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("LOCALAPPDATA", t.TempDir())
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	binary, err := acquireEngine(ctx)
@@ -109,12 +110,12 @@ func TestEngineBootstrapArtifacts(t *testing.T) {
 	if err != nil || !bytes.Equal(original, restoredBytes) {
 		t.Fatal("cached executable not reconstructed from verified archive")
 	}
-	install, err := extensionInstallSQL(ctx)
+	install, err := extensionLoadSQL(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sql := install + " SELECT CASE WHEN version()='" + EngineVersion + "' AND (SELECT count(*) FROM duckdb_extensions() WHERE loaded AND ((extension_name='ducklake' AND extension_version='" + DuckLakeExtensionVersion + "') OR (extension_name='postgres_scanner' AND extension_version='" + PostgresExtensionVersion + "') OR (extension_name='httpfs' AND extension_version='" + HTTPFSExtensionVersion + "'))) = 3 THEN true ELSE error('pin mismatch') END;"
-	cmd := exec.CommandContext(ctx, binary, "-init", "/dev/null", "-batch", "-bail", ":memory:")
+	cmd := exec.CommandContext(ctx, binary, "-init", os.DevNull, "-batch", "-bail", ":memory:")
 	cmd.Stdin = strings.NewReader(sql)
 	cmd.Env = []string{"HOME=" + os.Getenv("HOME"), "PATH=" + os.Getenv("PATH")}
 	if output, e := cmd.CombinedOutput(); e != nil {

@@ -15,8 +15,9 @@ import (
 
 // Download with Go's verified HTTPS transport. DuckDB needs httpfs to perform
 // HTTPS installs itself, so relying on INSTALL remote would require an insecure
-// HTTP bootstrap. Local INSTALL/LOAD retains DuckDB's signature verification.
-func extensionInstallSQL(ctx context.Context) (string, error) {
+// HTTP bootstrap. Absolute LOAD retains DuckDB's signature verification and
+// never changes the user's normal extension installation directory.
+func extensionLoadSQL(ctx context.Context) (string, error) {
 	platform := ""
 	switch runtime.GOOS + "/" + runtime.GOARCH {
 	case "darwin/arm64":
@@ -25,6 +26,10 @@ func extensionInstallSQL(ctx context.Context) (string, error) {
 		platform = "osx_amd64"
 	case "linux/arm64":
 		platform = "linux_arm64"
+	case "windows/amd64":
+		platform = "windows_amd64"
+	case "windows/arm64":
+		platform = "windows_arm64"
 	case "linux/amd64":
 		platform = "linux_amd64"
 	default:
@@ -52,7 +57,7 @@ func extensionInstallSQL(ctx context.Context) (string, error) {
 		} else if err != nil {
 			return "", err
 		}
-		sql += " INSTALL " + quote(path) + "; LOAD " + name + ";"
+		sql += " LOAD " + quote(path) + ";"
 	}
 	// Exact build IDs are checked by prepare before catalog access.
 	return strings.TrimSpace(sql), nil

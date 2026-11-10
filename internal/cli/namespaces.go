@@ -51,6 +51,11 @@ func (p *webNamespaces) Repository(ctx context.Context, name string) (app.Reposi
 	if repo, ok := p.repos[name]; ok {
 		return repo, nil
 	}
+	if p.openPayloads != nil {
+		if err := postgres.EnsureNamespace(ctx, p.url, name); err != nil {
+			return nil, err
+		}
+	}
 	store, err := postgres.OpenNamespace(ctx, p.url, name)
 	if err != nil {
 		return nil, err
@@ -63,6 +68,11 @@ func (p *webNamespaces) Repository(ctx context.Context, name string) (app.Reposi
 			return nil, err
 		}
 		store.SetPayloadStore(payloads)
+		if err = store.EnablePayloadCutover(ctx); err != nil {
+			_ = payloads.Close()
+			store.Close()
+			return nil, err
+		}
 	}
 	repo, err := app.WithPermissions(store, app.Actor{Role: app.Human})
 	if err != nil {

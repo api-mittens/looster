@@ -104,6 +104,9 @@ func (a *application) command() *cobra.Command {
 		if cmd.Annotations["local"] == "true" {
 			return nil
 		}
+		if e := postgres.EnsureNamespace(cmd.Context(), v.GetString("database_url"), v.GetString("namespace")); e != nil {
+			return fmt.Errorf("automatic namespace migration: %w", e)
+		}
 		s, e := postgres.OpenNamespace(cmd.Context(), v.GetString("database_url"), v.GetString("namespace"))
 		if e != nil {
 			return e
@@ -115,6 +118,9 @@ func (a *application) command() *cobra.Command {
 		}
 		a.payloads = payloads
 		s.SetPayloadStore(payloads)
+		if err := s.EnablePayloadCutover(cmd.Context()); err != nil {
+			return err
+		}
 		if actor.Role == app.Agent {
 			if _, err = s.Agent(cmd.Context(), actor.Name); err != nil {
 				return fmt.Errorf("agent %q: %w", actor.Name, err)
@@ -147,7 +153,7 @@ func (a *application) command() *cobra.Command {
 		fmt.Fprintln(c.OutOrStdout(), "Database migrated")
 		return nil
 	}})
-	root.AddCommand(db, a.configureCommand())
+	root.AddCommand(db, a.configureCommand(),a.storageMaintenanceCommand())
 	return root
 }
 func (a *application) load() error {

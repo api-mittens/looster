@@ -18,10 +18,12 @@ import (
 // Release archive SHA256 digests published by duckdb/duckdb v1.5.2 on GitHub.
 // Do not obtain a replacement digest from the same download at runtime.
 var engineArchives = map[string]struct{ name, digest string }{
-	"darwin/amd64": {"osx-universal", "de789904e1b0b5f305d31b88a6fd8bd4f6ed3f63a00d95f8c7a2559a0995a2f1"},
-	"darwin/arm64": {"osx-universal", "de789904e1b0b5f305d31b88a6fd8bd4f6ed3f63a00d95f8c7a2559a0995a2f1"},
-	"linux/amd64":  {"linux-amd64", "fc9145affabca627431e73ddaf6b8117e5c192692480c13886f227be202d5d15"},
-	"linux/arm64":  {"linux-arm64", "28b15a8d78e6df62f6ec43da6b0e6397dcd28e25ab93d847df3c5c97f59375f5"},
+	"darwin/amd64":  {"osx-universal", "de789904e1b0b5f305d31b88a6fd8bd4f6ed3f63a00d95f8c7a2559a0995a2f1"},
+	"darwin/arm64":  {"osx-universal", "de789904e1b0b5f305d31b88a6fd8bd4f6ed3f63a00d95f8c7a2559a0995a2f1"},
+	"linux/amd64":   {"linux-amd64", "fc9145affabca627431e73ddaf6b8117e5c192692480c13886f227be202d5d15"},
+	"windows/amd64": {"windows-amd64", "d7b4f5774419c2e9eb14cb7361d3488821ef0244f8af461fd2c6fcb6f43bc3e0"},
+	"windows/arm64": {"windows-arm64", "7908e22d25e6991f45e895b1613277e2a600eec6721253f45ce10cde6a3ffdaf"},
+	"linux/arm64":   {"linux-arm64", "28b15a8d78e6df62f6ec43da6b0e6397dcd28e25ab93d847df3c5c97f59375f5"},
 }
 
 // acquireEngine only executes bytes extracted from a verified release archive.
@@ -76,7 +78,11 @@ func acquireEngine(ctx context.Context) (string, error) {
 	if err = atomicPrivateWrite(archive, data, 0600); err != nil {
 		return "", err
 	}
-	path := filepath.Join(dir, "duckdb")
+	name := "duckdb"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	path := filepath.Join(dir, name)
 	if err = atomicPrivateWrite(path, binary, 0700); err != nil {
 		return "", err
 	}
@@ -92,7 +98,7 @@ func verifiedEngine(data []byte, digest string) ([]byte, error) {
 		return nil, err
 	}
 	for _, f := range r.File {
-		if f.Name != "duckdb" {
+		if f.Name != "duckdb" && f.Name != "duckdb.exe" {
 			continue
 		}
 		if f.UncompressedSize64 > 256<<20 {

@@ -35,7 +35,7 @@ func TestPrepare(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"version() = 'v1.5.2'", "LOAD ducklake", "LOAD postgres", "LOAD httpfs", "CREATE TEMPORARY SECRET", "PROVIDER config", "URL_STYLE 'path'", "ENDPOINT 'localhost:4566'", "USE_SSL false", "REGION 'us-east-1'", "SESSION_TOKEN 'token-canary'", "sslmode=verify-full", "sslrootcert=''/tmp/root.crt''", "passfile=''/dev/null''", "ATTACH 'ducklake:looster_lake'", "DATA_INLINING_ROW_LIMIT 0"} {
+	for _, want := range []string{"version() = 'v1.5.2'", "LOAD ducklake", "LOAD postgres", "LOAD httpfs", "CREATE TEMPORARY SECRET", "PROVIDER config", "URL_STYLE 'path'", "ENDPOINT 'localhost:4566'", "USE_SSL false", "REGION 'us-east-1'", "SESSION_TOKEN 'token-canary'", "sslmode=verify-full", "sslrootcert=''/tmp/root.crt''", "passfile=" + strings.ReplaceAll(libpqQuote(os.DevNull), "'", "''"), "ATTACH 'ducklake:looster_lake'", "DATA_INLINING_ROW_LIMIT 0"} {
 		if !strings.Contains(sql, want) {
 			t.Errorf("missing expected SQL fragment %q", want)
 		}
@@ -99,7 +99,7 @@ func TestConnectionPreserved(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(sql, quote("postgres:"+c.CatalogConnection+" passfile='/dev/null'")) {
+		if !strings.Contains(sql, quote("postgres:"+c.CatalogConnection+" passfile="+libpqQuote(os.DevNull))) {
 			t.Fatal("libpq semantics changed")
 		}
 	}

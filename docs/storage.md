@@ -2,7 +2,9 @@
 
 Application commands, including `looster serve` and `looster web`, require
 PostgreSQL and S3-compatible credentials. DuckLake is initialized automatically
-before a repository is exposed. Startup errors are fatal, not a switch back to
+before a repository is exposed. The selected application namespace is created
+and migrated automatically, then the durable payload-writer fence is enabled.
+Startup errors are fatal, not a switch back to
 PostgreSQL JSON payload storage. Offline commands and local administrative
 commands such as `db migrate` do not start DuckLake.
 
@@ -39,12 +41,14 @@ No DuckDB package, separate catalog database, extra service or manual extension
 installation is needed. On first startup Looster downloads the pinned DuckDB
 **v1.5.2** CLI release from GitHub over verified HTTPS and verifies its compiled-in
 SHA256 archive digest before extraction/execution. Supported automatic platforms
-are macOS and Linux on arm64 and amd64. Cached archives are rehashed before use,
+are macOS, Linux and Windows on arm64 and amd64. Windows artifacts and extension
+platforms are pinned, but Windows execution must be validated on Windows CI. Cached archives are rehashed before use,
 and the executable is reconstructed atomically from verified bytes. A corrupt
 cache fails closed. Remove the affected local cache archive to retry downloading.
 
-Official extensions are downloaded over verified HTTPS by Go, then installed
-locally and loaded by DuckDB with its normal signature checks. This avoids the
+Official extensions are downloaded over verified HTTPS by Go, then loaded
+by absolute cache path with DuckDB's normal signature checks. Looster never
+modifies the user's ordinary DuckDB extension installation directory. This avoids the
 HTTP bootstrap that remote `INSTALL` would otherwise need to obtain `httpfs`.
 Unsigned extensions, HTTP extension mirrors, TLS-verification bypasses and
 insecure retry paths are not enabled. The engine and extension build IDs are
@@ -60,8 +64,8 @@ checked before attaching the catalog:
 
 Artifacts are cached under the OS user cache directory in `looster/duckdb/`.
 Network access to GitHub release assets and `extensions.duckdb.org` is required
-for a cold start. Subsequent starts use cached artifacts and installed signed
-extensions. Errors suppress engine diagnostics because SQL diagnostics can
+for a cold start. Subsequent starts use cached signed artifacts. Errors suppress
+engine diagnostics because SQL diagnostics can
 contain PostgreSQL or S3 credentials.
 
 ## Optional non-secret configuration
@@ -82,8 +86,10 @@ refer to an existing database at runtime. An explicit binary override is
 operator-trusted, still version checked, and does not disable signed extension
 verification.
 
-Acknowledged payloads are durably spooled locally until bounded DuckLake batch
-writes succeed. The default spool root is
+Pending payloads are durably spooled locally while bounded DuckLake batch
+writes execute. A successful Put acknowledges **remote commit**, not merely a
+local spool write, so another host can immediately resolve a PostgreSQL payload
+reference. Failed writes preserve pending spool records for retry. The default spool root is
 `$XDG_STATE_HOME/looster/ducklake-spool`, or
 `~/.local/state/looster/ducklake-spool`. Keep it on durable local storage. Spools
 are isolated by catalog, S3 path and namespace, independent of credentials so
