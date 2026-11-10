@@ -28,8 +28,9 @@ import (
 var migrations embed.FS
 
 type Store struct {
-	Pool *pgxpool.Pool
-	q    *db.Queries
+	Pool     *pgxpool.Pool
+	q        *db.Queries
+	payloads PayloadStore
 }
 
 var _ app.Repository = (*Store)(nil)
@@ -194,7 +195,11 @@ func (s *Store) Events(ctx context.Context, taskID, after int64) ([]event.Event,
 		}
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	return s.hydrateEvents(ctx, out)
 }
 func (s *Store) Tags(ctx context.Context) ([]tag.Tag, error) {
 	rows, e := s.Pool.Query(ctx, `SELECT id,name,description,NOT manifest_active FROM tags ORDER BY name`)
@@ -415,7 +420,18 @@ func (s *Store) sessions(ctx context.Context, name string, metadataOnly bool) ([
 		}
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	values := []*string{}
+	for i := range out {
+		values = append(values, &out[i].Summary, &out[i].Error)
+	}
+	if err := s.hydrateStrings(ctx, values); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 func (s *Store) Bind(ctx context.Context, id int64, name, sid string) error {
 	if strings.TrimSpace(sid) == "" {

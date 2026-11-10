@@ -22,6 +22,10 @@ func (s *Store) AppendSessionLog(ctx context.Context, in agent.SessionLogInput) 
 	if err := app.ValidateSessionLog(in); err != nil {
 		return agent.SessionLog{}, err
 	}
+	body, err := s.externalize(ctx, in.Body)
+	if err != nil {
+		return agent.SessionLog{}, err
+	}
 	// Resolve only by job primary key, never by latest session or agent. A single
 	// statement remains consistent across the live-to-history transactional handoff.
 	l, err := scanSessionLog(s.Pool.QueryRow(ctx, `WITH identity AS (
@@ -32,9 +36,12 @@ func (s *Store) AppendSessionLog(ctx context.Context, in agent.SessionLogInput) 
  ) INSERT INTO session_logs(job_id,agent_name,session_id,task_id,kind,body)
  SELECT job_id,agent_name,session_id,task_id,$5,$6 FROM identity
  WHERE agent_name=$2 AND btrim(session_id)<>'' AND ($3='' OR session_id=$3) AND ($4::bigint=0 OR task_id=$4)
- RETURNING `+sessionLogColumns, in.JobID, in.Agent, in.SessionID, in.TaskID, strings.TrimSpace(in.Kind), in.Body))
+ RETURNING `+sessionLogColumns, in.JobID, in.Agent, in.SessionID, in.TaskID, strings.TrimSpace(in.Kind), body))
 	if err == pgx.ErrNoRows {
 		return agent.SessionLog{}, fmt.Errorf("%w: job, agent, session or task does not match a proven session run", app.ErrInvalidSessionLog)
+	}
+	if err == nil {
+		l.Body = in.Body
 	}
 	return l, err
 }
@@ -53,7 +60,18 @@ func (s *Store) sessionLogs(ctx context.Context, clause string, id int64) ([]age
 		}
 		out = append(out, l)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	values := []*string{}
+	for i := range out {
+		values = append(values, &out[i].Body)
+	}
+	if err := s.hydrateStrings(ctx, values); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 func (s *Store) TaskSessionLogs(ctx context.Context, id int64) ([]agent.SessionLog, error) {
 	return s.sessionLogs(ctx, "task_id", id)
@@ -87,5 +105,19 @@ func (s *Store) sessionLogsForIDs(ctx context.Context, column string, ids []int6
 		}
 		out[id] = append(out[id], l)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	values := []*string{}
+	for id, logs := range out {
+		for i := range logs {
+			values = append(values, &logs[i].Body)
+		}
+		out[id] = logs
+	}
+	if err := s.hydrateStrings(ctx, values); err != nil {
+		return nil, err
+	}
+	return out, nil
 }

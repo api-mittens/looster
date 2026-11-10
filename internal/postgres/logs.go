@@ -66,11 +66,20 @@ func (s *Store) Logs(ctx context.Context, f event.Filter) ([]event.Event, error)
 		}
 		out = append(out, e)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	return s.hydrateEvents(ctx, out)
 }
 
 // System events have no task and therefore cannot trigger task workflow rules.
 func (s *Store) RecordSystemEvent(ctx context.Context, kind, body string) error {
+	var e error
+	body, e = s.externalize(ctx, body)
+	if e != nil {
+		return e
+	}
 	_, err := s.Pool.Exec(ctx, `INSERT INTO events(kind,body) VALUES($1,$2)`, kind, body)
 	return err
 }

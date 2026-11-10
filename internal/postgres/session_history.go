@@ -48,6 +48,13 @@ func (s *Store) SessionHistory(ctx context.Context, name string, taskID, beforeJ
 	for i := range out {
 		out[i].Logs = logs[out[i].JobID]
 	}
+	values := []*string{}
+	for i := range out {
+		values = append(values, &out[i].Summary, &out[i].Error)
+	}
+	if err := s.hydrateStrings(ctx, values); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -64,6 +71,9 @@ func (s *Store) SessionRun(ctx context.Context, jobID int64) (agent.SessionRun, 
  AND NOT EXISTS (SELECT FROM agent_session_runs WHERE job_id=$1)`, jobID))
 	if err != nil {
 		return r, repositoryError(err)
+	}
+	if err = s.hydrateStrings(ctx, []*string{&r.Summary, &r.Error}); err != nil {
+		return r, err
 	}
 	r.Logs, err = s.RunSessionLogs(ctx, jobID)
 	return r, err
@@ -88,9 +98,20 @@ func capturedSummary(text string) string {
 }
 
 func (l *lease) recordSessionRun(ctx context.Context, tx pgx.Tx, outcome, cause string) error {
+	var summary string
+	if err := tx.QueryRow(ctx, `SELECT summary FROM jobs WHERE id=$1`, l.job.ID).Scan(&summary); err != nil {
+		return err
+	}
+	if !isPayloadReference(summary) {
+		var err error
+		summary, err = l.store.externalize(ctx, summary)
+		if err != nil {
+			return err
+		}
+	}
 	_, err := tx.Exec(ctx, `INSERT INTO agent_session_runs(job_id,task_id,context_task_id,agent_name,session_id,started_at,outcome,summary,summary_status,error)
- SELECT id,coalesce(task_id,0),coalesce(context_task_id,0),agent_name,session_id,coalesce(started_at,now()),$2,summary,
- CASE WHEN summary<>'' THEN 'available' WHEN $2='done' THEN 'missing' ELSE $2 END,$3 FROM jobs WHERE id=$1
- ON CONFLICT(job_id) DO NOTHING`, l.job.ID, outcome, cause)
+ SELECT id,coalesce(task_id,0),coalesce(context_task_id,0),agent_name,session_id,coalesce(started_at,now()),$2,$4,
+ CASE WHEN $4<>'' THEN 'available' WHEN $2='done' THEN 'missing' ELSE $2 END,$3 FROM jobs WHERE id=$1
+ ON CONFLICT(job_id) DO NOTHING`, l.job.ID, outcome, cause, summary)
 	return err
 }

@@ -18,9 +18,10 @@ import (
 var _ app.Queue = (*Store)(nil)
 
 type lease struct {
-	conn *pgxpool.Conn
-	job  app.Job
-	lock string
+	conn  *pgxpool.Conn
+	job   app.Job
+	lock  string
+	store *Store
 }
 
 func (l *lease) Job() app.Job { return l.job }
@@ -129,8 +130,17 @@ func (s *Store) Claim(ctx context.Context, agents []string) (app.Lease, error) {
 				return nil, e
 			}
 		}
+		if len(j.History) > 0 {
+			decoded, err := s.hydrate(ctx, string(j.History))
+			if err != nil {
+				c.Hijack().Close(context.Background())
+				keep = true
+				return nil, err
+			}
+			j.History = []byte(decoded)
+		}
 		keep = true
-		return &lease{conn: c, job: j, lock: key}, nil
+		return &lease{conn: c, job: j, lock: key, store: s}, nil
 	}
 	return nil, nil
 }
@@ -195,8 +205,16 @@ func (l *lease) Started(ctx context.Context) error {
 	})
 }
 func (l *lease) Capture(ctx context.Context, out app.Output) error {
+	body, err := l.store.externalize(ctx, out.Text)
+	if err != nil {
+		return err
+	}
+	summary, err := l.store.externalize(ctx, capturedSummary(out.Text))
+	if err != nil {
+		return err
+	}
 	return l.transaction(ctx, func(tx pgx.Tx) error {
-		if summary := capturedSummary(out.Text); summary != "" {
+		if summary != "" {
 			if _, err := tx.Exec(ctx, `UPDATE jobs SET summary=$2 WHERE id=$1`, l.job.ID, summary); err != nil {
 				return err
 			}
@@ -211,13 +229,17 @@ func (l *lease) Capture(ctx context.Context, out app.Output) error {
 				}
 			}
 		}
-		_, e := tx.Exec(ctx, `INSERT INTO events(task_id,kind,agent_name,body,job_id) VALUES($1,'agent_output',$2,$3,$4)`, l.eventTask(), l.job.Agent, out.Text, l.job.ID)
+		_, e := tx.Exec(ctx, `INSERT INTO events(task_id,kind,agent_name,body,job_id) VALUES($1,'agent_output',$2,$3,$4)`, l.eventTask(), l.job.Agent, body, l.job.ID)
 		return e
 	})
 }
 func (l *lease) Archive(ctx context.Context, r app.Result) error {
+	history, err := l.store.externalize(ctx, string(r.History))
+	if err != nil {
+		return err
+	}
 	e := l.transaction(ctx, func(tx pgx.Tx) error {
-		if _, e := tx.Exec(ctx, `UPDATE jobs SET state='archiving',session_id=$2,history=$3 WHERE id=$1`, l.job.ID, r.SessionID, r.History); e != nil {
+		if _, e := tx.Exec(ctx, `UPDATE jobs SET state='archiving',session_id=$2,history=$3 WHERE id=$1`, l.job.ID, r.SessionID, []byte(history)); e != nil {
 			return e
 		}
 		if l.job.TaskID > 0 {
@@ -264,6 +286,10 @@ func (l *lease) Complete(ctx context.Context) error {
 	})
 }
 func (l *lease) Fail(ctx context.Context, cause error) error {
+	body, err := l.store.externalize(ctx, cause.Error())
+	if err != nil {
+		return err
+	}
 	return l.transaction(ctx, func(tx pgx.Tx) error {
 		state := "failed"
 		status, kind := "failed", "agent_failed"
@@ -280,11 +306,11 @@ func (l *lease) Fail(ctx context.Context, cause error) error {
 			if kind == "agent_interrupted" {
 				outcome = "interrupted"
 			}
-			if err := l.recordSessionRun(ctx, tx, outcome, cause.Error()); err != nil {
+			if err := l.recordSessionRun(ctx, tx, outcome, body); err != nil {
 				return err
 			}
 		}
-		if _, e := tx.Exec(ctx, `UPDATE jobs SET state=$2,error=$3,available_at=now()+interval '10 seconds' WHERE id=$1`, l.job.ID, state, cause.Error()); e != nil {
+		if _, e := tx.Exec(ctx, `UPDATE jobs SET state=$2,error=$3,available_at=now()+interval '10 seconds' WHERE id=$1`, l.job.ID, state, body); e != nil {
 			return e
 		}
 		if l.job.TaskID > 0 {
@@ -292,7 +318,7 @@ func (l *lease) Fail(ctx context.Context, cause error) error {
 				return e
 			}
 		}
-		_, e := tx.Exec(ctx, `INSERT INTO events(task_id,kind,agent_name,body) VALUES($1,$2,$3,$4)`, l.eventTask(), kind, l.job.Agent, cause.Error())
+		_, e := tx.Exec(ctx, `INSERT INTO events(task_id,kind,agent_name,body) VALUES($1,$2,$3,$4)`, l.eventTask(), kind, l.job.Agent, body)
 		return e
 	})
 }

@@ -51,5 +51,16 @@ func (s *Store) PerformanceData(ctx context.Context, start, end time.Time) ([]ta
 		}
 		logs = append(logs, l)
 	}
-	return tasks, logs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	rows.Close()
+	values := []*string{}
+	for i := range logs {
+		values = append(values, &logs[i].Body)
+	}
+	if err := s.hydrateStrings(ctx, values); err != nil {
+		return nil, nil, err
+	}
+	return tasks, logs, nil
 }
