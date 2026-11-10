@@ -95,6 +95,16 @@ func TestStorageAcceptance(t *testing.T) {
 		l.Close()
 		t.Fatal(err)
 	}
+	var stagedBytes int
+	if err = s.Pool.QueryRow(ctx, `SELECT octet_length(history) FROM jobs WHERE id=$1`, job).Scan(&stagedBytes); err != nil {
+		l.Close()
+		t.Fatal(err)
+	}
+	if stagedBytes != len("looster-payload:v1:")+64 || stagedBytes >= len(history) {
+		l.Close()
+		t.Fatalf("archive staging did not reduce PG payload bytes: source=%d staged=%d", len(history), stagedBytes)
+	}
+	t.Logf("archive staging payload reduction: %d source bytes to %d PostgreSQL reference bytes", len(history), stagedBytes)
 	l.Close()
 	// Different backend owner proves acknowledgment is not only a local overlay.
 	otherApp := &application{v: a.v}
