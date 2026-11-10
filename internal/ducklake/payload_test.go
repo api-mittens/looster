@@ -2,12 +2,15 @@ package ducklake
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -68,13 +71,16 @@ func TestPayloadDurableRestartRetry(t *testing.T) {
 	dir := t.TempDir()
 	s := testPayloadStore(t, m, PayloadOptions{SpoolDir: dir})
 	value := []byte{0, 1, 255}
-	if e := s.Put(ctx, "a/'key", value); e != nil {
-		t.Fatal(e)
+	if e := s.Put(ctx, "a/'key", value); e == nil {
+		t.Fatal("Put acknowledged uncommitted spool")
 	}
 	value[0] = 99
 	got, e := s.Get(ctx, "a/'key")
 	if e != nil || got[0] != 0 {
 		t.Fatalf("pending read %v %v", got, e)
+	}
+	if _, e := s.GetCommitted(ctx, "a/'key"); !errors.Is(e, ErrPayloadNotFound) {
+		t.Fatalf("pending record treated as remotely committed: %v", e)
 	}
 	got[0] = 55
 	if e = s.Flush(ctx); e == nil {
@@ -94,7 +100,7 @@ func TestPayloadDurableRestartRetry(t *testing.T) {
 	if e = s.Flush(ctx); e != nil {
 		t.Fatal(e)
 	}
-	if _, e = os.Stat(filepath.Join(dir, payloadName("a/'key"))); !os.IsNotExist(e) {
+	if _, e = os.Stat(filepath.Join(s.dir, payloadName("a/'key"))); !os.IsNotExist(e) {
 		t.Fatalf("spool was not acknowledged: %v", e)
 	}
 	if e = s.Close(); e != nil {
@@ -109,21 +115,22 @@ func TestPayloadDurableRestartRetry(t *testing.T) {
 func TestPayloadIdempotenceConflictAndBounds(t *testing.T) {
 	ctx := context.Background()
 	m := newMemorySink()
+	m.fail = true
 	s := testPayloadStore(t, m, PayloadOptions{BatchSize: 2, BatchBytes: 8})
 	for _, k := range []string{"a", "b", "c", "d", "e"} {
-		if e := s.Put(ctx, k, []byte("123")); e != nil {
-			t.Fatal(e)
+		if e := s.Put(ctx, k, []byte("123")); e == nil {
+			t.Fatal("Put acknowledged failed remote write")
 		}
 	}
-	if e := s.Put(ctx, "a", []byte("123")); e != nil {
-		t.Fatal(e)
+	if e := s.Put(ctx, "a", []byte("123")); e == nil {
+		t.Fatal("pending retry acknowledged without remote commit")
 	}
 	if e := s.Put(ctx, "a", []byte("456")); !errors.Is(e, ErrPayloadConflict) {
 		t.Fatalf("pending conflict: %v", e)
 	}
-	if e := s.Put(ctx, "huge", []byte("12345")); e == nil {
-		t.Fatal("oversized record accepted")
-	}
+	m.mu.Lock()
+	m.fail = false
+	m.mu.Unlock()
 	if e := s.Flush(ctx); e != nil {
 		t.Fatal(e)
 	}
@@ -161,9 +168,12 @@ func TestPayloadSpoolOwnershipAndCorruption(t *testing.T) {
 	m := newMemorySink()
 	dir := t.TempDir()
 	s := testPayloadStore(t, m, PayloadOptions{SpoolDir: dir})
-	if other, e := newPayloadStore(m, PayloadOptions{SpoolDir: dir}); e == nil {
-		other.Close()
-		t.Fatal("shared spool accepted")
+	other := testPayloadStore(t, m, PayloadOptions{SpoolDir: dir})
+	if other.dir == s.dir {
+		t.Fatal("clients share mutable spool directory")
+	}
+	if e := other.Put(context.Background(), "other", []byte("value")); e != nil {
+		t.Fatal(e)
 	}
 	if e := s.Close(); e != nil {
 		t.Fatal(e)
@@ -181,8 +191,8 @@ func TestPayloadBackgroundRetry(t *testing.T) {
 	m.fail = true
 	s := testPayloadStore(t, m, PayloadOptions{FlushInterval: time.Millisecond * 5})
 	ctx := context.Background()
-	if e := s.Put(ctx, "retry", []byte("ok")); e != nil {
-		t.Fatal(e)
+	if e := s.Put(ctx, "retry", []byte("ok")); e == nil {
+		t.Fatal("Put acknowledged failed remote write")
 	}
 	time.Sleep(20 * time.Millisecond)
 	m.mu.Lock()
@@ -217,19 +227,62 @@ func TestPayloadSQLCLI(t *testing.T) {
 	if prelude == "" {
 		prelude = "ATTACH " + quote(filepath.Join(t.TempDir(), "lake.db")) + " AS lake;"
 	}
-	lake := &Lake{binary: binary, prelude: prelude, run: runCLI}
+	var copies int32
+	lake := &Lake{binary: binary, prelude: prelude, run: func(ctx context.Context, binary, sql string) error {
+		if strings.Contains(sql, "COPY (") {
+			atomic.AddInt32(&copies, 1)
+		}
+		return runCLI(ctx, binary, sql)
+	}}
 	ctx := context.Background()
 	if e := lake.Exec(ctx, "CREATE TABLE lake.main.looster_payloads(payload_key VARCHAR,payload BLOB);"); e != nil {
 		t.Fatal(e)
 	}
 	if os.Getenv("DUCKLAKE_PAYLOAD_TEST_PRELUDE") != "" {
-		store, err := NewPayloadStore(ctx, lake, PayloadOptions{SpoolDir: t.TempDir(), FlushInterval: time.Hour})
+		root := t.TempDir()
+		store, err := NewPayloadStore(ctx, lake, PayloadOptions{SpoolDir: root, FlushInterval: time.Hour})
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer store.Close()
 		if err = store.Put(ctx, "store-roundtrip", []byte("durable")); err != nil {
 			t.Fatal(err)
+		}
+		other, err := NewPayloadStore(ctx, lake, PayloadOptions{SpoolDir: root, FlushInterval: time.Hour})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer other.Close()
+		sharedValue := []byte("same cross-client immutable payload")
+		digest := sha256.Sum256(sharedValue)
+		sharedKey := hex.EncodeToString(digest[:])
+		errs := make(chan error, 2)
+		for _, client := range []*PayloadStore{store, other} {
+			go func(client *PayloadStore) {
+				err := client.Put(ctx, sharedKey, sharedValue)
+				if err != nil {
+					err = client.Put(ctx, sharedKey, sharedValue)
+				}
+				errs <- err
+			}(client)
+		}
+		for i := 0; i < 2; i++ {
+			if err := <-errs; err != nil {
+				t.Fatal("concurrent independent client write:", err)
+			}
+		}
+		if rows, err := other.GetManyCommitted(ctx, []string{sharedKey}); err != nil || len(rows) != 1 || string(rows[sharedKey]) != string(sharedValue) {
+			t.Fatalf("logical concurrent idempotence: rows=%d err=%v", len(rows), err)
+		}
+		if v, err := other.GetCommitted(ctx, "store-roundtrip"); err != nil || string(v) != "durable" {
+			t.Fatalf("remote ACK not visible to independent client: %q %v", v, err)
+		}
+		large := []byte(strings.Repeat("L", 5<<20))
+		if err = store.Put(ctx, "large-archive", large); err != nil {
+			t.Fatal(err)
+		}
+		if v, err := other.GetCommitted(ctx, "large-archive"); err != nil || string(v) != string(large) {
+			t.Fatalf("large SQL archive: len=%d err=%v", len(v), err)
 		}
 		if err = store.Flush(ctx); err != nil {
 			t.Fatal(err)
@@ -239,7 +292,7 @@ func TestPayloadSQLCLI(t *testing.T) {
 		}
 	}
 	sink := lakePayloadSink{lake}
-	key := "quoted'key"
+	key := "quoted'key\nwith newline"
 	value := []byte{0, 255, 10, 13, 39}
 	records := []payloadRecord{{key, value}, {"empty", []byte{}}}
 	if e := sink.putBatch(ctx, records); e != nil {
@@ -247,6 +300,14 @@ func TestPayloadSQLCLI(t *testing.T) {
 	}
 	if e := sink.putBatch(ctx, records); e != nil {
 		t.Fatal("idempotent retry:", e)
+	}
+	before := atomic.LoadInt32(&copies)
+	rows, err := sink.getMany(ctx, []string{key, "empty", "missing", key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if atomic.LoadInt32(&copies)-before != 1 || len(rows) != 2 || string(rows[key]) != string(value) {
+		t.Fatalf("GetMany COPY calls=%d rows=%d", atomic.LoadInt32(&copies)-before, len(rows))
 	}
 	for _, r := range records {
 		v, e := sink.get(ctx, r.Key)
@@ -276,7 +337,7 @@ func TestPayloadSQLNoInlining(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer s.Close()
-	if !strings.Contains(sql, "CREATE TABLE IF NOT EXISTS lake.main.looster_payloads") || !strings.Contains(sql, "data_inlining_row_limit', 0") {
+	if !strings.Contains(sql, "CREATE TABLE IF NOT EXISTS lake.main.looster_payloads") || !strings.Contains(sql, "data_inlining_row_limit', 0") || !strings.Contains(sql, "SET PARTITIONED BY (bucket(256, payload_key))") {
 		t.Fatal("missing real lake table or disabled inline storage")
 	}
 }

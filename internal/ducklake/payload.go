@@ -11,7 +11,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 	"unicode/utf8"
 )
@@ -20,11 +19,9 @@ var ErrPayloadNotFound = errors.New("DuckLake payload not found")
 var ErrPayloadConflict = errors.New("DuckLake payload key has different content")
 var ErrPayloadClosed = errors.New("DuckLake payload store closed")
 
-// PayloadOptions controls durable acknowledgement and bounded lake writes.
-// SpoolDir must be on a durable local filesystem. All writers to the same
-// catalog payload table must share this directory on one host. The file lock
-// prevents competing local owners, not independent writers on other hosts.
-// BatchBytes includes keys and values and is also the maximum record size.
+// PayloadOptions controls durable retry storage and bounded lake writes.
+// Each client owns a private subdirectory of SpoolDir. BatchBytes bounds normal
+// batches, but a larger individual archive is supported as a singleton batch.
 type PayloadOptions struct {
 	SpoolDir      string
 	BatchSize     int
@@ -39,32 +36,44 @@ type payloadSink interface {
 	get(context.Context, string) ([]byte, error)
 	putBatch(context.Context, []payloadRecord) error
 }
+type payloadBatchReader interface {
+	getMany(context.Context, []string) (map[string][]byte, error)
+}
 
-// PayloadStore acknowledges Put only after fsync of both the spool file and its
-// directory. Failed lake writes remain readable and are retried on each tick.
-// Close attempts a final flush and returns any error, preserving the spool.
+// PayloadStore acknowledges Put only after a remote lake transaction commits.
+// Local atomic, fsynced spool records retain failed attempts for background
+// retry and restart recovery. Failed attempts remain readable in the overlay.
+// Separate clients do not share a lifetime lock or reject one another.
 type PayloadStore struct {
-	mu       sync.Mutex
-	sink     payloadSink
-	opts     PayloadOptions
-	pending  map[string][]byte
-	lock     *os.File
-	stop     chan struct{}
-	done     chan struct{}
-	closed   bool
-	closeErr error
+	mu        sync.Mutex
+	flushMu   sync.Mutex
+	waiters   map[string][]chan error
+	wake      chan struct{}
+	closeDone chan struct{}
+	sink      payloadSink
+	opts      PayloadOptions
+	dir       string
+	pending   map[string][]byte
+	lock      *os.File
+	stop      chan struct{}
+	done      chan struct{}
+	closed    bool
+	closeErr  error
 }
 
 func NewPayloadStore(ctx context.Context, lake *Lake, opts PayloadOptions) (*PayloadStore, error) {
 	if lake == nil {
 		return nil, errors.New("DuckLake lake is required")
 	}
-	if err := lake.Exec(ctx, "CREATE TABLE IF NOT EXISTS lake.main.looster_payloads (payload_key VARCHAR, payload BLOB); CALL lake.set_option('data_inlining_row_limit', 0, table_name => 'looster_payloads');"); err != nil {
+	if err := lake.Exec(ctx, "CREATE TABLE IF NOT EXISTS lake.main.looster_payloads (payload_key VARCHAR, payload BLOB); CALL lake.set_option('data_inlining_row_limit', 0, table_name => 'looster_payloads'); ALTER TABLE lake.main.looster_payloads SET PARTITIONED BY (bucket(256, payload_key));"); err != nil {
 		return nil, err
 	}
-	return newPayloadStore(lakePayloadSink{lake}, opts)
+	return newPayloadStoreContext(ctx, lakePayloadSink{lake}, opts)
 }
 func newPayloadStore(sink payloadSink, opts PayloadOptions) (*PayloadStore, error) {
+	return newPayloadStoreContext(context.Background(), sink, opts)
+}
+func newPayloadStoreContext(ctx context.Context, sink payloadSink, opts PayloadOptions) (*PayloadStore, error) {
 	if opts.SpoolDir == "" {
 		return nil, errors.New("DuckLake durable spool directory is required")
 	}
@@ -80,66 +89,58 @@ func newPayloadStore(sink payloadSink, opts PayloadOptions) (*PayloadStore, erro
 	if opts.FlushInterval == 0 {
 		opts.FlushInterval = time.Second
 	}
-	if err := os.MkdirAll(opts.SpoolDir, 0700); err != nil {
-		return nil, err
-	}
-	// Persist newly created directory links, including any MkdirAll ancestors,
-	// before acknowledging a spool record inside them.
-	absolute, err := filepath.Abs(opts.SpoolDir)
+	root, err := filepath.Abs(opts.SpoolDir)
 	if err != nil {
 		return nil, err
 	}
-	for dir := absolute; ; dir = filepath.Dir(dir) {
-		f, e := os.Open(dir)
-		if e != nil {
-			return nil, e
-		}
-		e = f.Sync()
-		closeErr := f.Close()
-		if e != nil {
-			return nil, e
-		}
-		if closeErr != nil {
-			return nil, closeErr
+	opts.SpoolDir = root
+	if err = os.MkdirAll(root, 0700); err != nil {
+		return nil, err
+	}
+	for dir := root; ; dir = filepath.Dir(dir) {
+		if err = syncPayloadDir(dir); err != nil {
+			return nil, err
 		}
 		if filepath.Dir(dir) == dir {
 			break
 		}
 	}
-	lock, err := os.OpenFile(filepath.Join(opts.SpoolDir, ".lock"), os.O_CREATE|os.O_RDWR, 0600)
+	// A short startup-only lock protects directory creation and recovery. It is
+	// released before returning and waits instead of rejecting another client.
+	guard, err := os.OpenFile(filepath.Join(root, ".recovery.lock"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, err
 	}
-	if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		lock.Close()
-		return nil, errors.New("DuckLake spool already in use")
-	}
-	s := &PayloadStore{sink: sink, opts: opts, pending: map[string][]byte{}, lock: lock, stop: make(chan struct{}), done: make(chan struct{})}
-	entries, err := os.ReadDir(opts.SpoolDir)
-	if err == nil {
-		for _, e := range entries {
-			if filepath.Ext(e.Name()) != ".json" {
-				continue
-			}
-			var r payloadRecord
-			var b []byte
-			b, err = os.ReadFile(filepath.Join(opts.SpoolDir, e.Name()))
-			if err != nil {
-				break
-			}
-			if err = json.Unmarshal(b, &r); err != nil {
-				break
-			}
-			if e.Name() != payloadName(r.Key) {
-				err = errors.New("invalid DuckLake spool record")
-				break
-			}
-			if len(r.Key)+len(r.Value) > opts.BatchBytes {
-				err = errors.New("DuckLake spool record exceeds configured batch limit")
-				break
-			}
-			s.pending[r.Key] = r.Value
+	defer guard.Close()
+	for {
+		err = lockPayloadFile(guard)
+		if err == nil {
+			break
 		}
+		if !payloadLockBusy(err) {
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	dir, err := os.MkdirTemp(root, "client-")
+	if err != nil {
+		return nil, err
+	}
+	lock, err := os.OpenFile(filepath.Join(dir, ".lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err = lockPayloadFile(lock); err != nil {
+		lock.Close()
+		return nil, err
+	}
+	s := &PayloadStore{sink: sink, opts: opts, dir: dir, pending: map[string][]byte{}, waiters: map[string][]chan error{}, wake: make(chan struct{}, 1), closeDone: make(chan struct{}), lock: lock, stop: make(chan struct{}), done: make(chan struct{})}
+	if err = syncPayloadDir(root); err == nil {
+		err = s.recoverSpools()
 	}
 	if err != nil {
 		lock.Close()
@@ -148,54 +149,99 @@ func newPayloadStore(sink payloadSink, opts PayloadOptions) (*PayloadStore, erro
 	go s.loop()
 	return s, nil
 }
+
+// recoverSpools claims only abandoned clients. Their locks are nonblocking,
+// so active CLI/server writers continue independently. Source records are kept
+// until the recovered copy and directory entry have both reached stable storage.
+func (s *PayloadStore) recoverSpools() error {
+	entries, err := os.ReadDir(s.opts.SpoolDir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		path := filepath.Join(s.opts.SpoolDir, e.Name())
+		if path == s.dir {
+			continue
+		}
+		// Support legacy spool records from the original single-client layout.
+		if !e.IsDir() {
+			if filepath.Ext(e.Name()) == ".json" {
+				if err = s.recoverFile(path, e.Name()); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+		if !strings.HasPrefix(e.Name(), "client-") {
+			continue
+		}
+		lock, openErr := os.OpenFile(filepath.Join(path, ".lock"), os.O_CREATE|os.O_RDWR, 0600)
+		if os.IsNotExist(openErr) {
+			continue
+		}
+		if openErr != nil {
+			return openErr
+		}
+		if err = lockPayloadFile(lock); err != nil {
+			lock.Close()
+			continue
+		}
+		files, readErr := os.ReadDir(path)
+		if readErr == nil {
+			for _, f := range files {
+				if filepath.Ext(f.Name()) == ".json" {
+					if readErr = s.recoverFile(filepath.Join(path, f.Name()), f.Name()); readErr != nil {
+						break
+					}
+				}
+			}
+		}
+		lock.Close()
+		if readErr != nil {
+			return readErr
+		}
+		// Empty abandoned directories are harmless. Do not remove them here: a
+		// simultaneous recovery may have the lock open on Unix or Windows.
+	}
+	return syncPayloadDir(s.opts.SpoolDir)
+}
+func (s *PayloadStore) recoverFile(path, name string) error {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var r payloadRecord
+	if err = json.Unmarshal(data, &r); err != nil {
+		return err
+	}
+	if name != payloadName(r.Key) {
+		return errors.New("invalid DuckLake spool record")
+	}
+	if old, ok := s.pending[r.Key]; ok && string(old) != string(r.Value) {
+		return ErrPayloadConflict
+	}
+	if err = s.spool(r.Key, r.Value); err != nil {
+		return err
+	}
+	if err = os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return syncPayloadDir(filepath.Dir(path))
+}
 func payloadName(key string) string {
 	h := sha256.Sum256([]byte(key))
 	return hex.EncodeToString(h[:]) + ".json"
 }
-func (s *PayloadStore) syncDir() error {
-	f, e := os.Open(s.opts.SpoolDir)
-	if e != nil {
-		return e
-	}
-	defer f.Close()
-	return f.Sync()
-}
-func (s *PayloadStore) Put(ctx context.Context, key string, value []byte) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return ErrPayloadClosed
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if !utf8.ValidString(key) || strings.IndexByte(key, 0) >= 0 {
-		return errors.New("DuckLake payload key must be UTF-8 without NUL")
-	}
-	if len(value)+len(key) > s.opts.BatchBytes {
-		return errors.New("DuckLake payload exceeds batch byte limit")
-	}
-	old, ok := s.pending[key]
-	if !ok {
-		var err error
-		old, err = s.sink.get(ctx, key)
-		if err == nil {
-			ok = true
-		} else if !errors.Is(err, ErrPayloadNotFound) {
-			return err
-		}
-	}
-	if ok {
-		if string(old) != string(value) {
-			return ErrPayloadConflict
-		}
-		return s.syncDir()
-	}
+func (s *PayloadStore) syncDir() error { return syncPayloadDir(s.dir) }
+func (s *PayloadStore) spool(key string, value []byte) error {
 	data, err := json.Marshal(payloadRecord{key, value})
 	if err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(s.opts.SpoolDir, ".pending-")
+	f, err := os.CreateTemp(s.dir, ".pending-")
 	if err != nil {
 		return err
 	}
@@ -214,14 +260,76 @@ func (s *PayloadStore) Put(ctx context.Context, key string, value []byte) error 
 	if err != nil {
 		return err
 	}
-	if err = os.Rename(name, filepath.Join(s.opts.SpoolDir, payloadName(key))); err != nil {
+	if err = os.Rename(name, filepath.Join(s.dir, payloadName(key))); err != nil {
 		return err
 	}
-	// Keep the overlay even if directory sync fails: retrying Put must not lose it.
 	s.pending[key] = append([]byte{}, value...)
 	return s.syncDir()
 }
+func (s *PayloadStore) Put(ctx context.Context, key string, value []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !utf8.ValidString(key) || strings.IndexByte(key, 0) >= 0 {
+		return errors.New("DuckLake payload key must be UTF-8 without NUL")
+	}
+	if len(key) == 64 {
+		if decoded, e := hex.DecodeString(key); e == nil {
+			h := sha256.Sum256(value)
+			if string(decoded) != string(h[:]) {
+				return ErrPayloadConflict
+			}
+		}
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return ErrPayloadClosed
+	}
+	if old, ok := s.pending[key]; ok {
+		if string(old) != string(value) {
+			s.mu.Unlock()
+			return ErrPayloadConflict
+		}
+		if err := s.syncDir(); err != nil {
+			s.mu.Unlock()
+			return err
+		}
+	} else if err := s.spool(key, value); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	waiter := make(chan error, 1)
+	s.waiters[key] = append(s.waiters[key], waiter)
+	s.mu.Unlock()
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
+	// Spooling is not acknowledgement. Every caller waits for its group commit
+	// attempt, while the unlocked queue can collect other concurrent Put calls.
+	select {
+	case err := <-waiter:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
 func (s *PayloadStore) Get(ctx context.Context, key string) ([]byte, error) {
+	values, err := s.GetMany(ctx, []string{key})
+	if err != nil {
+		return nil, err
+	}
+	v, ok := values[key]
+	if !ok {
+		return nil, ErrPayloadNotFound
+	}
+	return v, nil
+}
+
+// GetMany reads all missing keys with one COPY command, merging pending values.
+// Missing keys are omitted from the result. Duplicate requested keys are folded.
+func (s *PayloadStore) GetMany(ctx context.Context, keys []string) (map[string][]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -230,96 +338,248 @@ func (s *PayloadStore) Get(ctx context.Context, key string) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if v, ok := s.pending[key]; ok {
-		return append([]byte{}, v...), nil
+	result := map[string][]byte{}
+	missing := []string{}
+	seen := map[string]bool{}
+	for _, k := range keys {
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		if v, ok := s.pending[k]; ok {
+			result[k] = append([]byte{}, v...)
+		} else {
+			missing = append(missing, k)
+		}
 	}
-	return s.sink.get(ctx, key)
+	if len(missing) == 0 {
+		return result, nil
+	}
+	if batch, ok := s.sink.(payloadBatchReader); ok {
+		rows, err := batch.getMany(ctx, missing)
+		if err != nil {
+			return nil, err
+		}
+		for k, v := range rows {
+			result[k] = v
+		}
+		return result, nil
+	}
+	// Only test/custom sinks lack batch support. The production SQL sink always
+	// uses a single COPY, regardless of the number of requested references.
+	for _, k := range missing {
+		v, err := s.sink.get(ctx, k)
+		if errors.Is(err, ErrPayloadNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		result[k] = v
+	}
+	return result, nil
 }
 
-// Flush drains the pending spool in bounded transactions. On any error all
-// unacknowledged records remain available for retry, including after restart.
-func (s *PayloadStore) Flush(ctx context.Context) error {
+// GetCommitted bypasses local retry records for remote backfill verification.
+func (s *PayloadStore) GetCommitted(ctx context.Context, key string) ([]byte, error) {
+	rows, err := s.GetManyCommitted(ctx, []string{key})
+	if err != nil {
+		return nil, err
+	}
+	v, ok := rows[key]
+	if !ok {
+		return nil, ErrPayloadNotFound
+	}
+	return v, nil
+}
+
+// GetManyCommitted verifies remote state in one COPY and never consults pending.
+func (s *PayloadStore) GetManyCommitted(ctx context.Context, keys []string) (map[string][]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
+		return nil, ErrPayloadClosed
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if batch, ok := s.sink.(payloadBatchReader); ok {
+		return batch.getMany(ctx, keys)
+	}
+	rows := map[string][]byte{}
+	for _, k := range keys {
+		v, err := s.sink.get(ctx, k)
+		if errors.Is(err, ErrPayloadNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		rows[k] = v
+	}
+	return rows, nil
+}
+func (s *PayloadStore) Flush(ctx context.Context) error {
+	s.mu.Lock()
+	closed := s.closed
+	s.mu.Unlock()
+	if closed {
 		return ErrPayloadClosed
 	}
 	return s.flush(ctx)
 }
-func (s *PayloadStore) flush(ctx context.Context) error {
-	keys := make([]string, 0, len(s.pending))
-	for k := range s.pending {
-		keys = append(keys, k)
+
+// notify requires mu. Buffered waiters allow canceled callers to leave without
+// blocking the writer, and every waiter is completed after one commit attempt.
+func (s *PayloadStore) notify(key string, err error) {
+	for _, ch := range s.waiters[key] {
+		ch <- err
 	}
-	sort.Strings(keys)
-	for len(keys) > 0 {
-		if err := ctx.Err(); err != nil {
-			return err
+	delete(s.waiters, key)
+}
+func (s *PayloadStore) flush(ctx context.Context) error {
+	s.flushMu.Lock()
+	defer s.flushMu.Unlock()
+	for {
+		s.mu.Lock()
+		keys := make([]string, 0, len(s.pending))
+		for k := range s.pending {
+			keys = append(keys, k)
 		}
+		sort.Strings(keys)
 		batch := []payloadRecord{}
 		size := 0
-		n := 0
-		for n < len(keys) && n < s.opts.BatchSize {
-			k := keys[n]
+		for _, k := range keys {
 			v := s.pending[k]
-			if n > 0 && size+len(k)+len(v) > s.opts.BatchBytes {
+			if len(batch) >= s.opts.BatchSize || (len(batch) > 0 && size+len(k)+len(v) > s.opts.BatchBytes) {
 				break
 			}
 			batch = append(batch, payloadRecord{k, v})
 			size += len(k) + len(v)
-			n++
 		}
-		if err := s.sink.putBatch(ctx, batch); err != nil {
+		s.mu.Unlock()
+		if len(batch) == 0 {
+			return nil
+		}
+		err := ctx.Err()
+		if err == nil {
+			err = s.sink.putBatch(ctx, batch)
+		}
+		if err != nil {
+			// Only an error path reads remote state. Normal Put performs no per-record
+			// preflight process. Proven immutable-key conflicts must not poison retries.
+			conflicts := map[string]bool{}
+			if reader, ok := s.sink.(payloadBatchReader); ok {
+				if rows, e := reader.getMany(ctx, keys); e == nil {
+					for _, r := range batch {
+						if old, ok := rows[r.Key]; ok && string(old) != string(r.Value) {
+							conflicts[r.Key] = true
+						}
+					}
+				}
+			} else {
+				for _, r := range batch {
+					if old, e := s.sink.get(ctx, r.Key); e == nil && string(old) != string(r.Value) {
+						conflicts[r.Key] = true
+					}
+				}
+			}
+			s.mu.Lock()
+			for k := range conflicts {
+				if e := os.Remove(filepath.Join(s.dir, payloadName(k))); e == nil || os.IsNotExist(e) {
+					delete(s.pending, k)
+				}
+				s.notify(k, ErrPayloadConflict)
+			}
+			_ = s.syncDir()
+			for k := range s.waiters {
+				s.notify(k, err)
+			}
+			s.mu.Unlock()
 			return err
 		}
+		s.mu.Lock()
+		// The remote commit is authoritative. Cleanup failures remain retryable and
+		// must not acknowledge uncommitted entries outside this successful batch.
 		for _, r := range batch {
-			if err := os.Remove(filepath.Join(s.opts.SpoolDir, payloadName(r.Key))); err != nil && !os.IsNotExist(err) {
-				return err
+			if e := os.Remove(filepath.Join(s.dir, payloadName(r.Key))); e != nil && !os.IsNotExist(e) {
+				err = e
+				break
 			}
 		}
-		if err := s.syncDir(); err != nil {
+		if err == nil {
+			err = s.syncDir()
+		}
+		if err == nil {
+			for _, r := range batch {
+				delete(s.pending, r.Key)
+				s.notify(r.Key, nil)
+			}
+		} else {
+			for k := range s.waiters {
+				s.notify(k, err)
+			}
+		}
+		s.mu.Unlock()
+		if err != nil {
 			return err
 		}
-		for _, r := range batch {
-			delete(s.pending, r.Key)
-		}
-		keys = keys[n:]
 	}
-	return nil
 }
 func (s *PayloadStore) loop() {
 	defer close(s.done)
-	t := time.NewTicker(s.opts.FlushInterval)
-	defer t.Stop()
+	ticker := time.NewTicker(s.opts.FlushInterval)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-s.stop:
 			return
-		case <-t.C:
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			_ = s.Flush(ctx)
-			cancel()
+		case <-s.wake:
+			// A short group window allows concurrent callers to share one transaction
+			// while each caller still waits for its own remote commit acknowledgement.
+			timer := time.NewTimer(10 * time.Millisecond)
+		collect:
+			for {
+				select {
+				case <-s.stop:
+					timer.Stop()
+					return
+				case <-s.wake:
+				case <-timer.C:
+					break collect
+				}
+			}
+		case <-ticker.C:
 		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		_ = s.Flush(ctx)
+		cancel()
 	}
 }
 func (s *PayloadStore) Close() error {
 	s.mu.Lock()
 	if s.closed {
+		s.mu.Unlock()
+		<-s.closeDone
+		s.mu.Lock()
 		err := s.closeErr
 		s.mu.Unlock()
 		return err
 	}
 	s.closed = true
 	close(s.stop)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	s.closeErr = s.flush(ctx)
-	cancel()
-	if err := s.lock.Close(); s.closeErr == nil {
-		s.closeErr = err
-	}
-	err := s.closeErr
 	s.mu.Unlock()
 	<-s.done
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	err := s.flush(ctx)
+	cancel()
+	if e := s.lock.Close(); err == nil {
+		err = e
+	}
+	s.mu.Lock()
+	s.closeErr = err
+	close(s.closeDone)
+	s.mu.Unlock()
 	return err
 }
 func (s *PayloadStore) String() string { return "ducklake.PayloadStore{values redacted}" }
