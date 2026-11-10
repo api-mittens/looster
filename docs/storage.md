@@ -124,6 +124,9 @@ TSK-57 catalogs are not automatically migrated or deleted.
 
 ## Safe verification
 
+For coordinated upgrades, historical backfill and the explicit schema-removal
+safety gate, see [Lake payload cutover and historical migration](storage-migration.md).
+
 Unit tests do not require or mutate PostgreSQL/S3 infrastructure:
 
 ```sh
