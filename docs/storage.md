@@ -44,11 +44,26 @@ Looster's `default` namespace for DuckLake. Nondefault namespace requests fail
 before provisioning, rather than sharing a catalog or prefix accidentally.
 Nothing in this task moves session data, event logs or existing tables.
 
-Install the pinned DuckDB CLI and its compatible official `ducklake`, `postgres`
-and `httpfs` extensions before opting in. Looster loads installed extensions
-lazily and disables automatic extension installation/loading. There is no native
-DuckDB library in the Looster binary and no new database server to run. See the
-engine pins and installation instructions below.
+Looster embeds the official `github.com/duckdb/duckdb-go/v2` client through
+`database/sql`, including a statically linked DuckDB core. No DuckDB executable
+or separate database server is needed. The removed `--duckdb-binary` option is
+not accepted. On first opt-in, Looster installs the required signed `ducklake`,
+`postgres` and `httpfs` extensions from the official HTTPS extension repository
+into its user cache, then loads and checks their exact build IDs. PostgreSQL-only
+commands never initialize a DuckLake catalog or download extensions.
+
+The embedded-engine release supports Linux and macOS on amd64 and arm64.
+Windows support has been removed, including both Windows release archives.
+
+Every opened core database has a **256 MiB DuckDB buffer-manager memory limit**
+set at connection creation. This is not a total-process RSS limit: native
+allocations and some query operators can use memory outside the buffer manager.
+`looster serve` owns one bounded in-memory core database for its entire run,
+shared across the server lifetime rather than reopened per worker or job. It
+closes after workers stop, including on cancellation and error. This core
+handle does not attach DuckLake, install extensions, contact its catalog/S3, or
+move application data. Catalog initialization still requires explicit
+`configure storage --ducklake` and remains separate from the server handle.
 
 Keep PostgreSQL passwords, S3 access/secret keys and optional session tokens in
 the environment. Existing `LOOSTER_S3_*` settings are used, with the same explicit
@@ -65,8 +80,6 @@ looster configure storage --ducklake
 looster configure storage --ducklake \
   --ducklake-database ducklake \
   --ducklake-data-path s3://my-bucket/looster-ducklake/default/
-# Optional executable override:
-#   --duckdb-binary /opt/duckdb/duckdb
 ```
 
 Omitting `--ducklake-data-path` uses the resolved configured `s3.bucket`, including
@@ -85,10 +98,10 @@ application migrations and retains the databases. Correct prerequisites and retr
 with the same names and path. Do not delete or switch an existing catalog to
 recover from an error.
 
-Credentials travel to the child DuckDB process only over stdin, in temporary
-in-memory secrets. They are not placed in process arguments, generated files,
-TOML, command output or persistent DuckDB secrets. Child diagnostics are
-suppressed because PostgreSQL/DuckDB errors can echo secrets. Errors identify
+Credentials remain in process memory, in temporary in-memory secrets. They are
+not placed in process arguments, generated files, TOML, command output or
+persistent DuckDB secrets. Native diagnostics are suppressed because
+PostgreSQL/DuckDB errors can echo secrets. Errors identify
 which stage failed, but troubleshooting must not involve logging SQL or resolved
 connection strings. TLS and PostgreSQL options that cannot be faithfully passed
 to the libpq connector are rejected rather than silently weakened. Verified TLS
@@ -98,49 +111,61 @@ specify a port for every host if any host has an explicit port. Pgx-only pool
 parameters and unsupported connector options must be removed from the bootstrap
 connection string, while retaining the same server, database and TLS policy.
 These restrictions affect DuckLake opt-in only, not ordinary PostgreSQL commands.
+The embedded connector does not mutate process-wide `PG*` variables. Standard
+resolved connection fields override their environment defaults. An ambient libpq
+setting that cannot be represented faithfully is rejected before provisioning,
+with its variable name only, rather than silently changing TLS or authentication.
+Password-file lookup is explicitly disabled for DuckLake. Keep credentials in
+the resolved connection environment, not `.pgpass` or service profiles.
 
 ### Pinned engine and extensions
 
-The supported engine is **DuckDB v1.5.2**, with official signed core extension
-build IDs `ducklake=415a9ebd`, `postgres_scanner=c89234f` and `httpfs=13e18b3`.
-The DuckLake metadata format is 1.0. Looster checks the engine and all three
-extension build IDs before attaching, rather than trusting a moving release label.
-Download the v1.5.2 CLI for your platform from the official DuckDB release and
-verify its published checksum. Install extensions manually with that exact CLI:
+The pinned official Go client is **v2.10502.0**, which embeds **DuckDB v1.5.2**.
+This is an explicit compatibility selection for DuckLake 1.0, not a claim that
+1.5.2 is the latest engine. Its official signed extension build IDs are
+`ducklake=415a9ebd`, `postgres_scanner=c89234f` and `httpfs=13e18b3`.
+Looster checks the engine and all three extension build IDs before attaching.
+Signature checks are never disabled and unsigned/community extensions are not
+used. Automatic implicit installation/loading is disabled. Explicit `INSTALL`
+uses the official HTTPS repository and its version/platform-specific artifacts.
 
-```sh
-printf '%s\n' 'INSTALL ducklake; INSTALL postgres; INSTALL httpfs;' | \
-  /opt/duckdb/duckdb -init /dev/null -batch -bail :memory:
-printf '%s\n' "SELECT extension_name, extension_version FROM duckdb_extensions() WHERE installed;" | \
-  /opt/duckdb/duckdb -init /dev/null -batch -bail :memory:
-```
-
-Keep the signed artifacts under the invoking user's DuckDB extension directory.
-No extensions are downloaded by `configure storage`. If installed versions do
-not match the pins, initialization fails safely. Updating engine/extensions is an
-explicit future compatibility change, not automatic production behavior.
+First use needs outbound HTTPS, a writable user cache, and available compatible
+signed artifacts. Subsequent offline initialization can use the populated cache.
+An empty cache cannot initialize offline. Copying a CLI executable is neither
+necessary nor sufficient. Cache artifacts are native executable code and must be
+protected from modification by other users. A stale or incompatible cached
+extension fails closed rather than silently accepting another build. Updating
+the client or extensions requires compatibility checks and release validation.
 
 ## Reusable engine boundary
 
 `internal/ducklake.Open` accepts a resolved catalog connection and storage config.
-`Lake.Exec` attaches the alias `lake` in a fresh in-memory process for each call,
-so a transaction must fit in one call. It is a private boundary for future trusted
+`Lake` owns an in-memory engine and a single pinned SQL connection until `Close`.
+`Lake.Exec` preserves session state across calls, so trusted callers can use
+transactions across calls. Always close handles, including on errors. Cancellation
+interrupts native query execution. It is a private boundary for future trusted
 writers, not a public arbitrary-SQL CLI. Runtime session/event storage remains
 unchanged. Application code must not log the credential-bearing config or SQL.
 
 ## Disposable write/reopen verification
 
+For a reproducible local run using a fresh PostgreSQL cluster and loopback S3
+fixture, see [the disposable harness](../scripts/test-ducklake/README.md).
+The harness never loads normal application connection settings.
+
 `ducklake.ProbeDisposable` explicitly requires confirmation of an **exclusively
 owned disposable catalog and S3 prefix**. It writes a Parquet-backed table with
-inlining disabled, exits the writer, reopens the catalog and checks the row, then
+inlining disabled, closes the writer engine, opens a fresh connection to the
+catalog and checks the row, then
 drops the table and expires/cleans files. This cleanup is catalog-wide and must
 **never** run on production or a shared catalog. A failed probe can leave test
 artifacts. The gated integration test uses only explicitly supplied test settings,
 not the ordinary application database URL. Test fixtures must be provisioned
 separately, with test-only credentials.
 
-With an isolated PostgreSQL cluster, test bucket and the pinned CLI/extensions
-already prepared, set these **test-only** variables in your trusted shell:
+With an isolated PostgreSQL cluster and test bucket, set these **test-only**
+variables in your trusted shell. The embedded engine downloads signed extensions
+on first use if its cache is empty:
 
 ```sh
 # Database provisioning tests create and drop unique databases and roles.
@@ -148,7 +173,6 @@ LOOSTER_TEST_PROVISION_DATABASE_URL='postgres://postgres:test@127.0.0.1:55457/po
   go test ./internal/postgres -run TestProvisionIntegration -count=1 -v
 
 # DuckLake test catalog must already exist and be exclusively disposable.
-export LOOSTER_TEST_DUCKDB=/opt/duckdb/duckdb
 export LOOSTER_TEST_DUCKLAKE_LIBPQ='host=127.0.0.1 port=55457 dbname=ducklake_test user=postgres password=test sslmode=disable'
 export LOOSTER_TEST_DUCKLAKE_DATA_PATH=s3://looster-test/disposable/default/
 export LOOSTER_TEST_S3_ENDPOINT=http://127.0.0.1:55458
@@ -162,10 +186,14 @@ LOOSTER_DUCKLAKE_DISPOSABLE_PROBE=yes \
 The probe requires explicit test credentials and never falls back to ordinary
 application settings. It also checks that metadata-only attach can succeed with
 an unreachable S3 endpoint while a real Parquet write fails safely. Unit tests
-run without DuckDB, PostgreSQL or S3. An S3 emulator verifies the HTTP persistence
+run without a DuckDB executable, PostgreSQL or S3. Native engine tests require
+cgo and a C/C++ toolchain. An S3 emulator verifies the HTTP persistence
 workflow, not cloud IAM policies, TLS certificates or production availability.
 
 ## Official references
+
+- https://duckdb.org/docs/2.0/clients/go/overview
+- https://github.com/duckdb/duckdb-go/tree/v2.10502.0
 
 - https://ducklake.select/docs/1.0/duckdb/usage/connecting
 - https://ducklake.select/docs/1.0/duckdb/installation

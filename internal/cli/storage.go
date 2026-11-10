@@ -27,13 +27,19 @@ func (a *application) configureCommand() *cobra.Command {
 		configure:  postgres.ConfigureDatabasesNamespace,
 		connection: postgres.DatabaseConnectionString,
 		validate:   ducklake.Validate,
-		attach:     func(ctx context.Context, cfg ducklake.Config) error { _, err := ducklake.Open(ctx, cfg); return err },
+		attach: func(ctx context.Context, cfg ducklake.Config) error {
+			lake, err := ducklake.Open(ctx, cfg)
+			if err != nil {
+				return err
+			}
+			return lake.Close()
+		},
 	})
 }
 
 func (a *application) configureCommandWith(actions storageActions) *cobra.Command {
 	root := &cobra.Command{Use: "configure", Short: "Configure optional infrastructure (human only)"}
-	var database, catalog, dataPath, binary string
+	var database, catalog, dataPath string
 	var enabled bool
 	storage := &cobra.Command{
 		Use: "storage", Short: "Create missing databases and migrate storage, optionally initialize DuckLake",
@@ -47,7 +53,7 @@ func (a *application) configureCommandWith(actions storageActions) *cobra.Comman
 			catalogName := ""
 			var lake ducklake.Config
 			if !enabled {
-				for _, flag := range []string{"ducklake-database", "ducklake-data-path", "duckdb-binary"} {
+				for _, flag := range []string{"ducklake-database", "ducklake-data-path"} {
 					if c.Flags().Changed(flag) {
 						return fmt.Errorf("--%s requires explicit --ducklake opt-in", flag)
 					}
@@ -75,7 +81,7 @@ func (a *application) configureCommandWith(actions storageActions) *cobra.Comman
 					return err
 				}
 				lake = ducklake.Config{
-					Binary: binary, CatalogConnection: connection, Namespace: ns, DataPath: resolvedPath,
+					CatalogConnection: connection, Namespace: ns, DataPath: resolvedPath,
 					S3: objectstore.Config{
 						Endpoint: a.v.GetString("s3.endpoint"), Region: a.v.GetString("s3.region"), Bucket: a.v.GetString("s3.bucket"),
 						AccessKey: a.v.GetString("s3.access_key"), SecretKey: a.v.GetString("s3.secret_key"), SessionToken: a.v.GetString("s3.session_token"),
@@ -105,7 +111,6 @@ func (a *application) configureCommandWith(actions storageActions) *cobra.Comman
 	storage.Flags().BoolVar(&enabled, "ducklake", false, "Explicitly opt in to a separate DuckLake catalog and S3 data path")
 	storage.Flags().StringVar(&catalog, "ducklake-database", "ducklake", "Separate PostgreSQL catalog database (requires --ducklake)")
 	storage.Flags().StringVar(&dataPath, "ducklake-data-path", "", "Dedicated S3 data path (default: s3://<configured s3.bucket>/ducklake/; requires --ducklake)")
-	storage.Flags().StringVar(&binary, "duckdb-binary", "duckdb", "Installed pinned DuckDB CLI executable (requires --ducklake)")
 	root.AddCommand(storage)
 	return root
 }

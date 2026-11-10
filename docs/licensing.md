@@ -9,7 +9,7 @@ The supplied project logo is treated as project artwork, not as a third-party de
 The checked-in [third-party notices](../THIRD_PARTY_NOTICES.md) contain exact module
 versions, upstream source locations, copyright notices, and full license texts.
 The inventory covers the Go packages used by the application and its tests,
-platform-specific packages for all six release targets, the Go toolchain, and the
+platform-specific packages for all four Linux/macOS release targets, the Go toolchain, and the
 complete bundled D3 distribution, including its transitive components. Test-only
 libraries are identified separately and are not linked into production binaries.
 Additional upstream notices may be retained conservatively even where the relevant
@@ -22,6 +22,14 @@ dependency of Viper. Some dependencies have multiple license texts, including
 single license label. Goja's test-only numeric conversion code also includes a
 Lucent permissive notice requiring retained documentation notices and
 non-endorsement. Its complete text is retained rather than relabeled MIT.
+
+The embedded DuckDB native engine has its own source-pinned notice collection,
+including bundled ICU, compression/crypto libraries and TPC benchmark terms.
+Do not treat the native engine's complete contents as MIT-only. Linux archives
+also retain the statically linked GCC/C++ runtime notices and runtime exception.
+The Go driver and all four supported native targets are covered by the generated
+inventory and archive checks. See [the native inventory](../scripts/licenses/README.md)
+for exact source pins, distribution contents and regeneration instructions.
 
 ### HCL source availability
 

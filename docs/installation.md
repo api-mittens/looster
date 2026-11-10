@@ -28,7 +28,8 @@ LOOSTER_VERSION=v0.1.0 LOOSTER_INSTALL_DIR="$HOME/bin" sh install-looster.sh
 ```
 
 Add your chosen installation directory to your shell's persistent `PATH` too.
-The installer is for Unix systems. On Windows, use a release ZIP instead.
+The installer supports Linux and macOS only. Windows support and Windows release
+artifacts have been removed from the embedded-engine release line.
 
 ## Manual downloads
 
@@ -40,12 +41,11 @@ your operating system and CPU:
 | --- | --- | --- |
 | Linux | `amd64`, `arm64` | `.tar.gz` |
 | macOS (`darwin`) | `amd64`, `arm64` | `.tar.gz` |
-| Windows | `amd64`, `arm64` | `.zip` |
 
 Download the release checksums alongside the archive and verify its SHA-256
-before extracting. On Linux use `sha256sum`, on macOS `shasum -a 256`, or on
-PowerShell `Get-FileHash -Algorithm SHA256`. Compare the result with the checksum
-for that exact archive. Put `looster` (or `looster.exe`) in a directory on `PATH`.
+before extracting. On Linux use `sha256sum`, or on macOS `shasum -a 256`.
+Compare the result with the checksum for that exact archive. Put `looster` in a
+directory on `PATH`.
 Do not execute a download whose checksum differs.
 
 The release executable includes the dashboard assets and migrations. It does not
@@ -121,10 +121,13 @@ are still required to run workers.
 ## Build from source
 
 The module is `github.com/api-mittens/looster`. Use **Go 1.27.2 or newer**, as declared
-in [go.mod](../go.mod). From the source checkout:
+in [go.mod](../go.mod), plus a C/C++ compiler for the embedded DuckDB engine.
+The official client links its bundled static library by default. Do not use
+`CGO_ENABLED=0` or require a separately installed DuckDB executable. From the
+source checkout:
 
 ```sh
-go build -buildvcs=false -o bin/looster ./cmd/looster
+CGO_ENABLED=1 go build -buildvcs=false -o bin/looster ./cmd/looster
 ./bin/looster --help
 ```
 

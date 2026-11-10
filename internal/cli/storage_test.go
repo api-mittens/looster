@@ -210,6 +210,9 @@ func TestConfigureStorageHelpDocumentsDuckLakeDefault(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
+	if strings.Contains(out.String(), "duckdb-binary") {
+		t.Fatalf("obsolete executable flag in help: %s", out.String())
+	}
 	if !strings.Contains(out.String(), "s3://<configured s3.bucket>/ducklake/") || strings.Contains(out.String(), "required with --ducklake") {
 		t.Fatalf("unexpected help: %s", out.String())
 	}

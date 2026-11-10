@@ -18,14 +18,15 @@ import (
 
 func TestDatabaseConnectionStringNativeConnector(t *testing.T) {
 	for _, tc := range []struct {
-		name, raw string
-		env, want map[string]string
+		name, raw             string
+		env, want             map[string]string
+		rejectAmbientPassword bool
 	}{
 		{name: "native", env: map[string]string{"PGHOST": "native", "PGPORT": "5544", "PGUSER": "worker", "PGPASSWORD": `p'a\ss`, "PGSSLMODE": "require", "PGOPTIONS": "-c statement_timeout=7000"}, want: map[string]string{"host": "native", "port": "5544", "user": "worker", "password": `p'a\ss`, "sslmode": "require", "options": "-c statement_timeout=7000"}},
 		{name: "aliases", env: map[string]string{"PG_HOST": "alias", "PG_PORT": "5545", "PG_USER": "worker", "PG_PASSWORD": "alias-secret", "PG_SSL_MODE": "require", "PG_APPNAME": "setup"}, want: map[string]string{"host": "alias", "port": "5545", "user": "worker", "password": "alias-secret", "sslmode": "require", "application_name": "setup"}},
 		{name: "URL wins multihost", raw: "postgres://url-user:url-secret@one:5544,two:5545/old?sslmode=require&application_name=setup", env: map[string]string{"PGHOST": "ignored", "PGPASSWORD": "ignored", "PGSSLMODE": "disable"}, want: map[string]string{"host": "one,two", "port": "5544,5545", "user": "url-user", "password": "url-secret", "sslmode": "require", "application_name": "setup"}},
 		{name: "keywords quoted data", raw: `host=server user=worker password='p\'ass\\word service=literal' sslmode=disable options='-c statement_timeout=9000'`, want: map[string]string{"host": "server", "user": "worker", "password": `p'ass\word service=literal`, "sslmode": "disable", "options": "-c statement_timeout=9000"}},
-		{name: "explicit empty password", raw: "postgres://worker:@server/db?sslmode=disable", env: map[string]string{"PGPASSWORD": "ignored"}, want: map[string]string{"password": ""}},
+		{name: "explicit empty password", raw: "postgres://worker:@server/db?sslmode=disable", env: map[string]string{"PGPASSWORD": "ignored"}, want: map[string]string{"password": ""}, rejectAmbientPassword: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			clearPGEnvironment(t)
@@ -56,7 +57,17 @@ func TestDatabaseConnectionStringNativeConnector(t *testing.T) {
 			if _, ok := values["passfile"]; ok {
 				t.Fatal("connector received passfile option")
 			}
-			if err := ducklake.Validate(ducklake.Config{CatalogConnection: raw, DataPath: "s3://bucket/disposable/", S3: objectstore.Config{AccessKey: "access", SecretKey: "secret"}}); err != nil {
+			lakeConfig := ducklake.Config{CatalogConnection: raw, DataPath: "s3://bucket/disposable/", S3: objectstore.Config{AccessKey: "access", SecretKey: "secret"}}
+			if tc.rejectAmbientPassword {
+				// libpq treats an empty keyword value as unspecified, unlike pgx.
+				// Refuse the ambient password rather than silently changing auth.
+				err := ducklake.Validate(lakeConfig)
+				if err == nil || !strings.Contains(err.Error(), "PGPASSWORD") || strings.Contains(err.Error(), "ignored") {
+					t.Fatalf("unsafe ambient password not rejected: %v", err)
+				}
+				t.Setenv("PGPASSWORD", "")
+			}
+			if err := ducklake.Validate(lakeConfig); err != nil {
 				t.Fatalf("native connector syntax rejected: %v", err)
 			}
 		})
