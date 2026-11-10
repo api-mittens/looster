@@ -90,11 +90,7 @@ func open(ctx context.Context, c Config, run runner) (*Lake, error) {
 	if err != nil {
 		return nil, err
 	}
-	binary := c.Binary
-	if binary == "" {
-		binary = "duckdb"
-	}
-	l := &Lake{p, binary, run}
+	l := &Lake{p, c.Binary, run}
 	if err = l.Exec(ctx, ""); err != nil {
 		return nil, err
 	}
