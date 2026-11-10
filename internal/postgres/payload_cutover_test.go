@@ -54,6 +54,8 @@ func TestPayloadCutoverFencesOldWritersAndAllowsUnchangedLegacy(t *testing.T) {
 	}
 	for _, query := range []string{
 		`INSERT INTO events(kind,body) VALUES('agent_output','old inline output')`,
+		`INSERT INTO events(kind,body) VALUES('agent_failed','old inline failure')`,
+		`INSERT INTO events(kind,body) VALUES('agent_interrupted','old inline interruption')`,
 		`INSERT INTO events(kind,body) VALUES('worker_error','old inline system log')`,
 		`INSERT INTO session_logs(job_id,session_id,agent_name,kind,body) VALUES(99,'session','queue_test','note','old inline log')`,
 		`INSERT INTO agent_session_runs(job_id,agent_name,started_at,outcome,summary,summary_status) VALUES(99,'queue_test',now(),'done','old inline summary','available')`,

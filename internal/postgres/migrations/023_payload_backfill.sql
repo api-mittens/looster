@@ -12,7 +12,7 @@ BEGIN
    AND NEW.body='looster-payload:v1:' || encode(sha256(convert_to(OLD.body,'UTF8')),'hex') THEN
    IF TG_TABLE_NAME='session_logs' THEN
     RETURN NEW;
-   ELSIF TG_TABLE_NAME='events' AND OLD.kind IN ('agent_output','system','worker_started','worker_stopped','worker_error','worker_start_failed','scheduler_failed','scheduler_dispatched') THEN
+   ELSIF TG_TABLE_NAME='events' AND OLD.kind IN ('agent_output','agent_failed','agent_interrupted','system','worker_started','worker_stopped','worker_error','worker_start_failed','scheduler_failed','scheduler_dispatched') THEN
     RETURN NEW;
    END IF;
   END IF;

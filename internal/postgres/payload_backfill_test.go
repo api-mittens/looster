@@ -88,14 +88,14 @@ func TestBackfillPayloadsResumesAndPreservesMetadata(t *testing.T) {
 		}
 	}
 	exec(`UPDATE jobs SET summary='job summary',error='job error' WHERE id=$1`, job)
-	for _, kind := range []string{"agent_output", "system", "worker_started", "worker_stopped", "worker_error", "worker_start_failed", "scheduler_failed", "scheduler_dispatched", "comment", "status_changed", "scheduled"} {
+	for _, kind := range []string{"agent_output", "agent_failed", "agent_interrupted", "system", "worker_started", "worker_stopped", "worker_error", "worker_start_failed", "scheduler_failed", "scheduler_dispatched", "comment", "status_changed", "scheduled"} {
 		exec(`INSERT INTO events(kind,body) VALUES($1,$2)`, kind, "body "+kind)
 	}
 	exec(`INSERT INTO session_logs(job_id,session_id,agent_name,kind,body) VALUES($1,'session','queue_test','note','log body')`, job)
 	exec(`INSERT INTO agent_session_runs(job_id,agent_name,session_id,started_at,outcome,summary,summary_status,error) VALUES($1,'queue_test','session',now(),'failed','run summary','available','run error')`, job)
 	s.payloads = p
 	before, err := s.VerifyPayloads(ctx, 0)
-	if err != nil || before.Legacy != 14 || !before.Complete {
+	if err != nil || before.Legacy != 16 || !before.Complete {
 		t.Fatalf("before: %+v %v", before, err)
 	}
 	total := 0
@@ -112,11 +112,11 @@ func TestBackfillPayloadsResumesAndPreservesMetadata(t *testing.T) {
 			break
 		}
 	}
-	if total != 14 {
+	if total != 16 {
 		t.Fatalf("migrated=%d", total)
 	}
 	report, err := s.VerifyPayloads(ctx, 0)
-	if err != nil || !report.Complete || report.Legacy != 0 || report.References != 14 || report.CleanupReady {
+	if err != nil || !report.Complete || report.Legacy != 0 || report.References != 16 || report.CleanupReady {
 		t.Fatalf("verify: %+v %v", report, err)
 	}
 	bounded, err := s.VerifyPayloads(ctx, 1)

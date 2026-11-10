@@ -31,7 +31,7 @@ type backfillColumn struct {
 }
 
 var backfillColumns = []backfillColumn{
-	{"events", "id", "body", "kind IN ('agent_output','system','worker_started','worker_stopped','worker_error','worker_start_failed','scheduler_failed','scheduler_dispatched')", false},
+	{"events", "id", "body", "kind IN ('agent_output','agent_failed','agent_interrupted','system','worker_started','worker_stopped','worker_error','worker_start_failed','scheduler_failed','scheduler_dispatched')", false},
 	{"session_logs", "id", "body", "true", false},
 	{"jobs", "id", "history", "true", true},
 	{"jobs", "id", "summary", "true", false},

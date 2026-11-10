@@ -17,7 +17,7 @@ DECLARE
  check_error boolean := false;
 BEGIN
  IF TG_TABLE_NAME='events' THEN
-  IF NEW.kind NOT IN ('agent_output','system','worker_started','worker_stopped','worker_error','worker_start_failed','scheduler_failed','scheduler_dispatched') THEN
+  IF NEW.kind NOT IN ('agent_output','agent_failed','agent_interrupted','system','worker_started','worker_stopped','worker_error','worker_start_failed','scheduler_failed','scheduler_dispatched') THEN
    RETURN NEW;
   END IF;
   IF TG_OP='INSERT' THEN check_body:=true;
