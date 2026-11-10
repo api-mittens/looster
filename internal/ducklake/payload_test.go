@@ -1,0 +1,282 @@
+package ducklake
+
+import (
+	"context"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+type memoryPayloadSink struct {
+	mu      sync.Mutex
+	rows    map[string][]byte
+	fail    bool
+	batches [][]payloadRecord
+}
+
+func (m *memoryPayloadSink) get(ctx context.Context, k string) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	v, ok := m.rows[k]
+	if !ok {
+		return nil, ErrPayloadNotFound
+	}
+	return append([]byte{}, v...), nil
+}
+func (m *memoryPayloadSink) putBatch(ctx context.Context, b []payloadRecord) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.fail {
+		return errors.New("injected failure")
+	}
+	for _, r := range b {
+		if v, ok := m.rows[r.Key]; ok && string(v) != string(r.Value) {
+			return ErrPayloadConflict
+		}
+	}
+	for _, r := range b {
+		m.rows[r.Key] = append([]byte{}, r.Value...)
+	}
+	m.batches = append(m.batches, b)
+	return nil
+}
+func newMemorySink() *memoryPayloadSink { return &memoryPayloadSink{rows: map[string][]byte{}} }
+func testPayloadStore(t *testing.T, m payloadSink, o PayloadOptions) *PayloadStore {
+	t.Helper()
+	if o.SpoolDir == "" {
+		o.SpoolDir = t.TempDir()
+	}
+	if o.FlushInterval == 0 {
+		o.FlushInterval = time.Hour
+	}
+	s, e := newPayloadStore(m, o)
+	if e != nil {
+		t.Fatal(e)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	return s
+}
+func TestPayloadDurableRestartRetry(t *testing.T) {
+	ctx := context.Background()
+	m := newMemorySink()
+	m.fail = true
+	dir := t.TempDir()
+	s := testPayloadStore(t, m, PayloadOptions{SpoolDir: dir})
+	value := []byte{0, 1, 255}
+	if e := s.Put(ctx, "a/'key", value); e != nil {
+		t.Fatal(e)
+	}
+	value[0] = 99
+	got, e := s.Get(ctx, "a/'key")
+	if e != nil || got[0] != 0 {
+		t.Fatalf("pending read %v %v", got, e)
+	}
+	got[0] = 55
+	if e = s.Flush(ctx); e == nil {
+		t.Fatal("expected injected failure")
+	}
+	if e = s.Close(); e == nil {
+		t.Fatal("close must report failed drain")
+	}
+	s = testPayloadStore(t, m, PayloadOptions{SpoolDir: dir})
+	got, e = s.Get(ctx, "a/'key")
+	if e != nil || got[0] != 0 {
+		t.Fatalf("restart read %v %v", got, e)
+	}
+	m.mu.Lock()
+	m.fail = false
+	m.mu.Unlock()
+	if e = s.Flush(ctx); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = os.Stat(filepath.Join(dir, payloadName("a/'key"))); !os.IsNotExist(e) {
+		t.Fatalf("spool was not acknowledged: %v", e)
+	}
+	if e = s.Close(); e != nil {
+		t.Fatal(e)
+	}
+	s = testPayloadStore(t, m, PayloadOptions{SpoolDir: dir})
+	got, e = s.Get(ctx, "a/'key")
+	if e != nil || got[0] != 0 {
+		t.Fatalf("durable read %v %v", got, e)
+	}
+}
+func TestPayloadIdempotenceConflictAndBounds(t *testing.T) {
+	ctx := context.Background()
+	m := newMemorySink()
+	s := testPayloadStore(t, m, PayloadOptions{BatchSize: 2, BatchBytes: 8})
+	for _, k := range []string{"a", "b", "c", "d", "e"} {
+		if e := s.Put(ctx, k, []byte("123")); e != nil {
+			t.Fatal(e)
+		}
+	}
+	if e := s.Put(ctx, "a", []byte("123")); e != nil {
+		t.Fatal(e)
+	}
+	if e := s.Put(ctx, "a", []byte("456")); !errors.Is(e, ErrPayloadConflict) {
+		t.Fatalf("pending conflict: %v", e)
+	}
+	if e := s.Put(ctx, "huge", []byte("12345")); e == nil {
+		t.Fatal("oversized record accepted")
+	}
+	if e := s.Flush(ctx); e != nil {
+		t.Fatal(e)
+	}
+	if len(m.batches) != 3 {
+		t.Fatalf("batches: %d", len(m.batches))
+	}
+	for _, batch := range m.batches {
+		n := 0
+		for _, r := range batch {
+			n += len(r.Key) + len(r.Value)
+		}
+		if n > 8 || len(batch) > 2 {
+			t.Fatal("unbounded batch")
+		}
+	}
+	if e := s.Put(ctx, "a", []byte("456")); !errors.Is(e, ErrPayloadConflict) {
+		t.Fatalf("persisted conflict: %v", e)
+	}
+	if _, e := s.Get(ctx, "missing"); !errors.Is(e, ErrPayloadNotFound) {
+		t.Fatalf("missing: %v", e)
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if e := s.Put(canceled, "z", nil); !errors.Is(e, context.Canceled) {
+		t.Fatal(e)
+	}
+	if e := s.Close(); e != nil {
+		t.Fatal(e)
+	}
+	if e := s.Put(ctx, "z", nil); !errors.Is(e, ErrPayloadClosed) {
+		t.Fatal(e)
+	}
+}
+func TestPayloadSpoolOwnershipAndCorruption(t *testing.T) {
+	m := newMemorySink()
+	dir := t.TempDir()
+	s := testPayloadStore(t, m, PayloadOptions{SpoolDir: dir})
+	if other, e := newPayloadStore(m, PayloadOptions{SpoolDir: dir}); e == nil {
+		other.Close()
+		t.Fatal("shared spool accepted")
+	}
+	if e := s.Close(); e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(filepath.Join(dir, "broken.json"), []byte("not json"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	if other, e := newPayloadStore(m, PayloadOptions{SpoolDir: dir}); e == nil {
+		other.Close()
+		t.Fatal("corruption ignored")
+	}
+}
+func TestPayloadBackgroundRetry(t *testing.T) {
+	m := newMemorySink()
+	m.fail = true
+	s := testPayloadStore(t, m, PayloadOptions{FlushInterval: time.Millisecond * 5})
+	ctx := context.Background()
+	if e := s.Put(ctx, "retry", []byte("ok")); e != nil {
+		t.Fatal(e)
+	}
+	time.Sleep(20 * time.Millisecond)
+	m.mu.Lock()
+	m.fail = false
+	m.mu.Unlock()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		m.mu.Lock()
+		_, ok := m.rows["retry"]
+		m.mu.Unlock()
+		if ok {
+			return
+		}
+		time.Sleep(time.Millisecond * 5)
+	}
+	t.Fatal("background retry did not persist")
+}
+
+// Exercise the exact SQL adapter across real, separate DuckDB CLI processes.
+// DUCKLAKE_PAYLOAD_TEST_PRELUDE may attach a disposable real DuckLake catalog as
+// lake (with data inlining disabled) for the same end-to-end payload assertions.
+func TestPayloadSQLCLI(t *testing.T) {
+	binary := os.Getenv("DUCKLAKE_PAYLOAD_TEST_BINARY")
+	if binary == "" {
+		var e error
+		binary, e = exec.LookPath("duckdb")
+		if e != nil {
+			t.Skip("duckdb CLI not on PATH")
+		}
+	}
+	prelude := os.Getenv("DUCKLAKE_PAYLOAD_TEST_PRELUDE")
+	if prelude == "" {
+		prelude = "ATTACH " + quote(filepath.Join(t.TempDir(), "lake.db")) + " AS lake;"
+	}
+	lake := &Lake{binary: binary, prelude: prelude, run: runCLI}
+	ctx := context.Background()
+	if e := lake.Exec(ctx, "CREATE TABLE lake.main.looster_payloads(payload_key VARCHAR,payload BLOB);"); e != nil {
+		t.Fatal(e)
+	}
+	if os.Getenv("DUCKLAKE_PAYLOAD_TEST_PRELUDE") != "" {
+		store, err := NewPayloadStore(ctx, lake, PayloadOptions{SpoolDir: t.TempDir(), FlushInterval: time.Hour})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer store.Close()
+		if err = store.Put(ctx, "store-roundtrip", []byte("durable")); err != nil {
+			t.Fatal(err)
+		}
+		if err = store.Flush(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if v, err := store.Get(ctx, "store-roundtrip"); err != nil || string(v) != "durable" {
+			t.Fatalf("store roundtrip %q %v", v, err)
+		}
+	}
+	sink := lakePayloadSink{lake}
+	key := "quoted'key"
+	value := []byte{0, 255, 10, 13, 39}
+	records := []payloadRecord{{key, value}, {"empty", []byte{}}}
+	if e := sink.putBatch(ctx, records); e != nil {
+		t.Fatal(e)
+	}
+	if e := sink.putBatch(ctx, records); e != nil {
+		t.Fatal("idempotent retry:", e)
+	}
+	for _, r := range records {
+		v, e := sink.get(ctx, r.Key)
+		if e != nil || string(v) != string(r.Value) {
+			t.Fatalf("round trip %q: %x %v", r.Key, v, e)
+		}
+	}
+	if _, e := sink.get(ctx, "missing"); !errors.Is(e, ErrPayloadNotFound) {
+		t.Fatal(e)
+	}
+	if e := sink.putBatch(ctx, []payloadRecord{{key, []byte("conflict")}, {"rollback", []byte("absent")}}); e == nil {
+		t.Fatal("conflicting content accepted")
+	}
+	if _, e := sink.get(ctx, "rollback"); !errors.Is(e, ErrPayloadNotFound) {
+		t.Fatalf("transaction did not roll back: %v", e)
+	}
+	v, e := sink.get(ctx, key)
+	if e != nil || string(v) != string(value) {
+		t.Fatal("conflict replaced content", e)
+	}
+}
+func TestPayloadSQLNoInlining(t *testing.T) {
+	var sql string
+	lake := &Lake{run: func(_ context.Context, _, q string) error { sql = q; return nil }}
+	s, e := NewPayloadStore(context.Background(), lake, PayloadOptions{SpoolDir: t.TempDir()})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer s.Close()
+	if !strings.Contains(sql, "CREATE TABLE IF NOT EXISTS lake.main.looster_payloads") || !strings.Contains(sql, "data_inlining_row_limit', 0") {
+		t.Fatal("missing real lake table or disabled inline storage")
+	}
+}
