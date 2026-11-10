@@ -38,11 +38,14 @@ The runner then builds the actual `cmd/looster` binary and invokes it with an
 empty `PATH`, private HOME and explicit private TOML. It creates a custom
 application database before initialization, migrates `default`, `dom`, and
 `nume`, seeds real task sentinels in each namespace and an existing-table
-sentinel, and runs `configure storage --ducklake` twice without database/catalog
-overrides. It checks that the default `ducklake` catalog was newly created,
-application database OID and sentinels remain intact, namespace migration
-histories are unchanged, no unintended `looster` database appeared, and the
-catalog contains DuckLake metadata but no application migrations.
+sentinel, and runs `configure storage --ducklake` twice for each namespace
+without database/catalog overrides. It checks that no `ducklake` or unintended
+`looster` database appeared, the existing application database OID and sentinels
+remain intact, and namespace migration histories are unchanged. In that same
+application database, each namespace must have its own
+`looster_ducklake_<first 16 SHA-256 bytes of namespace as hex>` metadata schema,
+containing DuckLake metadata and no application tables. Each catalog must retain
+exactly its own `s3://fixture/ducklake/namespaces/<namespace>/` data path.
 
 The Go runner and tests live under `internal/ducklakefixture/cmd` to honor the
 repository's private package layout policy.
