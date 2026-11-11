@@ -68,9 +68,9 @@ test('priority groups are scoped to agent planning todo columns with recency ret
  assert.deepEqual(tasks.map(t=>t.id),[1,2,3,4]);
 });
 test('graph signals have separate accessible circular backgrounds at different radii',()=>{
- for(const radius of [18,30,54]) for(const blocker of [false,true]) for(const question of [false,true]) {
+ for(const radius of [12,18,30,54]) for(const blocker of [false,true]) for(const question of [false,true]) {
   const html=renderTaskSignals({blocker,question},radius),count=Number(blocker)+Number(question);
-  assert.equal((html.match(/class="tg-task-signal-bg" r="10"/g)||[]).length,count);
+  assert.equal((html.match(/class="tg-task-signal-bg" r="12"/g)||[]).length,count);
   assert.equal((html.match(/role="img"/g)||[]).length,count);
   for(const [kind,present,emoji] of [['blocker',blocker,'⚠️'],['question',question,'❓']]) {
    assert.equal(html.includes('aria-label="Historical '+kind+' log"'),present);
@@ -81,7 +81,11 @@ test('graph signals have separate accessible circular backgrounds at different r
    const x=centers.reduce((v,p)=>v+p[0],0)/count,y=centers.reduce((v,p)=>v+p[1],0)/count;
    assert.ok(Math.abs(Math.hypot(x,y)-radius)<.001);assert.ok(x>0&&y<0);
   } else assert.equal(html,'');
-  if(count===2) assert.ok(Math.hypot(centers[0][0]-centers[1][0],centers[0][1]-centers[1][1])>21);
+  if(count===2) for(const scale of [.4,.6,1,1.8]) {
+   const separation=Math.hypot(centers[0][0]-centers[1][0],centers[0][1]-centers[1][1]);
+   assert.ok(Math.abs(separation-28)<.001);
+   assert.ok((separation-25)*scale>0,'padded targets including strokes stay separate');
+  }
  }
  const model=buildGraph({tasks:[{id:1,name:'Task',status:'todo',session_logs:[{kind:'question'},{kind:'blocker'}]}]});
  assert.equal(model.nodes[0].question,true);assert.equal(model.edges.length,0);

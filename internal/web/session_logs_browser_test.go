@@ -49,26 +49,33 @@ func TestGraphSignalBadgesBrowser(t *testing.T) {
  host.innerHTML='<svg viewBox="0 0 500 500"></svg>';
  const svg=host.querySelector('svg');
  svg.style.height='500px';
+ const svgScale=svg.getScreenCTM().a;
  const check=(ok,message)=>{if(!ok)throw Error(message);};
  try {
- for(const radius of [18,30,54]) for(const blocker of [false,true]) for(const question of [false,true])
+ for(const radius of [12,18,30,54]) for(const scale of [.4,1,1.8]) for(const blocker of [false,true]) for(const question of [false,true])
  for(const state of ['', 'tg-working', 'tg-heat-green', 'tg-heat-yellow', 'tg-heat-red', 'tg-working tg-heat-red']) {
-  svg.innerHTML='<g class="tg-node tg-task '+state+'" tabindex="0" role="button" transform="translate(250,250)"><circle class="tg-body" r="'+radius+'"/>'+renderTaskSignals({blocker,question},radius)+'</g>';
+  svg.innerHTML='<g class="tg-node tg-task '+state+'" tabindex="0" role="button" transform="translate(250,250)"><g class="tg-node-content" style="--tg-node-scale:'+scale+'"><circle class="tg-body" r="'+radius+'"/>'+renderTaskSignals({blocker,question},radius)+'</g></g>';
   const node=svg.firstElementChild,badges=[...node.querySelectorAll('.tg-task-signal')];
   check(badges.length===Number(blocker)+Number(question),'signal combination');
   if(window.signalInteraction==='focus') {node.focus();check(node.matches(':focus-visible'),'real focus-visible state');}
   if(window.signalInteraction==='hover') {await new Promise(requestAnimationFrame);check(node.matches(':hover'),'real hover state');}
   for(const badge of badges) {
    const circle=badge.querySelector('circle'),s=getComputedStyle(circle),text=badge.querySelector('text'),b=circle.getBoundingClientRect();
-   const expected=matchMedia('(prefers-color-scheme: dark)').matches?['rgb(37, 42, 52)','rgb(228, 228, 231)']:['rgb(255, 255, 255)','rgb(24, 24, 27)'];
+   const expected=matchMedia('(prefers-color-scheme: dark)').matches?['rgb(255, 255, 255)','rgb(228, 228, 231)']:['rgb(255, 255, 255)','rgb(24, 24, 27)'];
    check(s.fill===expected[0]&&s.stroke===expected[1]&&s.strokeWidth==='1px'&&s.fillOpacity==='1'&&s.opacity==='1','visible contrast circle '+state+' '+s.fill+' '+s.stroke);
-   check(b.width>0&&Math.abs(b.width-b.height)<.01&&circle.r.baseVal.value===10,'visible circular geometry');
+   check(b.width>0&&Math.abs(b.width-b.height)<.01&&circle.r.baseVal.value===12&&Math.abs(b.width-24*scale*svgScale)<.01,'visible circular geometry');
    check(s.pointerEvents==='all'&&getComputedStyle(text).pointerEvents==='none'&&getComputedStyle(text).fontSize==='14px','circle delegates pointer input, text remains decorative');
+   const hit=document.elementFromPoint(b.x+b.width/2+10*scale*svgScale/Math.sqrt(2),b.y+b.height/2-10*scale*svgScale/Math.sqrt(2));
+   check(hit===circle,'padded outer area targets its own signal, not its neighbor or background');
+   let delegated=false;
+   node.addEventListener('click',()=>{delegated=true;},{once:true});
+   hit.dispatchEvent(new MouseEvent('click',{bubbles:true}));
+   check(delegated,'padded signal hit delegates to the task');
    check(badge.getAttribute('role')==='img'&&badge.getAttribute('aria-label')===badge.querySelector('title').textContent&&!badge.hasAttribute('tabindex'),'accessible signal');
   }
   if(badges.length===2) {
    const [a,b]=badges.map(el=>el.querySelector('circle').getBoundingClientRect());
-   check(Math.hypot(a.x-b.x,a.y-b.y)>a.width+1,'paired circles must not overlap');
+   check(Math.hypot(a.x-b.x,a.y-b.y)>a.width+scale,'paired circles including strokes must not overlap');
   }
  }
  return 'ok';

@@ -134,9 +134,11 @@ export function renderTaskSignals(task, radius = 30) {
   if(!task.blocker && !task.question) return '';
   const edge=radius/Math.sqrt(2),signals=[['blocker','⚠️'],['question','❓']].filter(([kind])=>task[kind]);
   // Separate paired badges along the tangent, keeping their midpoint on the rim.
+  // A 12px radius leaves modest padding around the 14px emoji. Keep a 4px
+  // gap between circles (3px including outlines) at every node scale.
   return signals.map(([kind,emoji],i)=>{
-    const offset=(i-(signals.length-1)/2)*24/Math.sqrt(2),label=`Historical ${kind} log`;
-    return `<g class="tg-task-signal tg-task-signal-${kind}" transform="translate(${edge+offset},${-edge+offset})" role="img" aria-label="${label}"><title>${label}</title><circle class="tg-task-signal-bg" r="10"/><text x="0" y="0" text-anchor="middle" dominant-baseline="central" aria-hidden="true">${emoji}</text></g>`;
+    const offset=(i-(signals.length-1)/2)*28/Math.sqrt(2),label=`Historical ${kind} log`;
+    return `<g class="tg-task-signal tg-task-signal-${kind}" transform="translate(${edge+offset},${-edge+offset})" role="img" aria-label="${label}"><title>${label}</title><circle class="tg-task-signal-bg" r="12"/><text x="0" y="0" text-anchor="middle" dominant-baseline="central" aria-hidden="true">${emoji}</text></g>`;
   }).join('');
 }
 export function renderGraph(graph) {
