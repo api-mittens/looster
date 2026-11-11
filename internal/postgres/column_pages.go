@@ -71,7 +71,7 @@ func (s *Store) ColumnTasks(ctx context.Context, q task.ColumnQuery) (task.Colum
 	rows, err := tx.Query(ctx, `WITH page AS (
  SELECT t.*,GREATEST(t.created_at,
  (SELECT max(e.created_at) FROM events e WHERE e.task_id=t.id),
- (SELECT max(l.created_at) FROM session_logs l WHERE l.task_id=t.id)) AS activity,
+ (SELECT max(l.created_at) FROM session_logs l WHERE l.task_id=t.id AND l.kind <> 'link')) AS activity,
  CASE WHEN $6::boolean THEN CASE
  WHEN EXISTS(SELECT FROM session_logs l WHERE l.task_id=t.id AND l.kind='blocker') THEN 2
  WHEN EXISTS(SELECT FROM session_logs l WHERE l.task_id=t.id AND l.kind='question') THEN 1 ELSE 0 END ELSE 0 END AS priority

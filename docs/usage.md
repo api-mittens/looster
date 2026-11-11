@@ -118,7 +118,7 @@ to the remote event table; inspect the terminal or service manager output for
 that process. Existing `looster status` reports currently live worker heartbeats.
 No additional database migration is required for the log commands.
 
-## Session questions and blockers
+## Session questions, blockers, and links
 
 Session observations are separate from the system event stream above. After
 upgrading, run `looster db migrate` to create their append-only storage. In a
@@ -128,6 +128,7 @@ progress with:
 ```bash
 looster task log question 'Should the import accept legacy CSV headers?'
 looster task log blocker 'The fixture download is inaccessible; please provide a local copy.'
+looster task log link 'https://github.com/api-mittens/looster/pull/123'
 ```
 
 The command takes its body as an argument. It uses `LOOSTER_JOB_ID` and
@@ -137,7 +138,10 @@ Explicit calls can use `--job JOB_ID --agent NAME`, with optional `--task TSK-n`
 an attribution check. Agents can record only their own runs. Runs must already
 have a real session ID, so do not invent an ID before session initialization.
 Kinds are open-ended for future extensions, with `question` and `blocker` driving
-the dashboard's attention indicators.
+the dashboard's attention indicators. Use `link` to share a single absolute HTTP(S)
+URL, with a host and no whitespace. Link logs render as escaped clickable links
+alongside task comments and in run history. They do not add graph or card badges,
+change task activity timestamps, affect sorting or card aging, or count as comments.
 
 Logs appear in run history, including taskless runs, and in chronological order
 alongside task comments with agent and run attribution. Answer task questions by
