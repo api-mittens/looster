@@ -17,7 +17,7 @@ func (s *Store) PerformanceData(ctx context.Context, start, end time.Time) ([]ta
 	rows, err := s.Pool.Query(ctx, `SELECT id,status,last_activity_at FROM (
  SELECT t.id,t.status,GREATEST(t.created_at,
  (SELECT max(e.created_at) FROM events e WHERE e.task_id=t.id),
- (SELECT max(l.created_at) FROM session_logs l WHERE l.task_id=t.id)) AS last_activity_at
+ (SELECT max(l.created_at) FROM session_logs l WHERE l.task_id=t.id AND l.kind <> 'link')) AS last_activity_at
  FROM tasks t WHERE t.status IN ('validated','closed')
  ) current_tasks WHERE last_activity_at >= $1 AND last_activity_at <= $2
  ORDER BY last_activity_at DESC,id DESC`, start, end)
