@@ -15,7 +15,7 @@ var _ app.ColumnRepository = (*Store)(nil)
 
 // ColumnTasks selects IDs before hydrating tags, counters and log bodies. Count
 // and page share a repeatable-read snapshot so deletion cannot yield a stale
-// empty last page. Only fifteen tasks' log bodies ever leave PostgreSQL.
+// empty last page. Only the selected tasks' lake log bodies are hydrated.
 func (s *Store) ColumnTasks(ctx context.Context, q task.ColumnQuery) (task.ColumnPage, error) {
 	out := task.ColumnPage{Key: q.Key, Tasks: []task.Task{}, Page: q.Page, PageSize: task.ColumnPageSize}
 	agentColumn := strings.HasPrefix(q.Key, "agent:")
@@ -124,5 +124,14 @@ func (s *Store) ColumnTasks(ctx context.Context, q task.ColumnQuery) (task.Colum
 			return out, err
 		}
 	}
-	return out, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return out, err
+	}
+	values := []*string{}
+	for i := range out.Tasks {
+		for j := range out.Tasks[i].SessionLogs {
+			values = append(values, &out.Tasks[i].SessionLogs[j].Body)
+		}
+	}
+	return out, s.hydrateStrings(ctx, values)
 }

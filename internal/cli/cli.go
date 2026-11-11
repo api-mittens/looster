@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/api-mittens/looster/internal/app"
+	"github.com/api-mittens/looster/internal/ducklake"
 	"github.com/api-mittens/looster/internal/jcode"
 	"github.com/api-mittens/looster/internal/namespace"
 	"github.com/api-mittens/looster/internal/objectstore"
@@ -31,13 +32,14 @@ import (
 var Version = "dev"
 
 type application struct {
-	v      *viper.Viper
-	repo   app.Repository
-	store  *postgres.Store
-	config string
+	v        *viper.Viper
+	repo     app.Repository
+	store    *postgres.Store
+	payloads *ducklake.PayloadStore
+	config   string
 }
 
-func Execute(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer) error {
+func Execute(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer) (retErr error) {
 	a := &application{v: viper.New()}
 	root := a.command()
 	root.SetArgs(args)
@@ -45,6 +47,9 @@ func Execute(ctx context.Context, args []string, in io.Reader, out, errOut io.Wr
 	root.SetOut(out)
 	root.SetErr(errOut)
 	defer func() {
+		if a.payloads != nil {
+			retErr = errors.Join(retErr, a.payloads.Close())
+		}
 		if a.store != nil {
 			a.store.Close()
 		}
@@ -99,11 +104,23 @@ func (a *application) command() *cobra.Command {
 		if cmd.Annotations["local"] == "true" {
 			return nil
 		}
+		if e := postgres.EnsureNamespace(cmd.Context(), v.GetString("database_url"), v.GetString("namespace")); e != nil {
+			return fmt.Errorf("automatic namespace migration: %w", e)
+		}
 		s, e := postgres.OpenNamespace(cmd.Context(), v.GetString("database_url"), v.GetString("namespace"))
 		if e != nil {
 			return e
 		}
 		a.store = s
+		payloads, e := a.openPayloadStore(cmd.Context(), v.GetString("namespace"))
+		if e != nil {
+			return fmt.Errorf("mandatory DuckLake startup: %w", e)
+		}
+		a.payloads = payloads
+		s.SetPayloadStore(payloads)
+		if err := s.EnablePayloadCutover(cmd.Context()); err != nil {
+			return err
+		}
 		if actor.Role == app.Agent {
 			if _, err = s.Agent(cmd.Context(), actor.Name); err != nil {
 				return fmt.Errorf("agent %q: %w", actor.Name, err)
@@ -136,7 +153,7 @@ func (a *application) command() *cobra.Command {
 		fmt.Fprintln(c.OutOrStdout(), "Database migrated")
 		return nil
 	}})
-	root.AddCommand(db, a.configureCommand())
+	root.AddCommand(db, a.configureCommand(),a.storageMaintenanceCommand())
 	return root
 }
 func (a *application) load() error {
@@ -552,9 +569,10 @@ func (a *application) serveCommand() *cobra.Command {
 		}
 		childEnv := a.workerEnvironment()
 		service := app.Service{Log: slog.New(slog.NewTextHandler(c.ErrOrStderr(), nil)), Repo: a.repo, Queue: a.store, Harness: &jcode.Harness{Binary: v.GetString("jcode.binary"), SessionsDir: v.GetString("jcode.sessions_dir"), DatabaseURL: v.GetString("database_url"), Objects: objects, Environment: childEnv}, Objects: objects}
-		return serveWithDuckDB(c.Context(), func(ctx context.Context) error {
-			return service.Serve(ctx, app.WorkerConfig{Namespace: v.GetString("namespace"), Harness: v.GetString("harness"), ID: randomID(), Agents: names, Concurrency: concurrency, Workdir: workdir, Poll: v.GetDuration("poll_interval"), RunTimeout: v.GetDuration("run_timeout")})
-		})
+		// PersistentPreRun initialized the mandatory lake engine. Execute closes
+		// its payload store only after Serve has stopped every worker, so opening
+		// another unused core database here would duplicate native resources.
+		return service.Serve(c.Context(), app.WorkerConfig{Namespace: v.GetString("namespace"), Harness: v.GetString("harness"), ID: randomID(), Agents: names, Concurrency: concurrency, Workdir: workdir, Poll: v.GetDuration("poll_interval"), RunTimeout: v.GetDuration("run_timeout")})
 	}}
 	return cmd
 }

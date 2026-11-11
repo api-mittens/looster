@@ -5,9 +5,11 @@ package ducklake
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -15,6 +17,7 @@ import (
 
 	_ "github.com/duckdb/duckdb-go/v2"
 
+	"github.com/api-mittens/looster/internal/namespace"
 	"github.com/api-mittens/looster/internal/objectstore"
 )
 
@@ -41,7 +44,7 @@ const HTTPFSExtensionVersion = "13e18b3"
 // config translated back to a URL. Explicit sslmode and identity/root settings
 // are passed through unchanged. Ambient libpq connection defaults are accepted
 // only when overridden by explicit resolved fields. Password files are disabled.
-// Namespace is empty or "default" only.
+// Namespace selects an isolated metadata schema.
 type Config struct {
 	CatalogConnection string
 	Namespace         string
@@ -152,6 +155,86 @@ func (l *Lake) Exec(ctx context.Context, query string) error {
 	return l.exec(ctx, query, "SQL operation")
 }
 
+// withConn retains exclusive session access across a trusted compound operation.
+// The callback must release rows, appenders and transactions before returning.
+// Raw errors never escape this boundary because they can contain credentials.
+func (l *Lake) withConn(ctx context.Context, stage string, consume func(context.Context, *sql.Conn) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case l.gate <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-l.lifetime.Done():
+		return ErrClosed
+	}
+	defer func() { <-l.gate }()
+	if l.closed || l.lifetime.Err() != nil {
+		return ErrClosed
+	}
+	op, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(l.lifetime, cancel)
+	defer stop()
+	defer cancel()
+	err := consume(op, l.conn)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if l.lifetime.Err() != nil {
+		return ErrClosed
+	}
+	if err != nil {
+		return operationError(stage)
+	}
+	return nil
+}
+
+// Query consumes rows while retaining exclusive ownership of the session.
+// consume must not retain rows or call another Lake method. All row and callback
+// errors are sanitized because native diagnostics and scan errors can hold data.
+func (l *Lake) Query(ctx context.Context, query string, consume func(*sql.Rows) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case l.gate <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-l.lifetime.Done():
+		return ErrClosed
+	}
+	defer func() { <-l.gate }()
+	if l.closed || l.lifetime.Err() != nil {
+		return ErrClosed
+	}
+	op, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(l.lifetime, cancel)
+	defer stop()
+	defer cancel()
+	rows, err := l.conn.QueryContext(op, query)
+	if err == nil {
+		defer rows.Close()
+		err = consume(rows)
+		if err == nil {
+			err = rows.Err()
+		}
+		if closeErr := rows.Close(); err == nil {
+			err = closeErr
+		}
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if l.lifetime.Err() != nil {
+		return ErrClosed
+	}
+	if err != nil {
+		return operationError("SQL query")
+	}
+	return nil
+}
+
 func (l *Lake) exec(ctx context.Context, query, stage string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -207,8 +290,11 @@ func (l *Lake) Close() error {
 
 func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
 func prepare(c Config) (string, error) {
-	if c.Namespace != "" && c.Namespace != "default" {
-		return "", errors.New("DuckLake currently supports only the default namespace")
+	if c.Namespace == "" {
+		c.Namespace = namespace.Default
+	}
+	if err := namespace.Validate(c.Namespace); err != nil {
+		return "", err
 	}
 	if strings.IndexByte(c.CatalogConnection, 0) >= 0 || !validConnection(c.CatalogConnection) {
 		return "", errors.New("DuckLake requires fully resolved libpq keyword settings with explicit host, dbname, user and sslmode; unsupported or file-provider settings rejected")
@@ -254,8 +340,8 @@ func prepare(c Config) (string, error) {
 		"LOAD httpfs;\nINSTALL postgres FROM 'https://extensions.duckdb.org'; LOAD postgres;\nINSTALL ducklake FROM 'https://extensions.duckdb.org'; LOAD ducklake;\n" +
 		"SELECT CASE WHEN (SELECT count(*) FROM duckdb_extensions() WHERE loaded AND ((extension_name='ducklake' AND extension_version='" + DuckLakeExtensionVersion + "') OR (extension_name='postgres_scanner' AND extension_version='" + PostgresExtensionVersion + "') OR (extension_name='httpfs' AND extension_version='" + HTTPFSExtensionVersion + "'))) = 3 THEN true ELSE error('extension version mismatch') END;\n" +
 		"CREATE TEMPORARY SECRET looster_s3 (TYPE s3, PROVIDER config, KEY_ID " + quote(s.AccessKey) + ", SECRET " + quote(s.SecretKey) + ", SESSION_TOKEN " + quote(s.SessionToken) + ", REGION " + quote(s.Region) + ", URL_STYLE 'path', SCOPE " + quote(c.DataPath) + endpoint + ");\n" +
-		"CREATE TEMPORARY SECRET looster_lake (TYPE ducklake, METADATA_PATH " + quote("postgres:"+c.CatalogConnection+" passfile='"+os.DevNull+"'") + ", DATA_PATH " + quote(c.DataPath) + ");\n" +
-		"ATTACH 'ducklake:looster_lake' AS lake (DATA_INLINING_ROW_LIMIT 0, OVERRIDE_DATA_PATH false);\n", nil
+		"CREATE TEMPORARY SECRET looster_lake (TYPE ducklake, METADATA_PATH " + quote("postgres:"+c.CatalogConnection+" passfile="+libpqQuote(os.DevNull)) + ", DATA_PATH " + quote(c.DataPath) + ");\n" +
+		"ATTACH 'ducklake:looster_lake' AS lake (METADATA_SCHEMA " + quote(metadataSchema(c.Namespace)) + ", DATA_INLINING_ROW_LIMIT 0, OVERRIDE_DATA_PATH false);\n", nil
 }
 
 // validConnection accepts only libpq keyword syntax and known parameters. It
@@ -269,22 +355,31 @@ func validConnection(raw string) bool {
 // connectionFields tracks the last value of each keyword, just like libpq.
 // A nonempty explicit value overrides the corresponding environment default.
 func connectionFields(raw string) map[string]bool {
+	settings, _ := connectionSettings(raw)
+	fields := map[string]bool{}
+	for k, v := range settings {
+		fields[k] = v != ""
+	}
+	return fields
+}
+
+func connectionSettings(raw string) (map[string]string, bool) {
 	allowed := strings.Fields("host hostaddr port dbname user password sslmode sslcert sslkey sslrootcert sslpassword sslcrl sslcrldir sslsni ssl_min_protocol_version ssl_max_protocol_version connect_timeout application_name target_session_attrs channel_binding options")
 	keys := map[string]bool{}
 	for _, k := range allowed {
 		keys[k] = true
 	}
-	seen := map[string]bool{}
+	seen := map[string]string{}
 	s := raw
 	for strings.TrimSpace(s) != "" {
 		s = strings.TrimSpace(s)
 		i := strings.IndexByte(s, '=')
 		if i < 1 {
-			return nil
+			return nil, false
 		}
 		k := strings.TrimSpace(s[:i])
 		if !keys[k] {
-			return nil
+			return nil, false
 		}
 		s = strings.TrimLeft(s[i+1:], " \t\r\n")
 		value := ""
@@ -298,7 +393,7 @@ func connectionFields(raw string) map[string]bool {
 			s = s[1:]
 			if b == '\\' {
 				if len(s) == 0 {
-					return nil
+					return nil, false
 				}
 				value += s[:1]
 				s = s[1:]
@@ -314,14 +409,36 @@ func connectionFields(raw string) map[string]bool {
 			value += string(b)
 		}
 		if !closed {
-			return nil
+			return nil, false
 		}
 		if quoted && len(s) > 0 && !strings.ContainsRune(" \t\r\n", rune(s[0])) {
-			return nil
+			return nil, false
 		}
-		seen[k] = value != ""
+		seen[k] = value
 	}
-	return seen
+	return seen, seen["host"] != "" && seen["dbname"] != "" && seen["user"] != "" && seen["sslmode"] != ""
+}
+
+// CatalogIdentity excludes credentials so rotation does not strand spooled data.
+func CatalogIdentity(c Config) (string, error) {
+	settings, ok := connectionSettings(c.CatalogConnection)
+	if !ok {
+		return "", errors.New("invalid DuckLake catalog settings")
+	}
+	if c.Namespace == "" {
+		c.Namespace = namespace.Default
+	}
+	h := sha256.Sum256([]byte(settings["host"] + "\x00" + settings["hostaddr"] + "\x00" + settings["port"] + "\x00" + settings["dbname"] + "\x00" + c.DataPath + "\x00" + c.Namespace))
+	return fmt.Sprintf("%x", h[:16]), nil
+}
+
+func metadataSchema(ns string) string {
+	h := sha256.Sum256([]byte(ns))
+	return fmt.Sprintf("looster_ducklake_%x", h[:16])
+}
+
+func libpqQuote(s string) string {
+	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(s) + "'"
 }
 
 // ProbeDisposable writes a real Parquet-backed table, closes the writer engine,

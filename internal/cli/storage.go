@@ -38,11 +38,11 @@ func (a *application) configureCommand() *cobra.Command {
 }
 
 func (a *application) configureCommandWith(actions storageActions) *cobra.Command {
-	root := &cobra.Command{Use: "configure", Short: "Configure optional infrastructure (human only)"}
+	root := &cobra.Command{Use: "configure", Short: "Configure infrastructure (human only)"}
 	var database, catalog, dataPath string
 	var enabled bool
 	storage := &cobra.Command{
-		Use: "storage", Short: "Create missing databases and migrate storage, optionally initialize DuckLake",
+		Use: "storage", Short: "Create missing application database and migrate storage, optionally prewarm automatic DuckLake",
 		Example: "  # Default: s3://<configured s3.bucket>/ducklake/\n" +
 			"  looster configure storage --ducklake\n" +
 			"  # Explicit dedicated prefix override:\n" +
@@ -50,6 +50,9 @@ func (a *application) configureCommandWith(actions storageActions) *cobra.Comman
 		Args: cobra.NoArgs, Annotations: map[string]string{"local": "true", "human": "true"},
 		RunE: func(c *cobra.Command, _ []string) error {
 			ns := a.v.GetString("namespace")
+			if err := namespace.Validate(ns); err != nil {
+				return err
+			}
 			catalogName := ""
 			var lake ducklake.Config
 			if !enabled {
@@ -59,24 +62,32 @@ func (a *application) configureCommandWith(actions storageActions) *cobra.Comman
 					}
 				}
 			} else {
-				if ns != namespace.Default {
-					return errors.New("DuckLake currently supports only the default namespace; no storage changes made")
-				}
-				if catalog == "" {
+				if c.Flags().Changed("ducklake-database") && catalog == "" {
 					return errors.New("--ducklake-database must not be empty")
 				}
 				resolvedPath := dataPath
-				if !c.Flags().Changed("ducklake-data-path") {
+				if !c.Flags().Changed("ducklake-data-path") && a.v.GetString("ducklake.data_path") != "" {
+					resolvedPath = a.v.GetString("ducklake.data_path")
+				}
+				if !c.Flags().Changed("ducklake-data-path") && resolvedPath == "" {
 					bucket := a.v.GetString("s3.bucket")
 					if !validDuckLakeBucket(bucket) {
 						return errors.New("DuckLake default data path requires a valid configured s3.bucket; no storage changes made")
 					}
 					resolvedPath = "s3://" + bucket + "/ducklake/"
-				} else if dataPath == "" {
+				} else if resolvedPath == "" {
 					return errors.New("--ducklake-data-path must not be empty")
 				}
+				resolvedPath = strings.TrimRight(resolvedPath, "/") + "/namespaces/" + ns + "/"
 				catalogName = catalog
-				connection, err := actions.connection(a.v.GetString("database_url"), catalog)
+				selectedCatalog := catalog
+				if selectedCatalog == "" {
+					selectedCatalog = a.v.GetString("ducklake.database")
+				}
+				if selectedCatalog == "" {
+					selectedCatalog = database
+				}
+				connection, err := actions.connection(a.v.GetString("database_url"), selectedCatalog)
 				if err != nil {
 					return err
 				}
@@ -108,8 +119,8 @@ func (a *application) configureCommandWith(actions storageActions) *cobra.Comman
 		},
 	}
 	storage.Flags().StringVar(&database, "database", "", "Application database override (default: currently configured database, or looster for fresh installs)")
-	storage.Flags().BoolVar(&enabled, "ducklake", false, "Explicitly opt in to a separate DuckLake catalog and S3 data path")
-	storage.Flags().StringVar(&catalog, "ducklake-database", "ducklake", "Separate PostgreSQL catalog database (requires --ducklake)")
+	storage.Flags().BoolVar(&enabled, "ducklake", false, "Prewarm automatic DuckLake bootstrap (normal application commands always initialize it)")
+	storage.Flags().StringVar(&catalog, "ducklake-database", "", "Legacy separate catalog database override (default: configured application database; requires --ducklake)")
 	storage.Flags().StringVar(&dataPath, "ducklake-data-path", "", "Dedicated S3 data path (default: s3://<configured s3.bucket>/ducklake/; requires --ducklake)")
 	root.AddCommand(storage)
 	return root

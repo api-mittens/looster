@@ -41,8 +41,9 @@ flowchart BT
 Servers consume durable jobs and coordinate agent/task sessions through PostgreSQL.
 They launch local Jcode harnesses and collect their output; the harness arrows
 show this local integration, not public network listeners. CLI and web processes
-connect directly to the same database. S3-compatible storage holds attachments
-and session archives. No worker-to-worker mesh is needed. See
+connect directly to the same database. DuckLake on S3-compatible storage holds
+heavyweight payloads, while S3 also holds attachments and session archives.
+No worker-to-worker mesh is needed. See
 [architecture](docs/architecture.md) and [session recovery](docs/usage.md#behaviour-and-sessions).
 
 ## Source layout
@@ -92,17 +93,21 @@ mise use go:github.com/api-mittens/looster/cmd/looster@latest
 mise exec -- looster --help
 ```
 
-This alternative builds from source and requires Go. The installation guide covers
+This alternative builds from source and requires Go, CGO and a C/C++ toolchain. The installation guide covers
 shared config, private `mise.local.toml` overrides, version pinning, and shell setup.
 
-## Optional DuckLake storage
+## Automatic DuckLake storage
 
-Use human-only `looster configure storage` to create missing application databases
-and apply migrations while preserving your configured/custom database name.
-DuckLake is disabled unless explicitly requested with `--ducklake`, uses a separate
-PostgreSQL catalog and dedicated S3 prefix, and does not move existing data.
-See [storage configuration](docs/storage.md) for opt-in prerequisites, database
-selection, retry safety and disposable S3 write/reopen verification.
+Application commands require PostgreSQL and S3-compatible storage and initialize
+DuckLake automatically using the built-in DuckDB engine. PostgreSQL retains the
+control plane and payload references, while DuckLake stores heavyweight payloads
+under an isolated namespace catalog schema and S3 prefix. No separate DuckDB
+executable or engine download is needed. Signed extensions download on first use.
+Human-only `looster configure storage` provisions missing databases and applies
+migrations. Its `--ducklake` option prewarms storage, not runtime opt-in.
+See [storage configuration](docs/storage.md) for credentials, namespace isolation
+and disposable verification, and [historical migration](docs/storage-migration.md)
+for the coordinated upgrade, guarded backfill and cleanup safety gate.
 The existing `looster db migrate` command remains migration-only.
 
 ## Quick start

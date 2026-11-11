@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"os/exec"
@@ -95,8 +96,10 @@ func exerciseCLI(ctx context.Context, root, port, endpoint string, env []string)
 		return fmt.Errorf("default catalog existed before CLI opt-in")
 	}
 	for repeat := 0; repeat < 2; repeat++ {
-		if err := run("default", true); err != nil {
-			return err
+		for _, namespace := range []string{"default", "dom", "nume"} {
+			if err := run(namespace, true); err != nil {
+				return err
+			}
 		}
 	}
 	var currentOID uint32
@@ -106,11 +109,11 @@ func exerciseCLI(ctx context.Context, root, port, endpoint string, env []string)
 	if currentOID != originalOID {
 		return fmt.Errorf("existing custom application database replaced")
 	}
-	if err := admin.QueryRow(ctx, "SELECT EXISTS(SELECT FROM pg_database WHERE datname='ducklake') AND NOT EXISTS(SELECT FROM pg_database WHERE datname='looster')").Scan(&exists); err != nil {
+	if err := admin.QueryRow(ctx, "SELECT NOT EXISTS(SELECT FROM pg_database WHERE datname IN ('ducklake','looster'))").Scan(&exists); err != nil {
 		return err
 	}
 	if !exists {
-		return fmt.Errorf("default catalog missing or unintended looster application database created")
+		return fmt.Errorf("unintended ducklake catalog or looster application database created")
 	}
 	var retained bool
 	if err := app.QueryRow(ctx, "SELECT EXISTS(SELECT FROM public.fixture_existing_sentinel WHERE value='existing-custom-app')").Scan(&retained); err != nil {
@@ -135,23 +138,30 @@ func exerciseCLI(ctx context.Context, root, port, endpoint string, env []string)
 			return fmt.Errorf("namespace %s migration history changed on repeat", namespace)
 		}
 	}
-	catalog, err := pgx.Connect(ctx, base+"ducklake?sslmode=disable")
-	if err != nil {
-		return err
+	catalogSchemas := map[string]bool{}
+	for _, namespace := range []string{"default", "dom", "nume"} {
+		digest := sha256.Sum256([]byte(namespace))
+		catalogSchema := fmt.Sprintf("looster_ducklake_%x", digest[:16])
+		if catalogSchemas[catalogSchema] {
+			return fmt.Errorf("namespace %s shares a catalog schema", namespace)
+		}
+		catalogSchemas[catalogSchema] = true
+		schema := pgx.Identifier{catalogSchema}.Sanitize()
+		if err := app.QueryRow(ctx, "SELECT EXISTS(SELECT FROM pg_tables WHERE schemaname=$1 AND tablename='ducklake_metadata') AND NOT EXISTS(SELECT FROM pg_tables WHERE schemaname=$1 AND left(tablename,9)<>'ducklake_')", catalogSchema).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return fmt.Errorf("namespace %s catalog metadata missing or application tables leaked into %s", namespace, catalogSchema)
+		}
+		var paths int
+		var correctPath bool
+		if err := app.QueryRow(ctx, "SELECT count(*), COALESCE(bool_and(value=$1),false) FROM "+schema+".ducklake_metadata WHERE key='data_path'", "s3://fixture/ducklake/namespaces/"+namespace+"/").Scan(&paths, &correctPath); err != nil {
+			return err
+		}
+		if paths != 1 || !correctPath {
+			return fmt.Errorf("namespace %s catalog did not retain its isolated S3 data path", namespace)
+		}
 	}
-	defer catalog.Close(context.Background())
-	if err := catalog.QueryRow(ctx, "SELECT EXISTS(SELECT FROM pg_tables WHERE schemaname='public' AND tablename LIKE 'ducklake_%') AND to_regclass('public.tasks') IS NULL AND to_regclass('public.goose_db_version') IS NULL").Scan(&exists); err != nil {
-		return err
-	}
-	if !exists {
-		return fmt.Errorf("default catalog metadata missing or application migrations leaked into catalog")
-	}
-	if err := catalog.QueryRow(ctx, "SELECT EXISTS(SELECT FROM public.ducklake_metadata WHERE key='data_path' AND value='s3://fixture/ducklake/')").Scan(&exists); err != nil {
-		return err
-	}
-	if !exists {
-		return fmt.Errorf("default catalog did not retain the configured bucket /ducklake/ prefix")
-	}
-	fmt.Println("Compiled CLI PASS: empty PATH, private HOME/config, default catalog created, custom application database and default/dom/nume sentinels retained after repeated initialization")
+	fmt.Println("Compiled CLI PASS: empty PATH, private HOME/config, no new ducklake database, existing application OID and default/dom/nume sentinels retained, isolated hashed metadata schemas and namespace S3 paths after two initializations each")
 	return nil
 }

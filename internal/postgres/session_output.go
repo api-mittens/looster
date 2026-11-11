@@ -34,5 +34,9 @@ func (s *Store) SessionRunOutput(ctx context.Context, jobID, after int64, limit 
 		}
 		out = append(out, e)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	return s.hydrateEvents(ctx, out)
 }

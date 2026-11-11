@@ -49,21 +49,21 @@ func TestConfigureStorageDuckLakeOrderAndPartialFailure(t *testing.T) {
 			actions := storageActions{
 				connection: func(_, catalog string) (string, error) {
 					calls = append(calls, "connection")
-					if catalog != "ducklake" {
+					if catalog != "" {
 						t.Fatal(catalog)
 					}
 					return "resolved-connection", nil
 				},
 				validate: func(c ducklake.Config) error {
 					calls = append(calls, "validate")
-					if c.CatalogConnection != "resolved-connection" || c.DataPath != "s3://lake-bucket/prefix/" || c.S3.Bucket != "lake-bucket" {
+					if c.CatalogConnection != "resolved-connection" || c.DataPath != "s3://lake-bucket/prefix/namespaces/default/" || c.S3.Bucket != "lake-bucket" {
 						t.Fatal("bad lake config")
 					}
 					return nil
 				},
 				configure: func(_ context.Context, _, _, catalog, ns string) (string, error) {
 					calls = append(calls, "configure")
-					if catalog != "ducklake" || ns != "default" {
+					if catalog != "" || ns != "default" {
 						t.Fatal("bad provisioning settings")
 					}
 					return "", nil
@@ -101,7 +101,7 @@ func TestConfigureStorageRejectsUnsafeOptInBeforeProvisioning(t *testing.T) {
 		name, ns string
 		args     []string
 	}{
-		{"namespace", "tenant", []string{"storage", "--ducklake"}},
+		{"namespace", "INVALID", []string{"storage", "--ducklake"}},
 		{"disabled flag", "default", []string{"storage", "--ducklake-database", "other"}},
 		{"disabled path", "default", []string{"storage", "--ducklake-data-path", "s3://bucket/path/"}},
 		{"disabled binary", "default", []string{"storage", "--duckdb-binary", "missing"}},
@@ -147,7 +147,7 @@ func TestConfigureStorageDuckLakeResolvedPath(t *testing.T) {
 			var calls []string
 			check := func(c ducklake.Config) {
 				t.Helper()
-				if c.DataPath != tc.path || c.S3.Bucket != v.GetString("s3.bucket") {
+				if c.DataPath != tc.path+"namespaces/default/" || c.S3.Bucket != v.GetString("s3.bucket") {
 					t.Fatalf("unexpected data path %q or bucket %q", c.DataPath, c.S3.Bucket)
 				}
 			}

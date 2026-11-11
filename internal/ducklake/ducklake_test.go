@@ -22,7 +22,7 @@ func TestValidateOffline(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, mutate := range []func(*Config){
-		func(c *Config) { c.Namespace = "other" },
+		func(c *Config) { c.Namespace = "invalid namespace" },
 		func(c *Config) { c.CatalogConnection = "postgres://secret@host/db" },
 		func(c *Config) { c.CatalogConnection = "host=x dbname=d user=u" },
 		func(c *Config) { c.CatalogConnection += " service=secret" },

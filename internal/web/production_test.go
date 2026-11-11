@@ -37,7 +37,20 @@ func TestGraphProduction(t *testing.T) {
 	if db == "" || binary == "" {
 		t.Fatal("provide explicit disposable database URL and compiled binary")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	t.Setenv("LOOSTER_ROLE", "human")
+	t.Setenv("LOOSTER_AGENT", "")
+	t.Setenv("LOOSTER_DUCKLAKE_DATABASE", "")
+	t.Setenv("LOOSTER_DUCKLAKE_DATA_PATH", "")
+	t.Setenv("LOOSTER_DUCKLAKE_SPOOL_DIR", t.TempDir())
+	t.Setenv("LOOSTER_S3_SESSION_TOKEN", "")
+	for _, name := range []string{"ENDPOINT", "BUCKET", "ACCESS_KEY", "SECRET_KEY"} {
+		value := os.Getenv("LOOSTER_TEST_S3_" + name)
+		if value == "" {
+			t.Fatalf("production acceptance requires explicit disposable LOOSTER_TEST_S3_%s", name)
+		}
+		t.Setenv("LOOSTER_S3_"+name, value)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	ns := fmt.Sprintf("graph-e2e-%d", time.Now().UnixNano())
 	other := ns + "-other"

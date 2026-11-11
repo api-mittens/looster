@@ -18,6 +18,14 @@ region = "us-east-1"
 bucket = "looster"
 # Set LOOSTER_S3_ACCESS_KEY and LOOSTER_S3_SECRET_KEY in the environment.
 
+[ducklake]
+# Automatically uses the application PostgreSQL DB and a per-namespace S3 path.
+# No enabled flag or separate catalog database is required.
+# Uses the built-in DuckDB engine. Signed extensions download on first use.
+# database = "existing_catalog" # Optional existing separate catalog
+# data_path = "s3://looster/custom-ducklake-root/"
+# spool_dir = "/durable/local/looster-spool"
+
 [jcode]
 binary = "jcode"
 # sessions_dir = "/home/you/.jcode/sessions"
