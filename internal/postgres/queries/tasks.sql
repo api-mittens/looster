@@ -2,7 +2,7 @@
 SELECT tasks.id, tasks.name, tasks.description, tasks.status, tasks.created_at,
  GREATEST(tasks.created_at,
   (SELECT max(e.created_at) FROM events e WHERE e.task_id=tasks.id),
-  (SELECT max(l.created_at) FROM session_logs l WHERE l.task_id=tasks.id))::timestamptz AS last_activity_at
+  (SELECT max(l.created_at) FROM session_logs l WHERE l.task_id=tasks.id AND l.kind <> 'link'))::timestamptz AS last_activity_at
 FROM tasks WHERE tasks.id = $1;
 
 -- name: ListTasks :many
@@ -12,7 +12,7 @@ SELECT tasks.id, tasks.name, tasks.description, tasks.status, tasks.created_at,
  activity.status_changes, activity.comment_count,
  GREATEST(tasks.created_at,
   (SELECT max(e.created_at) FROM events e WHERE e.task_id=tasks.id),
-  (SELECT max(l.created_at) FROM session_logs l WHERE l.task_id=tasks.id))::timestamptz AS last_activity_at
+  (SELECT max(l.created_at) FROM session_logs l WHERE l.task_id=tasks.id AND l.kind <> 'link'))::timestamptz AS last_activity_at
 FROM tasks
 LEFT JOIN LATERAL (
  SELECT count(*) FILTER (WHERE kind='status_changed') AS status_changes,
