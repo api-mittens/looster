@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -37,6 +38,113 @@ func (r *closingRepo) Task(ctx context.Context, id int64) (task.Task, error) {
 }
 
 type waitingHarness struct{ started chan struct{} }
+
+// Only TaskMetadata is implemented, not the broader dashboard interface.
+type metadataControlRepo struct {
+	fakeRepo
+	fullReads     atomic.Int32
+	metadataReads atomic.Int32
+	closed        atomic.Bool
+	blockPayload  bool
+}
+
+func (r *metadataControlRepo) Task(ctx context.Context, id int64) (task.Task, error) {
+	if r.fullReads.Add(1) == 1 {
+		return r.fakeRepo.Task(ctx, id) // Initial prompt preparation needs payloads.
+	}
+	if r.blockPayload {
+		<-ctx.Done()
+		return task.Task{}, ctx.Err()
+	}
+	return task.Task{}, errors.New("payload storage unavailable")
+}
+
+func (r *metadataControlRepo) TaskMetadata(_ context.Context, id int64) (task.Task, error) {
+	r.metadataReads.Add(1)
+	status := task.Todo
+	if r.closed.Load() {
+		status = task.Closed
+	}
+	return task.Task{ID: id, Status: status}, nil
+}
+
+type closingOnReturnHarness struct{ repo *metadataControlRepo }
+
+func (h closingOnReturnHarness) Run(context.Context, Run, func(Output) error) (Result, error) {
+	h.repo.closed.Store(true)
+	return Result{SessionID: "saved"}, nil
+}
+
+func TestWorkerControlStateSupportsWrappedLegacyRepository(t *testing.T) {
+	repo, err := WithPermissions(fakeRepo{}, Actor{Role: Human})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := Service{Repo: repo}
+	state, err := s.taskControlState(context.Background(), 42)
+	if err != nil || state.ID != 42 || state.Name != "Build" {
+		t.Fatalf("legacy control read: state=%+v err=%v", state, err)
+	}
+}
+
+func TestWorkerMetadataPostRunControl(t *testing.T) {
+	for _, closed := range []bool{false, true} {
+		t.Run(fmt.Sprint("closed=", closed), func(t *testing.T) {
+			repo := &metadataControlRepo{}
+			lease := &fakeLease{job: Job{ID: 1, TaskID: 1, Agent: "coder"}}
+			var harness Harness = &fakeHarness{}
+			if closed {
+				harness = closingOnReturnHarness{repo}
+			}
+			s := Service{Repo: repo, Harness: harness, Objects: &fakeObjects{calls: &lease.calls}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+			s.process(context.Background(), WorkerConfig{}, lease)
+			if repo.fullReads.Load() != 1 || repo.metadataReads.Load() != 1 {
+				t.Fatalf("reads: full=%d metadata=%d, want one preparation read and one metadata check", repo.fullReads.Load(), repo.metadataReads.Load())
+			}
+			if closed {
+				if !errors.Is(lease.failed, ErrTaskClosed) || strings.Join(lease.calls, ",") != "start,fail,close" {
+					t.Fatalf("closed lifecycle: %v %v", lease.failed, lease.calls)
+				}
+			} else if lease.failed != nil || !strings.Contains(strings.Join(lease.calls, ","), "complete") {
+				t.Fatalf("open lifecycle: %v %v", lease.failed, lease.calls)
+			}
+		})
+	}
+}
+
+func TestWorkerMetadataWatchIgnoresUnavailablePayload(t *testing.T) {
+	for _, block := range []bool{false, true} {
+		t.Run(fmt.Sprint("blocking=", block), func(t *testing.T) {
+			repo := &metadataControlRepo{blockPayload: block}
+			lease := &fakeLease{job: Job{ID: 1, TaskID: 1, Agent: "coder"}}
+			started := make(chan struct{})
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			s := Service{Repo: repo, Harness: waitingHarness{started}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+			done := make(chan struct{})
+			go func() { s.process(ctx, WorkerConfig{Poll: time.Millisecond}, lease); close(done) }()
+			select {
+			case <-started:
+			case <-time.After(time.Second):
+				t.Fatal("harness did not start")
+			}
+			repo.closed.Store(true)
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				cancel()
+				<-done
+				t.Fatal("payload read blocked metadata watcher")
+			}
+			if repo.fullReads.Load() != 1 || repo.metadataReads.Load() < 1 {
+				t.Fatalf("reads: full=%d metadata=%d", repo.fullReads.Load(), repo.metadataReads.Load())
+			}
+			if !errors.Is(lease.failed, ErrTaskClosed) {
+				t.Fatalf("failure=%v", lease.failed)
+			}
+		})
+	}
+}
 
 func (h waitingHarness) Run(ctx context.Context, _ Run, _ func(Output) error) (Result, error) {
 	close(h.started)
