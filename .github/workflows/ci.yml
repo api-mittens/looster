@@ -55,6 +55,8 @@ jobs:
           go build -trimpath -o bin/looster ./cmd/looster
           bash scripts/check-native-deps.sh bin/looster linux
           bin/looster --help
+      - name: Test frontend state and pagination
+        run: node --test internal/web/static/*.test.mjs
       - name: Configure browser acceptance tests
         shell: bash
         run: |

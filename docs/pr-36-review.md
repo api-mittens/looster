@@ -16,6 +16,10 @@ Observed: graph rendered five active tasks and online agents; opening TSK-80 ren
 
 Evidence: `/home/domdom/Code/looster-pr36-graph.png`, `looster-pr36-detail.png`, `looster-pr36-list.png`, and `looster-pr36-list-page2.png`. No comment was submitted and no task status was changed.
 
+Repeated against compiled follow-up head `3fcbcb6` with CLI session `looster-pr37`: TSK-80 again rendered seven comments with no lake reader, and both the unsent draft and focus survived an observed automatic task request after the baseline resource count of 16. Screenshot: `/home/domdom/Code/looster-pr37-detail.png`.
+
+The supplemental repository browser suite surfaced two stale acceptance tests expecting session logs interleaved inside comments. The metadata-first UI intentionally renders those logs in its separate log pane. The tests are updated to assert separate chronological panes while retaining late-arrival, escaping, uniqueness, draft/focus/selection, graph signal, and keyboard coverage. Frontend state/pagination Node regressions now also run in CI, rather than only locally.
+
 ## Verdict at initial review
 
 **Do not merge as-is.** The PR improves the web metadata boundary, but is incompatible with the current default branch and has two reproduced UI correctness defects. It does not remove the service's operational dependency on DuckLake. Overall rollout risk: **high** until integration and service-path checks pass.
