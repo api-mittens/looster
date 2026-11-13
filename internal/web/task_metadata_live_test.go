@@ -53,9 +53,21 @@ func TestLiveMetadataHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(Handler(repo))
+	handler := Handler(repo)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "read-only acceptance server", http.StatusMethodNotAllowed)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	}))
 	defer server.Close()
 	t.Logf("metadata server: %s", server.URL)
+	if os.Getenv("LOOSTER_METADATA_BROWSER_HOLD") == "1" {
+		// Optional manual browser acceptance window. Never permits mutations.
+		time.Sleep(5 * time.Minute)
+		return
+	}
 	for _, path := range []string{"/api/board/list", "/api/board", "/api/tasks/TSK-80", "/api/tasks/TSK-80/events?kind=comment", "/api/status"} {
 		for attempt := 0; attempt < 2; attempt++ {
 			start := time.Now()
