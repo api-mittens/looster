@@ -135,6 +135,34 @@ Use PostgreSQL indexes for operational queries. For the lake, measure file count
 5. Add an end-to-end worker test with real rules: coder success creates analyst/reviewer jobs exactly once, coder timeout creates no success handoff, notification policy is explicit, and archive unavailability does not erase operational outcome.
 6. Measure lake query and write latency, commit batch distributions, file sizes/counts, queue age, PostgreSQL pool waits, and browser first paint with realistic concurrency. Then consider layout/inlining/compaction changes.
 
+## Follow-up: real HTTP acceptance against the configured database
+
+The opt-in project test `TestLiveMetadataHTTP` was run twice, then strengthened to pass the actual repository through `app.WithPermissions`, read complete bounded response bodies, validate JSON, and include comment reads. It starts the real project HTTP handler on a loopback TCP listener against the configured PostgreSQL database, without attaching any payload store and without invoking migrations or mutations. No repository stub, mock database, or copied endpoint implementation is used.
+
+Command:
+
+```sh
+LOOSTER_METADATA_HTTP_CHECK=1 LOOSTER_NAMESPACE=default go test -v -count=1 -timeout=90s ./internal/web -run '^TestLiveMetadataHTTP$'
+```
+
+Observed strengthened run, November 13, 2026:
+
+| Public HTTP route | Status on both requests | Complete JSON bytes | Request 1 | Request 2 |
+|---|---:|---:|---:|---:|
+| `/api/board/list` | 200 | 97,651 | 3.627 s | 2.666 s |
+| `/api/board` | 200 | 146,206 | 514 ms | 353 ms |
+| `/api/tasks/TSK-80` | 200 | 5,137 | 459 ms | 320 ms |
+| `/api/tasks/TSK-80/events?kind=comment` | 200 | 4,873 | 372 ms | 113 ms |
+| `/api/status` | 200 | 40,341 | 164 ms | 126 ms |
+
+All ten responses passed complete-body JSON checks. This directly verifies that the PR's real metadata/list/comment-read/status HTTP paths work against existing data with no lake reader, through the application's permission boundary. It does not validate the CLI startup path, comment writes, payload completion, or an end-to-end worker execution.
+
+**Additional observed issue:** list requests remain multi-second even with DuckLake entirely absent. Therefore not all current list latency can be assigned to lake IO. `internal/web/column_pages.go` awaits each status/agent column sequentially; each `ColumnTasks` call opens a transaction and issues count/page/signal queries before committing. Multiple sequential PostgreSQL round trips are a concrete candidate for investigation. This run did not isolate their individual cost, so it is not proof of exact latency attribution. Batch the per-column metadata fetch or measure its query/round-trip timings before choosing the optimization.
+
+This is stronger acceptance evidence for the review, not evidence of a product speedup: no runtime product fix was made. No controlled before/after comparison is claimed. TSK-80's current log query returned zero session-log rows, so the watcher hydration problem is conditional on tasks that have logs and is not established as this particular task's timeout cause.
+
+A real browser acceptance attempt was also made: the browser tool reports Firefox running but its live bridge unresponsive. Actual painting, focus, and visual pagination acceptance remain blocked by that bridge. The two frontend characterizations remain synthetic evidence and are not relabeled browser acceptance. Mutating production to test comments or dispatch was deliberately avoided, and the isolated native PostgreSQL/S3 fixture remains blocked by missing PostgreSQL server tools.
+
 ## Validation and limits
 
 - PR head: `go test -count=1 -timeout=5m ./internal/app ./internal/postgres ./internal/cli ./internal/ducklake ./internal/web` passed.
@@ -144,4 +172,4 @@ Use PostgreSQL indexes for operational queries. For the lake, measure file count
 - Current master: the same five targeted Go package suites passed on clean `ac61cff`.
 - Database-backed tests require `LOOSTER_TEST_DATABASE_URL`; the targeted manifest and task-detail integration cases explicitly skipped because it was unset. Production was inspected read-only, never used as a test database.
 - A native disposable integration run was attempted separately. Local PostgreSQL server tools are unavailable at the harness's expected path, so no full native PostgreSQL/S3 acceptance result is claimed.
-- No production storage benchmark, actual browser first-paint test, trace-based latency attribution, production payload query plan, lake migration, service restart, or timeout change was performed.
+- No controlled before/after production benchmark, actual browser first-paint test, trace-based latency attribution, production payload query plan, lake migration, service restart, or timeout change was performed. The live metadata HTTP measurements above are uncontrolled observational checks.

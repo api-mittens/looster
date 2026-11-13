@@ -2,12 +2,15 @@ package web
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/api-mittens/looster/internal/app"
 	"github.com/api-mittens/looster/internal/postgres"
 )
 
@@ -46,20 +49,32 @@ func TestLiveMetadataHTTP(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	server := httptest.NewServer(Handler(store))
+	repo, err := app.WithPermissions(store, app.Actor{Role: app.Human})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(Handler(repo))
 	defer server.Close()
 	t.Logf("metadata server: %s", server.URL)
-	for _, path := range []string{"/api/board/list", "/api/board", "/api/tasks/TSK-80", "/api/status"} {
+	for _, path := range []string{"/api/board/list", "/api/board", "/api/tasks/TSK-80", "/api/tasks/TSK-80/events?kind=comment", "/api/status"} {
 		for attempt := 0; attempt < 2; attempt++ {
 			start := time.Now()
-			response, err := http.Get(server.URL + path)
+			request, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+path, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			response.Body.Close()
-			t.Logf("%s attempt=%d status=%d elapsed=%s", path, attempt, response.StatusCode, time.Since(start))
-			if response.StatusCode != 200 {
-				t.Fail()
+			response, err := http.DefaultClient.Do(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, readErr := io.ReadAll(io.LimitReader(response.Body, (32<<20)+1))
+			closeErr := response.Body.Close()
+			if readErr != nil || closeErr != nil {
+				t.Fatalf("%s read=%v close=%v", path, readErr, closeErr)
+			}
+			t.Logf("%s attempt=%d status=%d bytes=%d elapsed=%s", path, attempt, response.StatusCode, len(body), time.Since(start))
+			if response.StatusCode != 200 || len(body) > 32<<20 || !json.Valid(body) {
+				t.Errorf("%s: expected a complete bounded JSON success response", path)
 			}
 		}
 	}
