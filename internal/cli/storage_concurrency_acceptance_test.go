@@ -17,6 +17,11 @@ func storageConcurrentAgentRuns(t *testing.T, ctx context.Context, s *postgres.S
 	const count = 8
 	jobs := make([]int64, count)
 	leases := make([]app.Lease, 0, count)
+	defer func() {
+		for _, lease := range leases {
+			lease.Close()
+		}
+	}()
 	for i := range jobs {
 		created, err := s.CreateTask(ctx, fmt.Sprintf("Concurrent lake run %d", i), "", task.Todo, nil)
 		if err != nil {
@@ -32,11 +37,6 @@ func storageConcurrentAgentRuns(t *testing.T, ctx context.Context, s *postgres.S
 		}
 		leases = append(leases, lease)
 	}
-	defer func() {
-		for _, lease := range leases {
-			lease.Close()
-		}
-	}()
 	results := make(chan error, count)
 	for i, lease := range leases {
 		go func(i int, lease app.Lease) {
