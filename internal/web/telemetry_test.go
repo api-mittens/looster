@@ -76,10 +76,7 @@ func TestHTTPTelemetrySafeErrorLog(t *testing.T) {
 	recorder, _ := telemetryTestProviders(t)
 	var output bytes.Buffer
 	logs := &requestLogHandler{Handler: slog.NewTextHandler(&output, nil)}
-	previous := slog.Default()
-	slog.SetDefault(slog.New(logs))
-	t.Cleanup(func() { slog.SetDefault(previous) })
-	Handler(&testRepo{fail: true}).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/board", nil))
+	WithLogger(Handler(&testRepo{fail: true}), slog.New(logs)).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/board", nil))
 	if !logs.span.IsValid() || logs.span.SpanID() != recorder.Ended()[0].SpanContext().SpanID() {
 		t.Fatal("Log request context is missing")
 	}

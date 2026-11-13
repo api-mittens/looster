@@ -12,7 +12,6 @@ import (
 	_ "image/jpeg"
 	"image/png"
 	"io"
-	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
@@ -291,7 +290,7 @@ func uploadAttachment(w http.ResponseWriter, r *http.Request, repo attachmentRep
 	}
 	fail := func(err error) {
 		if cleanupErr := cleanup(); cleanupErr != nil {
-			slog.ErrorContext(r.Context(), "Could not save attachment or remove object", "error_class", "storage")
+			requestLogger(r.Context()).ErrorContext(r.Context(), "Could not save attachment or remove object", "error_class", "storage")
 			http.Error(w, "Attachment failed; object cleanup failed", http.StatusInternalServerError)
 			return
 		}

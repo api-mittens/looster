@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -23,6 +24,7 @@ type originalRequestKey struct{}
 // instrumentHTTP gives the SDK a safe request copy. The application keeps the
 // original URL and headers. The SDK uses the global providers.
 func instrumentHTTP(next http.Handler, routes *http.ServeMux) http.Handler {
+	active, _ := otel.Meter("github.com/api-mittens/looster/internal/web").Int64UpDownCounter("http.server.active_requests", metric.WithUnit("{request}"))
 	instrumented := otelhttp.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, safe *http.Request) {
 		original := safe.Context().Value(originalRequestKey{}).(*http.Request)
 		request := original.WithContext(safe.Context())
@@ -36,6 +38,9 @@ func instrumentHTTP(next http.Handler, routes *http.ServeMux) http.Handler {
 		return r.Method + " " + r.URL.Path
 	}))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		opts := metric.WithAttributes(attribute.String("http.request.method", boundedHTTPMethod(r.Method)))
+		active.Add(r.Context(), 1, opts)
+		defer active.Add(r.Context(), -1, opts)
 		route := unmatchedHTTPRoute
 		if r.URL.Path == "/api/namespaces" && r.Method == http.MethodGet {
 			route = "/api/namespaces"

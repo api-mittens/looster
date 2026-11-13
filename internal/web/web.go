@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
-	"log/slog"
 	"mime"
 	"net/http"
 	"strconv"
@@ -132,7 +131,7 @@ func dashboardHandler(repo Repository, objects app.Objects, selected string) *ht
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 		if err != nil {
-			slog.ErrorContext(r.Context(), "Could not load dashboard data", "error_class", dashboardErrorClass(err))
+			requestLogger(r.Context()).ErrorContext(r.Context(), "Could not load dashboard data", "error_class", dashboardErrorClass(err))
 			code, message := http.StatusInternalServerError, "Could not load dashboard data"
 			if errors.Is(err, app.ErrNotFound) {
 				code, message = http.StatusNotFound, "Resource not found"

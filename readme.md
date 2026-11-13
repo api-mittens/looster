@@ -239,6 +239,7 @@ look, but does not establish which agent or workflow is inefficient. See the
 | [Installation](docs/installation.md) | Installer options, release archives, source builds |
 | [Usage and configuration](docs/usage.md) | CLI, credentials, tasks, sessions, manifests, recovery, upgrades |
 | [Dashboard](docs/dashboard.md) | Graph, filters, navigation, activity and layout |
+| [OpenTelemetry](docs/observability.md) | Optional traces, metrics, logs, and safe export settings |
 | [Namespaces](docs/namespaces.md) | Project isolation and database boundaries |
 | [Architecture](docs/architecture.md) | Package boundaries and application permissions |
 | [Database performance](docs/database-performance.md) | Query-plan evidence, indexes, bounded locks and online migration retries |

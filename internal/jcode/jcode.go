@@ -122,12 +122,12 @@ func (h *Harness) Run(ctx context.Context, r app.Run, emit func(app.Output) erro
 	for _, v := range os.Environ() {
 		key, _, _ := strings.Cut(v, "=")
 		_, replaced := h.Environment[key]
-		if key != "LOOSTER_NAMESPACE" && key != "LOOSTER_DATABASE_URL" && key != "PATH" && key != "LOOSTER_ROLE" && key != "LOOSTER_AGENT" && key != "LOOSTER_TASK_ID" && key != "LOOSTER_JOB_ID" && key != "LOOSTER_SESSION_ID" && !strings.HasPrefix(key, "LOOSTER_AGENT_DATABASE_URLS_") && !replaced {
+		if key != "TRACEPARENT" && key != "TRACESTATE" && key != "BAGGAGE" && key != "LOOSTER_NAMESPACE" && key != "LOOSTER_DATABASE_URL" && key != "PATH" && key != "LOOSTER_ROLE" && key != "LOOSTER_AGENT" && key != "LOOSTER_TASK_ID" && key != "LOOSTER_JOB_ID" && key != "LOOSTER_SESSION_ID" && !strings.HasPrefix(key, "LOOSTER_AGENT_DATABASE_URLS_") && !replaced {
 			cmd.Env = append(cmd.Env, v)
 		}
 	}
 	for key, value := range h.Environment {
-		if key == "LOOSTER_NAMESPACE" || key == "LOOSTER_ROLE" || key == "LOOSTER_AGENT" || key == "LOOSTER_TASK_ID" || key == "LOOSTER_JOB_ID" || key == "LOOSTER_SESSION_ID" || key == "LOOSTER_DATABASE_URL" || strings.HasPrefix(key, "LOOSTER_AGENT_DATABASE_URLS_") {
+		if key == "TRACEPARENT" || key == "TRACESTATE" || key == "BAGGAGE" || key == "LOOSTER_NAMESPACE" || key == "LOOSTER_ROLE" || key == "LOOSTER_AGENT" || key == "LOOSTER_TASK_ID" || key == "LOOSTER_JOB_ID" || key == "LOOSTER_SESSION_ID" || key == "LOOSTER_DATABASE_URL" || strings.HasPrefix(key, "LOOSTER_AGENT_DATABASE_URLS_") {
 			continue
 		}
 		cmd.Env = append(cmd.Env, key+"="+value)

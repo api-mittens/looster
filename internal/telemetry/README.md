@@ -78,9 +78,9 @@ The resource has `service.version` from the supplied version. Callers must use
 
 ## Log data rules
 
-Local stderr records keep their message and attributes. Export records use the
-fixed body `Application log`. This prevents private text in a dynamic message
-from leaving the process. Export includes only string `job_id`, `task_id`,
+Local stderr records keep their message and attributes. Export records use fixed safe event messages or the fallback body `Application log`. This prevents private text in a dynamic message
+from leaving the process. Numeric `job` and `task` identifiers are also allowed.
+Export includes only string `job_id`, `task_id`,
 `agent`, `session_id`, and `namespace` values of at most 256 bytes. Callers must
 put only identifiers in these fields. Export also includes bounded `operation`
 and `outcome` values. Grouped fields, all other fields, error objects, and custom

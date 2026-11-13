@@ -29,7 +29,7 @@ func (h *safeHandler) Handle(ctx context.Context, r slog.Record) error {
 		localErr = h.local.Handle(ctx, local)
 	}
 	if h.remote.Enabled(ctx, r.Level) {
-		safe := slog.NewRecord(r.Time, r.Level, "Application log", 0)
+		safe := slog.NewRecord(r.Time, r.Level, safeMessage(r.Message), 0)
 		for _, a := range h.attrs {
 			safe.AddAttrs(a)
 		}
@@ -67,7 +67,19 @@ func (h *safeHandler) WithGroup(name string) slog.Handler {
 	next.grouped = true
 	return &next
 }
+func safeMessage(message string) string {
+	switch message {
+	case "Could not load dashboard data", "Could not save attachment or remove object", "worker started", "worker stopped", "scheduled pings dispatched", "Schedule failed", "System event write failed", "Record failure failed", "job interrupted; will resume", "task closed; session stopped", "Worker started", "Worker stopped", "Job attempt started", "Job attempt stopped", "Job failed", "Archive recovery started", "Scheduled pings dispatched", "Claim failed", "Heartbeat failed", "Dashboard API query failed":
+		return message
+	default:
+		return "Application log"
+	}
+}
+
 func safeAttr(a slog.Attr) (slog.Attr, bool) {
+	if (a.Key == "job" || a.Key == "task") && a.Value.Kind() == slog.KindInt64 {
+		return a, true
+	}
 	if a.Value.Kind() != slog.KindString {
 		return slog.Attr{}, false
 	}
