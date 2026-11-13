@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	neturl "net/url"
 	"os"
 	"strings"
 	"testing"
@@ -35,6 +36,16 @@ func TestStorageAcceptance(t *testing.T) {
 	defer cancel()
 	ns := fmt.Sprintf("storage-%d", time.Now().UnixNano())
 	url := os.Getenv("LOOSTER_TEST_DATABASE_URL")
+	// Exercise the same pool setting used by existing worker deployments through
+	// actual migrations, DuckLake attach, remote writes, and reader hydration.
+	parsed, err := neturl.Parse(url)
+	if err != nil || (parsed.Scheme != "postgres" && parsed.Scheme != "postgresql") {
+		t.Fatal("storage acceptance requires a valid PostgreSQL fixture URL")
+	}
+	query := parsed.Query()
+	query.Set("pool_max_conns", "14")
+	parsed.RawQuery = query.Encode()
+	url = parsed.String()
 	if err := postgres.EnsureNamespace(ctx, url, ns); err != nil {
 		t.Fatal(err)
 	}

@@ -19,12 +19,16 @@ func runtimeApplication(t *testing.T) *application {
 }
 func TestRuntimeLakeConfigCredentialsOnly(t *testing.T) {
 	a := runtimeApplication(t)
+	a.v.Set("database_url", a.v.GetString("database_url")+"&pool_max_conns=14")
 	c, err := a.runtimeLakeConfig("default")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c.DataPath != "s3://test-bucket/ducklake/namespaces/default/" || !strings.Contains(c.CatalogConnection, "dbname='existing'") {
 		t.Fatalf("unexpected derived config path %q", c.DataPath)
+	}
+	if strings.Contains(c.CatalogConnection, "pool_max_conns") || !strings.Contains(a.v.GetString("database_url"), "pool_max_conns=14") {
+		t.Fatal("runtime must filter native pool settings without changing application configuration")
 	}
 	other, err := a.runtimeLakeConfig("tenant-a")
 	if err != nil {

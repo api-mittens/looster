@@ -53,6 +53,14 @@ func databaseConnectionString(raw, name string) (string, error) {
 		allowed[key] = true
 	}
 	for key, value := range explicit {
+		// selectDatabase already validates these with pgxpool.ParseConfig.
+		// They control the Go pool, not the native DuckLake connection.
+		switch key {
+		case "pool_max_conns", "pool_min_conns", "pool_min_idle_conns",
+			"pool_max_conn_lifetime", "pool_max_conn_idle_time",
+			"pool_health_check_period", "pool_max_conn_lifetime_jitter":
+			continue
+		}
 		if key == "database" {
 			key = "dbname"
 		}
