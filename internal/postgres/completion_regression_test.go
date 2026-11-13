@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/api-mittens/looster/internal/app"
+	"github.com/api-mittens/looster/internal/event"
 )
 
 func TestCompletionDispatchWork(t *testing.T) {
@@ -17,6 +18,7 @@ func TestCompletionDispatchWork(t *testing.T) {
 		wantJobs                                           int
 	}{
 		{name: "normal", normal: true, wantKind: "agent_stopped", wantJobs: 2},
+		{name: "api_comment", wantKind: "agent_stopped", wantJobs: 2},
 		{name: "empty", wantKind: "notification_handled"},
 		{name: "comment", kind: "comment", actor: "coder", wantKind: "agent_stopped", wantJobs: 2},
 		{name: "update", kind: "updated", actor: "coder", wantKind: "agent_stopped", wantJobs: 2},
@@ -63,6 +65,11 @@ func TestCompletionDispatchWork(t *testing.T) {
 			defer l.Close()
 			if err := l.Started(ctx); err != nil {
 				t.Fatal(err)
+			}
+			if tc.name == "api_comment" {
+				if _, err := s.Comment(event.WithActor(ctx, "coder"), taskID, "Work is complete."); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if tc.kind != "" {
 				offset := "1 second"
