@@ -74,6 +74,41 @@ func TestDatabaseConnectionStringNativeConnector(t *testing.T) {
 	}
 }
 
+func TestDatabaseConnectionStringPoolSettings(t *testing.T) {
+	for _, raw := range []string{
+		"postgres://worker:canary@server/looster?sslmode=require&pool_max_conns=14&pool_min_conns=2&pool_min_idle_conns=1&pool_max_conn_lifetime=2h&pool_max_conn_idle_time=5m&pool_health_check_period=30s&pool_max_conn_lifetime_jitter=10s",
+		"host=server user=worker password=canary dbname=looster sslmode=require pool_max_conns=14 pool_min_conns=2 pool_min_idle_conns=1 pool_max_conn_lifetime=2h pool_max_conn_idle_time=5m pool_health_check_period=30s pool_max_conn_lifetime_jitter=10s",
+	} {
+		clearPGEnvironment(t)
+		cfg, err := parsePoolConfig(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.MaxConns != 14 || cfg.MinConns != 2 || cfg.MinIdleConns != 1 || cfg.MaxConnLifetime != 2*time.Hour || cfg.MaxConnIdleTime != 5*time.Minute || cfg.HealthCheckPeriod != 30*time.Second || cfg.MaxConnLifetimeJitter != 10*time.Second {
+			t.Fatal("application pool settings were not preserved")
+		}
+		resolved, err := DatabaseConnectionString(raw, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		values, err := connectorKeywords(resolved)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for key := range values {
+			if strings.HasPrefix(key, "pool_") {
+				t.Fatalf("pool setting %s leaked into native connection", key)
+			}
+		}
+		if values["dbname"] != "looster" || values["host"] != "server" || values["user"] != "worker" || values["password"] != "canary" || values["sslmode"] != "require" {
+			t.Fatal("native identity or TLS settings changed")
+		}
+		if err := ducklake.Validate(ducklake.Config{CatalogConnection: resolved, DataPath: "s3://bucket/disposable/", S3: objectstore.Config{AccessKey: "access", SecretKey: "secret"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestDatabaseConnectionStringTLSPaths(t *testing.T) {
 	clearPGEnvironment(t)
 	_, key, err := ed25519.GenerateKey(rand.Reader)
@@ -118,7 +153,7 @@ func TestDatabaseConnectionStringTLSPaths(t *testing.T) {
 }
 
 func TestDatabaseConnectionStringRejectsUnsupportedSafely(t *testing.T) {
-	for _, raw := range []string{"host=server user=worker password=canary pool_max_conns=2", "host=server user=worker password=canary search_path=public", "postgres://worker:canary@server/db?sslmode=verify-full"} {
+	for _, raw := range []string{"host=server user=worker password=canary pool_unknown=2", "host=server user=worker password=canary pool_max_conns=invalid", "host=server user=worker password=canary search_path=public", "postgres://worker:canary@server/db?sslmode=verify-full"} {
 		clearPGEnvironment(t)
 		if _, err := DatabaseConnectionString(raw, "catalog"); err == nil || strings.Contains(err.Error(), "canary") {
 			t.Fatal("unsupported connector settings not safely rejected")

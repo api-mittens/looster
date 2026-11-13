@@ -23,6 +23,11 @@ uses **the same PostgreSQL database**, with a separate metadata schema named
 permission to create that schema and own its catalog tables, not `CREATEDB`.
 Application migrations retain their existing schema-owner requirements.
 
+Connection strings can include validated Go pool settings such as
+`pool_max_conns=14`. These settings still control the application pool. Looster
+omits them from the native DuckLake connection without changing authentication,
+database selection, or TLS settings. Unknown connection options remain errors.
+
 Each namespace has a dedicated S3 prefix:
 
 ```text
