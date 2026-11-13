@@ -93,9 +93,10 @@ separate catalog override must refer to an existing database at runtime.
 Pending payloads are durably spooled locally while bounded DuckLake batch
 writes execute. A successful Put acknowledges **remote commit**, not merely a
 local spool write, so another host can immediately resolve a PostgreSQL payload
-reference. Failed writes preserve pending spool records for retry.
+reference. Close cancels an active background attempt before its separate
+30-second final flush. Failed writes preserve pending spool records for retry.
 
-Each background batch has its own 30-second transaction time limit. A background
+Each background batch has its own two-minute transaction time limit. A background
 transaction deadline keeps its callers waiting for a later commit attempt, as
 long as their request contexts remain active. It does not stop an agent by
 itself. A canceled caller returns without deleting the durable retry record.
