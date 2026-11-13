@@ -199,7 +199,7 @@ func (l *Lake) withConn(ctx context.Context, stage string, consume func(context.
 		return ErrClosed
 	}
 	if err != nil {
-		return operationError(stage)
+		return classifiedOperationError(stage, err)
 	}
 	return nil
 }
@@ -244,7 +244,7 @@ func (l *Lake) Query(ctx context.Context, query string, consume func(*sql.Rows) 
 		return ErrClosed
 	}
 	if err != nil {
-		return operationError("SQL query")
+		return classifiedOperationError("SQL query", err)
 	}
 	return nil
 }
@@ -279,7 +279,7 @@ func (l *Lake) exec(ctx context.Context, query, stage string) error {
 		if l.lifetime.Err() != nil {
 			return ErrClosed
 		}
-		return operationError(stage)
+		return classifiedOperationError(stage, err)
 	}
 	return nil
 }
@@ -355,7 +355,13 @@ func prepare(c Config) (string, error) {
 	// Temporary secrets, no persistent secret storage. Never emit this SQL.
 	return "SELECT CASE WHEN version() = '" + EngineVersion + "' THEN true ELSE error('engine version mismatch') END;\n" +
 		"SET allow_unsigned_extensions=false; SET autoinstall_known_extensions=false; SET autoload_known_extensions=false;\n" +
-		"LOAD httpfs;\nINSTALL postgres FROM 'https://extensions.duckdb.org'; LOAD postgres;\nINSTALL ducklake FROM 'https://extensions.duckdb.org'; LOAD ducklake;\n" +
+		"LOAD httpfs;\nINSTALL postgres FROM 'https://extensions.duckdb.org'; LOAD postgres;\n" +
+		// Every CLI and worker has its own engine. The native pool defaults to
+		// one connection per CPU and retains idle connections indefinitely.
+		// Disable thread-local leases and reap idle connections so concurrent
+		// agents do not exhaust a small hosted PostgreSQL connection budget.
+		"SET pg_connection_limit=2; SET pg_pool_enable_thread_local_cache=false; SET pg_pool_idle_timeout_millis=5000; SET pg_pool_enable_reaper_thread=true;\n" +
+		"INSTALL ducklake FROM 'https://extensions.duckdb.org'; LOAD ducklake;\n" +
 		"SELECT CASE WHEN (SELECT count(*) FROM duckdb_extensions() WHERE loaded AND ((extension_name='ducklake' AND extension_version='" + DuckLakeExtensionVersion + "') OR (extension_name='postgres_scanner' AND extension_version='" + PostgresExtensionVersion + "') OR (extension_name='httpfs' AND extension_version='" + HTTPFSExtensionVersion + "'))) = 3 THEN true ELSE error('extension version mismatch') END;\n" +
 		"CREATE TEMPORARY SECRET looster_s3 (TYPE s3, PROVIDER config, KEY_ID " + quote(s.AccessKey) + ", SECRET " + quote(s.SecretKey) + ", SESSION_TOKEN " + quote(s.SessionToken) + ", REGION " + quote(s.Region) + ", URL_STYLE 'path', SCOPE " + quote(c.DataPath) + endpoint + ");\n" +
 		"CREATE TEMPORARY SECRET looster_lake (TYPE ducklake, METADATA_PATH " + quote("postgres:"+c.CatalogConnection+" passfile="+libpqQuote(os.DevNull)) + ", DATA_PATH " + quote(c.DataPath) + ");\n" +

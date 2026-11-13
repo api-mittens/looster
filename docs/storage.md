@@ -112,6 +112,27 @@ password rotation does not strand pending writes. Shutdown attempts a final
 flush and preserves pending files on failure. S3 must permit Parquet writes and
 reads, and access to its namespace prefix.
 
+## Concurrent payload clients
+
+Normal payload-store startup is read-only when the payload table is already
+configured. New tables receive the default bucket partition layout, but opening
+an existing table never repartitions it. The explicit table-level inlining limit
+is only written when it is missing or nonzero. This avoids catalog conflicts
+between CLI clients and long-running worker commits.
+
+Each embedded engine limits its PostgreSQL metadata pool to two connections,
+disables thread-local connection retention, and reaps connections idle for five
+seconds. This budget is per engine, not a database-wide cap. Application pgx
+pools and other database users still need their own connection budgets.
+
+Background payload writes retain their durable spool records and waiting callers
+through recognized transient catalog conflicts, connection exhaustion, and
+metadata disconnects. Explicit flush and shutdown still report failures within
+their existing time limits. Permanent failures, including authorization errors
+and immutable-key conflicts, are not silently retried for waiting callers.
+Engine diagnostics expose only fixed allowlisted categories, never native SQL,
+connection strings, credentials, or object contents.
+
 ## Existing configuration command
 
 `looster configure storage` remains a human-only, local PostgreSQL provisioning

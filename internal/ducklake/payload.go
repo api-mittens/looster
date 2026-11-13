@@ -78,7 +78,7 @@ func NewPayloadStore(ctx context.Context, lake *Lake, opts PayloadOptions) (*Pay
 	if lake == nil {
 		return nil, errors.New("DuckLake lake is required")
 	}
-	if err := lake.Exec(ctx, "CREATE TABLE IF NOT EXISTS lake.main.looster_payloads (payload_key VARCHAR, payload BLOB); CALL lake.set_option('data_inlining_row_limit', 0, table_name => 'looster_payloads'); ALTER TABLE lake.main.looster_payloads SET PARTITIONED BY (bucket(256, payload_key));"); err != nil {
+	if err := initializePayloadTable(ctx, lake); err != nil {
 		return nil, err
 	}
 	s, err := newPayloadStoreContext(ctx, lakePayloadSink{lake}, opts)
@@ -524,8 +524,11 @@ func (s *PayloadStore) flushBatches(ctx context.Context, batchTimeout time.Durat
 			cancel()
 			return ctx.Err()
 		}
-		if batchTimeout > 0 && errors.Is(err, context.DeadlineExceeded) {
-			// Keep these waiters for retry. Later batches still get an attempt.
+		if batchTimeout > 0 && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrCatalogBusy)) {
+			// Deadlines and transient metadata failures do not reject durable
+			// writes. Retry on the next background pass without failing agents.
+			// A retry re-reads immutable keys, including an ambiguous COMMIT.
+			// Later batches still get an attempt during this pass.
 			cancel()
 			passErr = err
 			for _, r := range batch {
