@@ -22,6 +22,15 @@ func TestClassifiedOperationError(t *testing.T) {
 		{"oom", duckdb.ErrorTypeOutOfMemory, "", "out_of_memory"},
 		{"conflict", duckdb.ErrorTypeTransaction, "Conflict on update", "transaction_conflict"},
 		{"retry", duckdb.ErrorTypeTransaction, "Exceeded the maximum retry count of 10", "transaction_retry_exhausted"},
+		{"invalid serialization", duckdb.ErrorTypeInvalid, "could not serialize access due to concurrent update", "transaction_conflict"},
+		{"invalid alter", duckdb.ErrorTypeInvalid, "Transaction conflict attempting to alter table index1 another transaction altered it", "transaction_conflict"},
+		{"invalid retry", duckdb.ErrorTypeInvalid, "Exceeded the maximum retry count of 10", "transaction_retry_exhausted"},
+		{"reserved slots", duckdb.ErrorTypeInvalid, "FATAL remaining connection slots are reserved for roles with SUPERUSER attribute", "connection_limit"},
+		{"fatal reserved slots", duckdb.ErrorTypeFatal, "remaining connection slots are reserved", "connection_limit"},
+		{"too many clients", duckdb.ErrorTypeIO, "sorry, too many clients already", "connection_limit"},
+		{"role limit", duckdb.ErrorTypeConnection, "too many connections for role private_role", "connection_limit"},
+		{"database limit", duckdb.ErrorTypeInvalid, "too many connections for database private_db", "connection_limit"},
+		{"dependency serialization", duckdb.ErrorTypeInvalid, "could not serialize access due to read/write dependencies among transactions", "transaction_conflict"},
 		{"s3 forbidden", duckdb.ErrorTypeHTTP, "HTTP GET s3://private/key 403 (Forbidden)", "s3_authorization"},
 		{"s3 denied", duckdb.ErrorTypeIO, "s3://private/key AccessDenied", "s3_authorization"},
 		{"s3 signature", duckdb.ErrorTypeHTTP, "s3://private/key SignatureDoesNotMatch", "s3_authorization"},
@@ -60,9 +69,13 @@ func TestClassifiedOperationError(t *testing.T) {
 			if errors.As(got, &exposed) {
 				t.Fatal("native cause exposed")
 			}
+			busy := tt.category == "connection_limit" || tt.category == "transaction_conflict" || tt.category == "transaction_retry_exhausted"
+			if errors.Is(got, ErrCatalogBusy) != busy || errors.Is(fmt.Errorf("outer: %w", got), ErrCatalogBusy) != busy {
+				t.Fatal("incorrect safe retry identity")
+			}
 		})
 	}
-	for _, cause := range []error{nil, errors.New(secret + " Out of Memory Error: s3://private AccessDenied"), (*duckdb.Error)(nil)} {
+	for _, cause := range []error{nil, errors.New(secret + " Out of Memory Error: s3://private AccessDenied could not serialize access due to concurrent update remaining connection slots are reserved"), (*duckdb.Error)(nil)} {
 		if got := classifiedOperationError("payload commit", cause); got.Error() != operationError("payload commit").Error() {
 			t.Fatalf("untyped error classified: %q", got)
 		}
@@ -134,5 +147,41 @@ func TestWithConnNativeDriverClassification(t *testing.T) {
 	want := operationError("payload commit").Error() + " [category: catalog]"
 	if got == nil || got.Error() != want || errors.Unwrap(got) != nil {
 		t.Fatalf("unexpected native boundary result: %v", got)
+	}
+	for _, method := range []string{"exec", "query", "query callback"} {
+		t.Run(method, func(t *testing.T) {
+			stage, category := "SQL query", "catalog"
+			var got error
+			switch method {
+			case "exec":
+				stage = "SQL operation"
+				got = lake.Exec(context.Background(), `SELECT * FROM CANARY_private_catalog_password`)
+			case "query":
+				got = lake.Query(context.Background(), `SELECT * FROM CANARY_private_catalog_password`, func(*sql.Rows) error {
+					t.Fatal("callback called on failed query")
+					return nil
+				})
+			case "query callback":
+				category = "transaction_conflict"
+				got = lake.Query(context.Background(), `SELECT 1`, func(*sql.Rows) error {
+					return &duckdb.Error{Type: duckdb.ErrorTypeInvalid, Msg: "could not serialize access due to concurrent update CANARY_private_password"}
+				})
+				if !errors.Is(got, ErrCatalogBusy) {
+					t.Fatal("query lost safe retry identity")
+				}
+			}
+			want := operationError(stage).Error() + " [category: " + category + "]"
+			if got == nil || got.Error() != want || errors.Unwrap(got) != nil {
+				t.Fatalf("unexpected sanitized result: %v", got)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			if err := lake.Exec(ctx, "SELECT 1"); err != context.Canceled {
+				t.Fatal("Exec lost context identity")
+			}
+			if err := lake.Query(ctx, "SELECT 1", func(*sql.Rows) error { return nil }); err != context.Canceled {
+				t.Fatal("Query lost context identity")
+			}
+		})
 	}
 }
