@@ -130,7 +130,10 @@ is only written when it is missing or nonzero. This avoids catalog conflicts
 between CLI clients and long-running worker commits.
 
 Each embedded engine disables PostgreSQL metadata connection caching and
-thread-local retention before catalog attachment. Returned connections close
+thread-local retention on the actual attached metadata catalog. DuckLake's
+internal context does not inherit session-local extension defaults, so Looster
+configures and verifies the pool after attachment as well as setting defaults.
+Returned connections close
 immediately rather than reserving session-pooler backend slots between payload
 operations. The native connector's pool size only bounds cached connections and
 can be exceeded by forced scans, so a small cache is not a hard connection cap.

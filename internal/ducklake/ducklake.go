@@ -365,7 +365,11 @@ func prepare(c Config) (string, error) {
 		"SELECT CASE WHEN (SELECT count(*) FROM duckdb_extensions() WHERE loaded AND ((extension_name='ducklake' AND extension_version='" + DuckLakeExtensionVersion + "') OR (extension_name='postgres_scanner' AND extension_version='" + PostgresExtensionVersion + "') OR (extension_name='httpfs' AND extension_version='" + HTTPFSExtensionVersion + "'))) = 3 THEN true ELSE error('extension version mismatch') END;\n" +
 		"CREATE TEMPORARY SECRET looster_s3 (TYPE s3, PROVIDER config, KEY_ID " + quote(s.AccessKey) + ", SECRET " + quote(s.SecretKey) + ", SESSION_TOKEN " + quote(s.SessionToken) + ", REGION " + quote(s.Region) + ", URL_STYLE 'path', SCOPE " + quote(c.DataPath) + endpoint + ");\n" +
 		"CREATE TEMPORARY SECRET looster_lake (TYPE ducklake, METADATA_PATH " + quote("postgres:"+c.CatalogConnection+" passfile="+libpqQuote(os.DevNull)) + ", DATA_PATH " + quote(c.DataPath) + ");\n" +
-		"ATTACH 'ducklake:looster_lake' AS lake (METADATA_SCHEMA " + quote(metadataSchema(c.Namespace)) + ", DATA_INLINING_ROW_LIMIT 0, OVERRIDE_DATA_PATH false);\n", nil
+		"ATTACH 'ducklake:looster_lake' AS lake (METADATA_SCHEMA " + quote(metadataSchema(c.Namespace)) + ", DATA_INLINING_ROW_LIMIT 0, OVERRIDE_DATA_PATH false);\n" +
+		// DuckLake creates its metadata catalog in an internal context, which
+		// does not inherit our session-local extension settings. Configure and
+		// verify the actual attached pool, not just the outer session defaults.
+		"SELECT CASE WHEN count(*) = 1 AND bool_and(max_connections = 0 AND NOT thread_local_cache_enabled) THEN true ELSE error('metadata connection pool unavailable') END FROM postgres_configure_pool(catalog_name='__ducklake_metadata_lake', max_connections=0, enable_thread_local_cache=false);\n", nil
 }
 
 // validConnection accepts only libpq keyword syntax and known parameters. It

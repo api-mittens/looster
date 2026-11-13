@@ -385,6 +385,9 @@ func TestDisposableIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer l.Close()
+	if err := l.Exec(ctx, "SELECT CASE WHEN count(*)=1 AND bool_and(max_connections=0 AND NOT thread_local_cache_enabled AND available_connections=0) THEN true ELSE error('metadata pool retained connections') END FROM postgres_configure_pool(catalog_name='__ducklake_metadata_lake')"); err != nil {
+		t.Fatal(err)
+	}
 	if err := l.Exec(ctx, "SELECT CASE WHEN count(*)=0 THEN true ELSE error('probe remains') END FROM duckdb_tables() WHERE database_name='lake' AND table_name LIKE 'looster_probe_%'"); err != nil {
 		t.Fatal(err)
 	}

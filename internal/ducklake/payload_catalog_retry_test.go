@@ -99,4 +99,5 @@ func TestMetadataPoolDoesNotRetainConnections(t *testing.T) {
 	for _, setting := range []string{"SET pg_pool_max_connections=0;", "SET pg_pool_enable_thread_local_cache=false;"} {
 		requireSQLBefore(t, prelude, setting, "ATTACH 'ducklake:looster_lake'")
 	}
+	requireSQLBefore(t, prelude, "ATTACH 'ducklake:looster_lake'", "FROM postgres_configure_pool(catalog_name='__ducklake_metadata_lake', max_connections=0, enable_thread_local_cache=false)")
 }
