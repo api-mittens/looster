@@ -524,7 +524,11 @@ func (s *PayloadStore) flushBatches(ctx context.Context, batchTimeout time.Durat
 			// preflight process. Proven immutable-key conflicts must not poison retries.
 			conflicts := map[string]bool{}
 			if reader, ok := s.sink.(payloadBatchReader); ok {
-				if rows, e := reader.getMany(batchCtx, keys); e == nil {
+				batchKeys := make([]string, len(batch))
+				for i, r := range batch {
+					batchKeys[i] = r.Key
+				}
+				if rows, e := reader.getMany(batchCtx, batchKeys); e == nil {
 					for _, r := range batch {
 						if old, ok := rows[r.Key]; ok && string(old) != string(r.Value) {
 							conflicts[r.Key] = true

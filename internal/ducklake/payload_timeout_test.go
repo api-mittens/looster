@@ -2,8 +2,11 @@ package ducklake
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -217,6 +220,117 @@ func TestPayloadExplicitFlushReturnsDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	payloadAssertWaiting(t, b)
+}
+
+func TestPayloadDelayedBatchesExceedSharedBudget(t *testing.T) {
+	const budget = 500 * time.Millisecond
+	const delay = 300 * time.Millisecond
+	attempts := 0
+	sink := payloadAttemptSink{newMemorySink(), func(ctx context.Context, rows []payloadRecord) error {
+		attempts++
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			return ctx.Err()
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}}
+	s := payloadManualStore(t, sink)
+	a := payloadQueueTestRecord(t, s, "a")
+	b := payloadQueueTestRecord(t, s, "b")
+	start := time.Now()
+	if err := s.flushBatches(context.Background(), budget); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed <= budget {
+		t.Fatalf("total time %v did not exceed shared budget %v", elapsed, budget)
+	}
+	waitPayloadResult(t, a)
+	waitPayloadResult(t, b)
+	if attempts != 2 {
+		t.Fatalf("attempts: %d", attempts)
+	}
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if len(sink.rows) != 2 {
+		t.Fatalf("committed records: %d", len(sink.rows))
+	}
+}
+
+type payloadErrorReadKeysSink struct {
+	payloadAttemptSink
+	readKeys []string
+}
+
+func (s *payloadErrorReadKeysSink) getMany(ctx context.Context, keys []string) (map[string][]byte, error) {
+	s.readKeys = append(s.readKeys, keys...)
+	return map[string][]byte{}, nil
+}
+
+func TestPayloadCloseFailureReturnsAllWaitersAndKeepsSpool(t *testing.T) {
+	failure := errors.New("native close write failure")
+	attempts := 0
+	sink := &payloadErrorReadKeysSink{payloadAttemptSink: payloadAttemptSink{newMemorySink(), func(context.Context, []payloadRecord) error {
+		attempts++
+		return failure
+	}}}
+	s := payloadManualStore(t, sink)
+	// Supply the close resources without a background loop. Only Close can flush.
+	s.done = make(chan struct{})
+	close(s.done)
+	s.closeDone = make(chan struct{})
+	lock, err := os.OpenFile(filepath.Join(s.dir, ".lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.lock = lock
+	t.Cleanup(func() { _ = lock.Close() })
+	waiters := map[string]<-chan error{}
+	for _, key := range []string{"a", "b", "c"} {
+		waiters[key] = payloadQueueTestRecord(t, s, key)
+	}
+	if err := s.Close(); !errors.Is(err, failure) {
+		t.Fatalf("Close error: %v", err)
+	}
+	for key, waiter := range waiters {
+		expected := ErrPayloadClosed
+		if key == "a" {
+			expected = failure
+		}
+		select {
+		case err := <-waiter:
+			if !errors.Is(err, expected) {
+				t.Fatalf("waiter %s: %v", key, err)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("waiter %s did not return", key)
+		}
+		data, err := os.ReadFile(filepath.Join(s.dir, payloadName(key)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var record payloadRecord
+		if err := json.Unmarshal(data, &record); err != nil {
+			t.Fatal(err)
+		}
+		if record.Key != key || string(record.Value) != key {
+			t.Fatalf("spool record changed: %s", key)
+		}
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts: %d", attempts)
+	}
+	if len(sink.readKeys) != 1 || sink.readKeys[0] != "a" {
+		t.Fatalf("error read keys: %v", sink.readKeys)
+	}
+	if len(s.waiters) != 0 {
+		t.Fatalf("waiters remain: %d", len(s.waiters))
+	}
+	if err := s.Close(); !errors.Is(err, failure) {
+		t.Fatalf("second Close error: %v", err)
+	}
 }
 
 func TestPayloadCallerCancelDoesNotWaitForBatch(t *testing.T) {
