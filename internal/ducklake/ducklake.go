@@ -199,7 +199,7 @@ func (l *Lake) withConn(ctx context.Context, stage string, consume func(context.
 		return ErrClosed
 	}
 	if err != nil {
-		return operationError(stage)
+		return classifiedOperationError(stage, err)
 	}
 	return nil
 }
