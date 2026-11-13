@@ -19,6 +19,11 @@ var ErrPayloadNotFound = errors.New("DuckLake payload not found")
 var ErrPayloadConflict = errors.New("DuckLake payload key has different content")
 var ErrPayloadClosed = errors.New("DuckLake payload store closed")
 
+const (
+	payloadBackgroundBatchTimeout = 2 * time.Minute
+	payloadCloseFlushTimeout      = 30 * time.Second
+)
+
 // PayloadOptions controls durable retry storage and bounded lake writes.
 // Each client owns a private subdirectory of SpoolDir. BatchBytes bounds normal
 // batches, but a larger individual archive is supported as a singleton batch.
@@ -61,6 +66,9 @@ type PayloadStore struct {
 	closed    bool
 	closeErr  error
 	ownedLake *Lake
+
+	writerCtx    context.Context
+	writerCancel context.CancelFunc
 }
 
 // NewPayloadStore transfers ownership of lake on success. Close flushes durable
@@ -156,6 +164,7 @@ func newPayloadStoreContext(ctx context.Context, sink payloadSink, opts PayloadO
 		lock.Close()
 		return nil, err
 	}
+	s.writerCtx, s.writerCancel = context.WithCancel(context.Background())
 	go s.loop()
 	return s, nil
 }
@@ -510,6 +519,11 @@ func (s *PayloadStore) flushBatches(ctx context.Context, batchTimeout time.Durat
 			return err
 		}
 		err = s.sink.putBatch(batchCtx, batch)
+		if batchTimeout > 0 && err != nil && ctx.Err() != nil {
+			// Close canceled the writer. Keep waiters for the final flush.
+			cancel()
+			return ctx.Err()
+		}
 		if batchTimeout > 0 && errors.Is(err, context.DeadlineExceeded) {
 			// Keep these waiters for retry. Later batches still get an attempt.
 			cancel()
@@ -619,7 +633,7 @@ func (s *PayloadStore) loop() {
 			}
 		case <-ticker.C:
 		}
-		_ = s.flushBatches(context.Background(), 30*time.Second)
+		_ = s.flushBatches(s.writerCtx, payloadBackgroundBatchTimeout)
 	}
 }
 func (s *PayloadStore) Close() error {
@@ -633,10 +647,13 @@ func (s *PayloadStore) Close() error {
 		return err
 	}
 	s.closed = true
+	if s.writerCancel != nil {
+		s.writerCancel()
+	}
 	close(s.stop)
 	s.mu.Unlock()
 	<-s.done
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), payloadCloseFlushTimeout)
 	err := s.flush(ctx)
 	cancel()
 	// No new reads can start after closed is set. Keep the engine open until

@@ -333,6 +333,87 @@ func TestPayloadCloseFailureReturnsAllWaitersAndKeepsSpool(t *testing.T) {
 	}
 }
 
+func TestPayloadCloseCancelsBackgroundAndRetriesFinalFlush(t *testing.T) {
+	var attempts atomic.Int32
+	contexts := make(chan context.Context, 2)
+	release := make(chan struct{})
+	sink := payloadAttemptSink{newMemorySink(), func(ctx context.Context, rows []payloadRecord) error {
+		attempt := attempts.Add(1)
+		contexts <- ctx
+		if attempt == 1 {
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}}
+	s := testPayloadStore(t, sink, PayloadOptions{})
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+	nextContext := func() context.Context {
+		t.Helper()
+		select {
+		case ctx := <-contexts:
+			return ctx
+		case <-time.After(5 * time.Second):
+			t.Fatal("write attempt did not start")
+			return nil
+		}
+	}
+	result := make(chan error, 1)
+	go func() { result <- s.Put(context.Background(), "a", []byte("a")) }()
+	background := nextContext()
+	deadline, ok := background.Deadline()
+	if !ok {
+		t.Fatal("background attempt has no deadline")
+	}
+	if remaining := time.Until(deadline); remaining <= time.Minute || remaining > payloadBackgroundBatchTimeout {
+		t.Fatalf("background time limit: %v", remaining)
+	}
+	closeResult := make(chan error, 1)
+	go func() { closeResult <- s.Close() }()
+	final := nextContext()
+	if !errors.Is(background.Err(), context.Canceled) {
+		t.Fatalf("background context: %v", background.Err())
+	}
+	if final.Err() != nil {
+		t.Fatalf("final flush context: %v", final.Err())
+	}
+	deadline, ok = final.Deadline()
+	if !ok {
+		t.Fatal("final flush has no deadline")
+	}
+	if remaining := time.Until(deadline); remaining <= 0 || remaining > payloadCloseFlushTimeout {
+		t.Fatalf("final flush time limit: %v", remaining)
+	}
+	payloadAssertWaiting(t, result)
+	payloadAssertWaiting(t, closeResult)
+	close(release)
+	waitPayloadResult(t, result)
+	waitPayloadResult(t, closeResult)
+	if attempts.Load() != 2 {
+		t.Fatalf("attempts: %d", attempts.Load())
+	}
+	sink.mu.Lock()
+	value := string(sink.rows["a"])
+	sink.mu.Unlock()
+	if value != "a" {
+		t.Fatal("final flush did not commit")
+	}
+	if _, err := os.Stat(filepath.Join(s.dir, payloadName("a"))); !os.IsNotExist(err) {
+		t.Fatalf("committed spool remains: %v", err)
+	}
+}
+
 func TestPayloadCallerCancelDoesNotWaitForBatch(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
