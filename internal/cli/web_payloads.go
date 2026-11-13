@@ -11,6 +11,7 @@ import (
 type webPayloadStore interface {
 	postgres.PayloadStore
 	GetMany(context.Context, []string) (map[string][]byte, error)
+	GetManyBounded(context.Context, []string, int64) (map[string][]byte, error)
 	GetCommitted(context.Context, string) ([]byte, error)
 	Close() error
 }
@@ -50,11 +51,7 @@ func (p *lazyPayloadStore) acquire(ctx context.Context) (webPayloadStore, func()
 		return nil, nil, errors.New("payload store is closed")
 	}
 	if p.store == nil {
-		initCtx, cancel := context.WithCancel(ctx)
-		stop := context.AfterFunc(p.life, cancel)
-		store, err := p.open(initCtx)
-		stop()
-		cancel()
+		store, err := p.open(ctx)
 		if err != nil {
 			release()
 			return nil, nil, err
@@ -68,6 +65,8 @@ func (p *lazyPayloadStore) acquire(ctx context.Context) (webPayloadStore, func()
 	return p.store, release, nil
 }
 func (p *lazyPayloadStore) Put(ctx context.Context, key string, value []byte) error {
+	ctx, cancel := p.operationContext(ctx)
+	defer cancel()
 	s, release, err := p.acquire(ctx)
 	if err != nil {
 		return err
@@ -76,6 +75,8 @@ func (p *lazyPayloadStore) Put(ctx context.Context, key string, value []byte) er
 	return s.Put(ctx, key, value)
 }
 func (p *lazyPayloadStore) Get(ctx context.Context, key string) ([]byte, error) {
+	ctx, cancel := p.operationContext(ctx)
+	defer cancel()
 	s, release, err := p.acquire(ctx)
 	if err != nil {
 		return nil, err
@@ -84,6 +85,8 @@ func (p *lazyPayloadStore) Get(ctx context.Context, key string) ([]byte, error) 
 	return s.Get(ctx, key)
 }
 func (p *lazyPayloadStore) GetMany(ctx context.Context, keys []string) (map[string][]byte, error) {
+	ctx, cancel := p.operationContext(ctx)
+	defer cancel()
 	s, release, err := p.acquire(ctx)
 	if err != nil {
 		return nil, err
@@ -92,6 +95,8 @@ func (p *lazyPayloadStore) GetMany(ctx context.Context, keys []string) (map[stri
 	return s.GetMany(ctx, keys)
 }
 func (p *lazyPayloadStore) GetCommitted(ctx context.Context, key string) ([]byte, error) {
+	ctx, cancel := p.operationContext(ctx)
+	defer cancel()
 	s, release, err := p.acquire(ctx)
 	if err != nil {
 		return nil, err
@@ -99,6 +104,26 @@ func (p *lazyPayloadStore) GetCommitted(ctx context.Context, key string) ([]byte
 	defer release()
 	return s.GetCommitted(ctx, key)
 }
+func (p *lazyPayloadStore) operationContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(p.life, cancel)
+	return ctx, func() {
+		stop()
+		cancel()
+	}
+}
+
+func (p *lazyPayloadStore) GetManyBounded(ctx context.Context, keys []string, maxBytes int64) (map[string][]byte, error) {
+	ctx, cancel := p.operationContext(ctx)
+	defer cancel()
+	s, release, err := p.acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return s.GetManyBounded(ctx, keys, maxBytes)
+}
+
 func (p *lazyPayloadStore) Close() error {
 	p.cancel()
 	p.once.Do(func() {

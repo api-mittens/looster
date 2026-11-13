@@ -11,8 +11,10 @@ import (
 )
 
 type lazyTestPayloads struct {
-	put    func(context.Context) error
-	closed atomic.Bool
+	put     func(context.Context) error
+	read    func(context.Context) error
+	bounded func(context.Context, []string, int64) (map[string][]byte, error)
+	closed  atomic.Bool
 }
 
 func (s *lazyTestPayloads) Put(ctx context.Context, _ string, _ []byte) error {
@@ -21,13 +23,31 @@ func (s *lazyTestPayloads) Put(ctx context.Context, _ string, _ []byte) error {
 	}
 	return nil
 }
-func (s *lazyTestPayloads) Get(context.Context, string) ([]byte, error) { return []byte("read"), nil }
-func (s *lazyTestPayloads) GetCommitted(context.Context, string) ([]byte, error) {
+func (s *lazyTestPayloads) Get(ctx context.Context, _ string) ([]byte, error) {
+	if s.read != nil {
+		return nil, s.read(ctx)
+	}
+	return []byte("read"), nil
+}
+func (s *lazyTestPayloads) GetCommitted(ctx context.Context, _ string) ([]byte, error) {
+	if s.read != nil {
+		return nil, s.read(ctx)
+	}
 	return []byte("committed"), nil
 }
-func (s *lazyTestPayloads) GetMany(context.Context, []string) (map[string][]byte, error) {
+func (s *lazyTestPayloads) GetMany(ctx context.Context, _ []string) (map[string][]byte, error) {
+	if s.read != nil {
+		return nil, s.read(ctx)
+	}
 	return map[string][]byte{"key": []byte("read")}, nil
 }
+func (s *lazyTestPayloads) GetManyBounded(ctx context.Context, keys []string, maxBytes int64) (map[string][]byte, error) {
+	if s.bounded != nil {
+		return s.bounded(ctx, keys, maxBytes)
+	}
+	return s.GetMany(ctx, keys)
+}
+
 func (s *lazyTestPayloads) Close() error { s.closed.Store(true); return nil }
 
 func waitLazy(t *testing.T, done <-chan error) error {
