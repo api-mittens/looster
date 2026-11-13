@@ -73,7 +73,7 @@ func HandlerWithStorage(repo Repository, objects app.Objects, providers ...Names
 		}
 	}
 	base := dashboardHandler(repo, objects, selected)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	dispatch := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/namespaces" && r.Method == http.MethodGet {
 			names := []string{}
 			if len(providers) > 0 {
@@ -109,9 +109,10 @@ func HandlerWithStorage(repo Repository, objects app.Objects, providers ...Names
 		}
 		base.ServeHTTP(w, r)
 	})
+	return instrumentHTTP(dispatch, base)
 }
 
-func dashboardHandler(repo Repository, objects app.Objects, selected string) http.Handler {
+func dashboardHandler(repo Repository, objects app.Objects, selected string) *http.ServeMux {
 	mux := http.NewServeMux()
 	registerAttachments(mux, repo, objects, selected)
 	decode := func(w http.ResponseWriter, r *http.Request, dst any) bool {
@@ -127,11 +128,11 @@ func dashboardHandler(repo Repository, objects app.Objects, selected string) htt
 		}
 		return true
 	}
-	write := func(w http.ResponseWriter, data any, err error) {
+	write := func(w http.ResponseWriter, r *http.Request, data any, err error) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 		if err != nil {
-			slog.Error("dashboard API query failed", "error", err)
+			slog.ErrorContext(r.Context(), "Could not load dashboard data", "error_class", dashboardErrorClass(err))
 			code, message := http.StatusInternalServerError, "Could not load dashboard data"
 			if errors.Is(err, app.ErrNotFound) {
 				code, message = http.StatusNotFound, "Resource not found"
@@ -152,11 +153,11 @@ func dashboardHandler(repo Repository, objects app.Objects, selected string) htt
 	mux.HandleFunc("GET /api/manifests", func(w http.ResponseWriter, r *http.Request) {
 		manifests, ok := repo.(app.ManifestRepository)
 		if !ok {
-			write(w, []behaviour.Manifest{}, nil)
+			write(w, r, []behaviour.Manifest{}, nil)
 			return
 		}
 		versions, err := manifests.Manifests(r.Context())
-		write(w, versions, err)
+		write(w, r, versions, err)
 	})
 	mux.HandleFunc("POST /api/manifests/{id}/activate", func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -174,28 +175,28 @@ func dashboardHandler(repo Repository, objects app.Objects, selected string) htt
 			return
 		}
 		if err := manifests.ActivateManifest(r.Context(), id); err != nil {
-			write(w, nil, err)
+			write(w, r, nil, err)
 			return
 		}
-		write(w, map[string]int64{"id": id}, nil)
+		write(w, r, map[string]int64{"id": id}, nil)
 	})
 	mux.HandleFunc("GET /api/status", func(w http.ResponseWriter, r *http.Request) {
 		workers, err := repo.Workers(r.Context())
 		if err != nil {
-			write(w, nil, err)
+			write(w, r, nil, err)
 			return
 		}
 		agents, err := repo.Agents(r.Context())
 		if err != nil {
-			write(w, nil, err)
+			write(w, r, nil, err)
 			return
 		}
 		sessions, err := repo.Sessions(r.Context(), "")
 		if err != nil {
-			write(w, nil, err)
+			write(w, r, nil, err)
 			return
 		}
-		write(w, map[string]any{"workers": workers, "agents": agents, "sessions": sessions, "heartbeat_window_seconds": 30}, nil)
+		write(w, r, map[string]any{"workers": workers, "agents": agents, "sessions": sessions, "heartbeat_window_seconds": 30}, nil)
 	})
 	mux.HandleFunc("POST /api/behaviours/{id}/run", func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -213,25 +214,25 @@ func dashboardHandler(repo Repository, objects app.Objects, selected string) htt
 			return
 		}
 		result, err := schedules.RunSchedule(r.Context(), id)
-		write(w, result, err)
+		write(w, r, result, err)
 	})
 	mux.HandleFunc("GET /api/system", func(w http.ResponseWriter, r *http.Request) {
 		rules, err := repo.Behaviour(r.Context())
 		if err != nil {
-			write(w, nil, err)
+			write(w, r, nil, err)
 			return
 		}
-		write(w, map[string]any{"behaviours": rules}, nil)
+		write(w, r, map[string]any{"behaviours": rules}, nil)
 	})
 	mux.HandleFunc("GET /api/library", func(w http.ResponseWriter, r *http.Request) {
 		agents, err := repo.Agents(r.Context())
 		if err != nil {
-			write(w, nil, err)
+			write(w, r, nil, err)
 			return
 		}
 		tags, err := repo.Tags(r.Context())
 		if err != nil {
-			write(w, nil, err)
+			write(w, r, nil, err)
 			return
 		}
 		agentViews := []app.AgentContext{}
@@ -239,7 +240,7 @@ func dashboardHandler(repo Repository, objects app.Objects, selected string) htt
 		for _, a := range agents {
 			m, err := repo.Memories(r.Context(), "agent", a.Name)
 			if err != nil {
-				write(w, nil, err)
+				write(w, r, nil, err)
 				return
 			}
 			agentViews = append(agentViews, app.AgentContext{Agent: a, Memories: m})
@@ -247,32 +248,32 @@ func dashboardHandler(repo Repository, objects app.Objects, selected string) htt
 		for _, t := range tags {
 			m, err := repo.Memories(r.Context(), "tag", t.Name)
 			if err != nil {
-				write(w, nil, err)
+				write(w, r, nil, err)
 				return
 			}
 			tagViews = append(tagViews, app.TagContext{Tag: t, Memories: m})
 		}
-		write(w, map[string]any{"agents": agentViews, "tags": tagViews}, nil)
+		write(w, r, map[string]any{"agents": agentViews, "tags": tagViews}, nil)
 	})
 	mux.HandleFunc("GET /api/board/list", listBoard(repo, write))
 	mux.HandleFunc("GET /api/palette/tasks", paletteTasks(repo, write))
 	mux.HandleFunc("GET /api/board", func(w http.ResponseWriter, r *http.Request) {
 		tasks, err := repo.Tasks(r.Context())
 		if err != nil {
-			write(w, nil, err)
+			write(w, r, nil, err)
 			return
 		}
 		agents, err := repo.Agents(r.Context())
 		if err != nil {
-			write(w, nil, err)
+			write(w, r, nil, err)
 			return
 		}
 		sessions, err := repo.Sessions(r.Context(), "")
 		if err != nil {
-			write(w, nil, err)
+			write(w, r, nil, err)
 			return
 		}
-		write(w, map[string]any{"tasks": tasks, "agents": agents, "sessions": sessions}, nil)
+		write(w, r, map[string]any{"tasks": tasks, "agents": agents, "sessions": sessions}, nil)
 	})
 	mux.HandleFunc("POST /api/tasks", func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
@@ -299,7 +300,7 @@ func dashboardHandler(repo Repository, objects app.Objects, selected string) htt
 		if len(input.Tags) > 0 {
 			tags, err := repo.Tags(r.Context())
 			if err != nil {
-				write(w, nil, err)
+				write(w, r, nil, err)
 				return
 			}
 			defined := make(map[string]bool, len(tags))
@@ -315,12 +316,12 @@ func dashboardHandler(repo Repository, objects app.Objects, selected string) htt
 		}
 		created, err := repo.CreateTask(r.Context(), input.Name, input.Description, input.Status, input.Tags)
 		if err != nil {
-			write(w, nil, err)
+			write(w, r, nil, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		write(w, created, nil)
+		write(w, r, created, nil)
 	})
 	mux.HandleFunc("POST /api/tasks/{id}/status", func(w http.ResponseWriter, r *http.Request) {
 		id, err := task.ParseID(r.PathValue("id"))
@@ -339,10 +340,10 @@ func dashboardHandler(repo Repository, objects app.Objects, selected string) htt
 			return
 		}
 		if err := repo.SetStatus(r.Context(), id, input.Status); err != nil {
-			write(w, nil, err)
+			write(w, r, nil, err)
 			return
 		}
-		write(w, map[string]task.Status{"status": input.Status}, nil)
+		write(w, r, map[string]task.Status{"status": input.Status}, nil)
 	})
 	mux.HandleFunc("POST /api/tasks/{id}/comments", func(w http.ResponseWriter, r *http.Request) {
 		id, err := task.ParseID(r.PathValue("id"))
@@ -361,17 +362,17 @@ func dashboardHandler(repo Repository, objects app.Objects, selected string) htt
 			return
 		}
 		if _, err := repo.Task(r.Context(), id); err != nil {
-			write(w, nil, err)
+			write(w, r, nil, err)
 			return
 		}
 		eventID, err := repo.Comment(r.Context(), id, input.Body)
 		if err != nil {
-			write(w, nil, err)
+			write(w, r, nil, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		write(w, map[string]int64{"event_id": eventID}, nil)
+		write(w, r, map[string]int64{"event_id": eventID}, nil)
 	})
 	mux.HandleFunc("GET /api/tasks/{id}", func(w http.ResponseWriter, r *http.Request) {
 		id, err := task.ParseID(r.PathValue("id"))
@@ -381,12 +382,12 @@ func dashboardHandler(repo Repository, objects app.Objects, selected string) htt
 		}
 		t, err := repo.Task(r.Context(), id)
 		if err != nil {
-			write(w, nil, err)
+			write(w, r, nil, err)
 			return
 		}
 		sessions, err := repo.Sessions(r.Context(), "")
 		if err != nil {
-			write(w, nil, err)
+			write(w, r, nil, err)
 			return
 		}
 		selected := []agent.Session{}
@@ -397,10 +398,10 @@ func dashboardHandler(repo Repository, objects app.Objects, selected string) htt
 		}
 		expanded, err := app.ExpandTaskContext(r.Context(), repo, t, "")
 		if err != nil {
-			write(w, nil, err)
+			write(w, r, nil, err)
 			return
 		}
-		write(w, map[string]any{"task": t, "sessions": selected, "context": expanded}, nil)
+		write(w, r, map[string]any{"task": t, "sessions": selected, "context": expanded}, nil)
 	})
 	mux.HandleFunc("GET /api/tasks/{id}/events", func(w http.ResponseWriter, r *http.Request) {
 		id, err := task.ParseID(r.PathValue("id"))
@@ -417,7 +418,7 @@ func dashboardHandler(repo Repository, objects app.Objects, selected string) htt
 			}
 		}
 		if _, err = repo.Task(r.Context(), id); err != nil {
-			write(w, nil, err)
+			write(w, r, nil, err)
 			return
 		}
 		// Initial page shows recent activity; subsequent pages follow the cursor forward.
@@ -435,7 +436,7 @@ func dashboardHandler(repo Repository, objects app.Objects, selected string) htt
 				events[i], events[j] = events[j], events[i]
 			}
 		}
-		write(w, events, err)
+		write(w, r, events, err)
 	})
 	mux.HandleFunc("GET /api/", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
 	static, _ := fs.Sub(assets, "static")
