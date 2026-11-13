@@ -29,7 +29,7 @@ func metadataSessions(ctx context.Context, repo Repository) ([]agent.Session, er
 	return repo.Sessions(ctx, "")
 }
 
-func registerTaskPayloads(mux *http.ServeMux, repo Repository, write func(http.ResponseWriter, any, error)) {
+func registerTaskPayloads(mux *http.ServeMux, repo Repository, write func(http.ResponseWriter, *http.Request, any, error)) {
 	mux.HandleFunc("GET /api/tasks/{id}/payloads", func(w http.ResponseWriter, r *http.Request) {
 		id, err := task.ParseID(r.PathValue("id"))
 		if err != nil {
@@ -86,7 +86,7 @@ func registerTaskPayloads(mux *http.ServeMux, repo Repository, write func(http.R
 			t, sessions, runs, err = source.TaskPayloadDetail(r.Context(), id, before, limit)
 		}
 		if err != nil {
-			write(w, nil, err)
+			write(w, r, nil, err)
 			return
 		}
 		if sessions == nil {
@@ -103,6 +103,6 @@ func registerTaskPayloads(mux *http.ServeMux, repo Repository, write func(http.R
 		if len(t.SessionLogs) == logLimit {
 			nextLog = t.SessionLogs[0].ID
 		}
-		write(w, map[string]any{"task": t, "sessions": sessions, "runs": runs, "has_more": next != 0, "next_before_job_id": next, "has_more_logs": nextLog != 0, "next_before_log_id": nextLog}, nil)
+		write(w, r, map[string]any{"task": t, "sessions": sessions, "runs": runs, "has_more": next != 0, "next_before_job_id": next, "has_more_logs": nextLog != 0, "next_before_log_id": nextLog}, nil)
 	})
 }

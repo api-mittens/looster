@@ -15,6 +15,10 @@ import (
 
 	"github.com/api-mittens/looster/internal/namespace"
 	"github.com/api-mittens/looster/internal/task"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Job struct {
@@ -91,17 +95,18 @@ func (s *Service) Serve(ctx context.Context, c WorkerConfig) error {
 		s.Log = slog.Default()
 	}
 	settings := WorkerSettings{Harness: c.Harness, Concurrency: c.Concurrency, PollInterval: c.Poll.String(), RunTimeout: c.RunTimeout.String()}
-	if e := s.Queue.Heartbeat(ctx, c.ID, c.Agents, settings); e != nil {
+	if e := s.heartbeat(ctx, c, settings); e != nil {
 		return e
 	}
-	s.Log.Info("worker started", "worker", c.ID, "agents", c.Agents, "concurrency", c.Concurrency)
+	newWorkerTelemetry().capacity.Record(ctx, int64(c.Concurrency))
+	s.Log.InfoContext(ctx, "worker started", "worker", c.ID, "agents", c.Agents, "concurrency", c.Concurrency)
 	s.record(ctx, "worker_started", fmt.Sprintf("Worker %s started; agents=%s; concurrency=%d", c.ID, strings.Join(c.Agents, ","), c.Concurrency))
 	defer func() {
-		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		_ = s.Queue.Leave(cleanup, c.ID)
 		s.record(cleanup, "worker_stopped", fmt.Sprintf("Worker %s stopped", c.ID))
-		s.Log.Info("worker stopped", "worker", c.ID)
+		s.Log.InfoContext(ctx, "worker stopped", "worker", c.ID)
 	}()
 	ctx, cancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
@@ -114,9 +119,9 @@ func (s *Service) Serve(ctx context.Context, c WorkerConfig) error {
 		go func() {
 			defer wg.Done()
 			for ctx.Err() == nil {
-				lease, e := s.Queue.Claim(ctx, c.Agents)
+				lease, e := s.claim(ctx, c)
 				if e != nil {
-					s.Log.Error("claim job", "error", e)
+					s.Log.ErrorContext(ctx, "Claim failed", "error_class", workerOutcome(e))
 					if ctx.Err() == nil {
 						s.record(ctx, "worker_error", fmt.Sprintf("Worker %s could not claim a job: %v", c.ID, e))
 					}
@@ -143,12 +148,12 @@ func (s *Service) Serve(ctx context.Context, c WorkerConfig) error {
 			return nil
 		case <-scheduleTick.C:
 			if _, err := s.schedule(ctx, c); err != nil && ctx.Err() == nil {
-				s.Log.Error("dispatch recurring rules", "error", err)
+				s.Log.ErrorContext(ctx, "Schedule failed", "error_class", workerOutcome(err))
 				s.record(ctx, "scheduler_failed", fmt.Sprintf("Worker %s: %v", c.ID, err))
 			}
 		case <-tick.C:
-			if e := s.Queue.Heartbeat(ctx, c.ID, c.Agents, settings); e != nil {
-				s.Log.Error("heartbeat", "error", e)
+			if e := s.heartbeat(ctx, c, settings); e != nil {
+				s.Log.ErrorContext(ctx, "Heartbeat failed", "error_class", workerOutcome(e))
 				if ctx.Err() == nil {
 					s.record(ctx, "worker_error", fmt.Sprintf("Worker %s heartbeat failed: %v", c.ID, e))
 				}
@@ -165,7 +170,25 @@ func (s *Service) process(ctx context.Context, c WorkerConfig, lease Lease) {
 	}
 	defer lease.Close()
 	j := lease.Job()
+	ctx, attempt := otel.Tracer(workerScope).Start(ctx, "looster.job.process", trace.WithNewRoot(), trace.WithAttributes(attribute.Int64("job.id", j.ID), attribute.String("agent", j.Agent), attribute.String("namespace", c.Namespace)))
+	if j.TaskID > 0 {
+		attempt.SetAttributes(attribute.Int64("task.id", j.TaskID))
+	}
+	telemetry := newWorkerTelemetry()
+	started := time.Now()
+	telemetry.active.Add(ctx, 1)
 	var err error
+	defer func() {
+		attempt.SetAttributes(attribute.String("session.id", j.SessionID))
+		outcome := workerOutcome(err)
+		attrs := metric.WithAttributes(attribute.String("outcome", outcome))
+		telemetry.attempts.Add(ctx, 1, attrs)
+		telemetry.duration.Record(ctx, time.Since(started).Seconds(), attrs)
+		telemetry.active.Add(ctx, -1)
+		s.Log.InfoContext(ctx, "Job attempt stopped", "job", j.ID, "outcome", outcome)
+		workerSpanEnd(attempt, err)
+	}()
+	s.Log.InfoContext(ctx, "Job attempt started", "job", j.ID, "agent", j.Agent)
 	defer func() {
 		if err != nil {
 			// A stopped worker must leave its job resumable even when the
@@ -174,17 +197,17 @@ func (s *Service) process(ctx context.Context, c WorkerConfig, lease Lease) {
 			if errors.Is(ctx.Err(), context.Canceled) && !errors.Is(err, ErrTaskClosed) {
 				err = context.Canceled
 			}
-			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			defer cancel()
 			if e := lease.Fail(cleanup, err); e != nil {
-				s.Log.Error("record failure", "error", e)
+				s.Log.ErrorContext(ctx, "Record failure failed", "error_class", "failed")
 			}
 			if errors.Is(err, context.Canceled) {
-				s.Log.Info("job interrupted; will resume", "job", j.ID, "agent", j.Agent)
+				s.Log.InfoContext(ctx, "job interrupted; will resume", "job", j.ID, "agent", j.Agent)
 			} else if errors.Is(err, ErrTaskClosed) {
-				s.Log.Info("task closed; session stopped", "job", j.ID, "agent", j.Agent)
+				s.Log.InfoContext(ctx, "task closed; session stopped", "job", j.ID, "agent", j.Agent)
 			} else {
-				s.Log.Error("job failed", "job", j.ID, "agent", j.Agent, "error", err)
+				s.Log.ErrorContext(ctx, "Job failed", "job", j.ID, "agent", j.Agent, "error_class", workerOutcome(err))
 			}
 		}
 	}()
@@ -200,6 +223,15 @@ func (s *Service) process(ctx context.Context, c WorkerConfig, lease Lease) {
 		prefix = "namespaces/" + c.Namespace + "/" + prefix
 	}
 	if j.State != "archiving" {
+		prepareCtx, prepare := otel.Tracer(workerScope).Start(ctx, "looster.job.prepare")
+		prepareDone := false
+		defer func() {
+			if !prepareDone {
+				workerSpanEnd(prepare, err)
+			}
+		}()
+		jobCtx := ctx
+		ctx = prepareCtx
 		var t task.Task
 		prompt := j.Prompt
 		workdir := ""
@@ -248,6 +280,9 @@ func (s *Service) process(ctx context.Context, c WorkerConfig, lease Lease) {
 		if err = lease.Started(ctx); err != nil {
 			return
 		}
+		workerSpanEnd(prepare, nil)
+		prepareDone = true
+		ctx = jobCtx
 		runCtx := ctx
 		cancel := func() {}
 		if c.RunTimeout > 0 {
@@ -284,10 +319,26 @@ func (s *Service) process(ctx context.Context, c WorkerConfig, lease Lease) {
 			close(watchDone)
 		}
 		var result Result
-		result, err = s.Harness.Run(watchCtx, Run{JobID: j.ID, Namespace: c.Namespace, Agent: j.Agent, Task: t, SessionID: j.SessionID, Workdir: workdir, Prompt: prompt, ArchivePrefix: prefix}, func(o Output) error { return lease.Capture(watchCtx, o) })
+		harnessCtx, harnessSpan := otel.Tracer(workerScope).Start(watchCtx, "looster.job.execute")
+		result, err = s.Harness.Run(harnessCtx, Run{JobID: j.ID, Namespace: c.Namespace, Agent: j.Agent, Task: t, SessionID: j.SessionID, Workdir: workdir, Prompt: prompt, ArchivePrefix: prefix}, func(o Output) error {
+			start := time.Now()
+			captureErr := lease.Capture(harnessCtx, o)
+			telemetry.operation(harnessCtx, "capture", start, captureErr, false)
+			return captureErr
+		})
 		cause := context.Cause(watchCtx)
 		stopWatch(nil)
 		<-watchDone
+		if errors.Is(cause, ErrTaskClosed) {
+			err = ErrTaskClosed
+		}
+		if errors.Is(cause, context.DeadlineExceeded) {
+			err = context.DeadlineExceeded
+		}
+		if err != nil && errors.Is(ctx.Err(), context.Canceled) && !errors.Is(err, ErrTaskClosed) {
+			err = context.Canceled
+		}
+		workerSpanEnd(harnessSpan, err)
 		if errors.Is(cause, ErrTaskClosed) {
 			err = ErrTaskClosed
 			return
@@ -310,17 +361,30 @@ func (s *Service) process(ctx context.Context, c WorkerConfig, lease Lease) {
 			err = errors.New("harness returned no session ID")
 			return
 		}
-		if err = lease.Archive(ctx, result); err != nil {
+		archiveStart := time.Now()
+		err = lease.Archive(ctx, result)
+		telemetry.operation(ctx, "archive", archiveStart, err, true)
+		if err != nil {
 			return
 		}
 		j.SessionID = result.SessionID
 		j.History = result.History
+	} else {
+		recoveryCtx, recovery := otel.Tracer(workerScope).Start(ctx, "looster.job.archive_recovery")
+		ctx = recoveryCtx
+		defer func() { workerSpanEnd(recovery, err) }()
+		s.Log.InfoContext(ctx, "Archive recovery started", "job", j.ID)
 	}
 	key := fmt.Sprintf("%s/%s.json", prefix, filepath.Base(j.SessionID))
-	if err = s.Objects.Put(ctx, key, bytes.NewReader(j.History), int64(len(j.History))); err != nil {
+	archiveStart := time.Now()
+	err = s.Objects.Put(ctx, key, bytes.NewReader(j.History), int64(len(j.History)))
+	telemetry.operation(ctx, "archive", archiveStart, err, true)
+	if err != nil {
 		return
 	}
+	completeStart := time.Now()
 	err = lease.Complete(ctx)
+	telemetry.operation(ctx, "complete", completeStart, err, true)
 }
 func (s *Service) prompt(ctx context.Context, name string, t task.Task) (string, error) {
 	expanded, e := ExpandTaskContext(ctx, s.Repo, t, name)
@@ -388,14 +452,20 @@ func (s *Service) record(ctx context.Context, kind, body string) {
 	writeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	if err := s.Queue.RecordSystemEvent(writeCtx, kind, body); err != nil && ctx.Err() == nil {
-		s.Log.Error("persist system event", "kind", kind, "error", err)
+		s.Log.ErrorContext(ctx, "System event write failed", "kind", kind, "error_class", "failed")
 	}
 }
 func (s *Service) schedule(ctx context.Context, c WorkerConfig) (int, error) {
+	start := time.Now()
 	count, err := s.Queue.Schedule(ctx, c.Agents)
+	telemetry := newWorkerTelemetry()
+	telemetry.operation(ctx, "schedule", start, err, count > 0)
+	if err == nil {
+		telemetry.dispatched.Add(ctx, int64(count))
+	}
 	if err == nil && count > 0 {
 		s.record(ctx, "scheduler_dispatched", fmt.Sprintf("Worker %s dispatched %d scheduled ping(s); agents=%s", c.ID, count, strings.Join(c.Agents, ",")))
-		s.Log.Info("scheduled pings dispatched", "worker", c.ID, "count", count)
+		s.Log.InfoContext(ctx, "scheduled pings dispatched", "worker", c.ID, "count", count)
 	}
 	return count, err
 }
