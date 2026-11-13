@@ -67,9 +67,14 @@ func (s *Store) hydrate(ctx context.Context, value string) (string, error) {
 }
 func (s *Store) hydrateStrings(ctx context.Context, values []*string) error {
 	keys := []string{}
+	seen := map[string]bool{}
 	for _, v := range values {
 		if isPayloadReference(*v) {
-			keys = append(keys, strings.TrimPrefix(*v, payloadPrefix))
+			key := strings.TrimPrefix(*v, payloadPrefix)
+			if !seen[key] {
+				keys = append(keys, key)
+				seen[key] = true
+			}
 		}
 	}
 	if len(keys) == 0 {

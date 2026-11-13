@@ -82,6 +82,10 @@ func (s *Store) RunSessionLogs(ctx context.Context, id int64) ([]agent.SessionLo
 
 // Batch loading keeps board and history listing at a constant query count.
 func (s *Store) sessionLogsForIDs(ctx context.Context, column string, ids []int64) (map[int64][]agent.SessionLog, error) {
+	return s.sessionLogsForIDsRead(ctx, column, ids, true)
+}
+
+func (s *Store) sessionLogsForIDsRead(ctx context.Context, column string, ids []int64, hydrate bool) (map[int64][]agent.SessionLog, error) {
 	out := make(map[int64][]agent.SessionLog, len(ids))
 	for _, id := range ids {
 		out[id] = []agent.SessionLog{}
@@ -109,6 +113,9 @@ func (s *Store) sessionLogsForIDs(ctx context.Context, column string, ids []int6
 		return nil, err
 	}
 	rows.Close()
+	if !hydrate {
+		return out, nil
+	}
 	values := []*string{}
 	for id, logs := range out {
 		for i := range logs {
