@@ -361,7 +361,7 @@ func dashboardHandler(repo Repository, objects app.Objects, selected string) htt
 			http.Error(w, "Comment is required", 400)
 			return
 		}
-		if _, err := repo.Task(r.Context(), id); err != nil {
+		if _, err := metadataTask(r.Context(), repo, id); err != nil {
 			write(w, nil, err)
 			return
 		}

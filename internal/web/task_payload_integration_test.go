@@ -353,9 +353,18 @@ func TestTaskPayloadHTTPIntegration(t *testing.T) {
 	reader.mu.Unlock()
 	// Read bounded history while a real payload write commits.
 	writeDone := make(chan error, 1)
+	concurrentText := "A concurrent payload write"
+	concurrentKey := taskHTTPPayloadKey(concurrentText)
 	go func() {
-		value := "A concurrent payload write"
-		writeDone <- payloads.Put(ctx, taskHTTPPayloadKey(value), []byte(value))
+		if err := payloads.Put(ctx, concurrentKey, []byte(concurrentText)); err != nil {
+			writeDone <- err
+			return
+		}
+		log, err := store.AppendSessionLog(ctx, agent.SessionLogInput{JobID: 100, TaskID: item.ID, Agent: "reader", SessionID: "100", Kind: "note", Body: text})
+		if err == nil && (log.ID == 0 || log.Body != text || log.TaskID != item.ID) {
+			err = errors.New("The agent log write did not return committed text")
+		}
+		writeDone <- err
 	}()
 	for i := 0; i < 3; i++ {
 		get(base+"/payloads?limit=1&log_limit=1", 200)
@@ -399,6 +408,7 @@ func TestTaskPayloadHTTPIntegration(t *testing.T) {
 	}
 	reader.mu.Unlock()
 	// A separate process must read the committed catalog and S3 objects.
+	// This config has only generated loopback addresses and dummy test keys.
 	encoded, err := json.Marshal(lakeConfig)
 	if err != nil {
 		t.Fatal(err)
@@ -408,7 +418,7 @@ func TestTaskPayloadHTTPIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	command := exec.CommandContext(ctx, binary, "-test.run=^TestTaskPayloadNativeReaderProcess$", "-test.v")
-	command.Env = append(os.Environ(), "LOOSTER_HTTP_READER_CONFIG="+string(encoded), "LOOSTER_HTTP_READER_KEY="+key, "LOOSTER_HTTP_READER_TEXT="+text)
+	command.Env = append(os.Environ(), "LOOSTER_HTTP_READER_CONFIG="+string(encoded), "LOOSTER_HTTP_READER_DATABASE_URL="+selected, "LOOSTER_HTTP_READER_KEY="+key, "LOOSTER_HTTP_READER_TEXT="+text, "LOOSTER_HTTP_READER_SECOND_KEY="+concurrentKey, "LOOSTER_HTTP_READER_SECOND_TEXT="+concurrentText)
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("The native reader process failed: %v\n%s", err, output)
@@ -430,6 +440,19 @@ func TestTaskPayloadNativeReaderProcess(t *testing.T) {
 	if err := json.Unmarshal([]byte(encoded), &config); err != nil {
 		t.Fatal("Invalid reader configuration")
 	}
+	raw := os.Getenv("LOOSTER_HTTP_READER_DATABASE_URL")
+	pgConfig, err := pgx.ParseConfig(raw)
+	if err != nil || !strings.HasPrefix(config.Namespace, "tsk80_http_") || pgConfig.Database != config.Namespace || (pgConfig.Host != "127.0.0.1" && pgConfig.Host != "localhost" && pgConfig.Host != "::1") {
+		t.Fatal("The reader requires a disposable loopback catalog")
+	}
+	expectedCatalog, err := postgres.DatabaseConnectionString(raw, config.Namespace)
+	if err != nil || expectedCatalog != config.CatalogConnection {
+		t.Fatal("The reader catalog does not match the local test URL")
+	}
+	endpoint, err := url.Parse(config.S3.Endpoint)
+	if err != nil || endpoint.Scheme != "http" || endpoint.Hostname() != "127.0.0.1" || config.DataPath != "s3://test/"+config.Namespace+"/" {
+		t.Fatal("The reader requires the disposable loopback S3 fixture")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	lake, err := ducklake.Open(ctx, config)
@@ -441,11 +464,19 @@ func TestTaskPayloadNativeReaderProcess(t *testing.T) {
 		lake.Close()
 		t.Fatal(err)
 	}
-	defer payloads.Close()
+	defer func() {
+		if err := payloads.Close(); err != nil {
+			t.Errorf("Reader close failed: %v", err)
+		}
+	}()
 	key := os.Getenv("LOOSTER_HTTP_READER_KEY")
-	rows, err := payloads.GetManyBounded(ctx, []string{key}, postgres.TaskPayloadMaxBytes)
+	secondKey := os.Getenv("LOOSTER_HTTP_READER_SECOND_KEY")
+	rows, err := payloads.GetManyBounded(ctx, []string{key, secondKey}, postgres.TaskPayloadMaxBytes)
 	if err != nil || string(rows[key]) != os.Getenv("LOOSTER_HTTP_READER_TEXT") {
 		t.Fatalf("The native catalog read failed: %v", err)
 	}
-	t.Log("The separate native process read the committed payload")
+	if string(rows[secondKey]) != os.Getenv("LOOSTER_HTTP_READER_SECOND_TEXT") {
+		t.Fatal("The separate native process did not read the concurrent committed write")
+	}
+	t.Log("The separate native process read both committed payloads")
 }

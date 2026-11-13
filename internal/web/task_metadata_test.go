@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,6 +75,26 @@ func TestTaskPayloadBoundsHTTP(t *testing.T) {
 	}
 	if repo.payloadCalls != 0 {
 		t.Fatalf("invalid requests read payloads: %d", repo.payloadCalls)
+	}
+}
+
+func TestMetadataBackgroundAndCommentChecks(t *testing.T) {
+	repo := &metadataTestRepo{}
+	handler := Handler(repo)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest("GET", "/api/tasks/TSK-1/attachments", nil))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("attachments: %d: %s", response.Code, response.Body.String())
+	}
+	response = httptest.NewRecorder()
+	request := httptest.NewRequest("POST", "/api/tasks/TSK-1/comments", strings.NewReader(`{"body":"Test comment"}`))
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("comment: %d: %s", response.Code, response.Body.String())
+	}
+	if repo.payloadCalls != 0 {
+		t.Fatalf("metadata checks read payloads: %d", repo.payloadCalls)
 	}
 }
 

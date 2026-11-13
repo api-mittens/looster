@@ -5,7 +5,10 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -58,11 +61,24 @@ func TestPayloadLayoutPlanProbe(t *testing.T) {
 				return err
 			}
 			writeTime := time.Since(started)
+			var files, fileBytes, minBytes, maxFileBytes int64
+			if err := conn.QueryRowContext(ctx, `SELECT count(*),coalesce(sum(data_file_size_bytes),0)::BIGINT,coalesce(min(data_file_size_bytes),0)::BIGINT,coalesce(max(data_file_size_bytes),0)::BIGINT FROM ducklake_list_files('lake',?)`, name).Scan(&files, &fileBytes, &minBytes, &maxFileBytes); err != nil {
+				return err
+			}
+			t.Logf("Layout %s. Files %d. Stored file bytes %d. Minimum file bytes %d. Maximum file bytes %d.", layout, files, fileBytes, minBytes, maxFileBytes)
 			_, indexErr := conn.ExecContext(ctx, `CREATE INDEX `+name+`_key ON lake.main.`+name+`(payload_key)`)
 			t.Logf("Layout %s. Rows 8192. Payload bytes 8388608. Write time %s. Index supported: %t. Error category: %s.", layout, writeTime, indexErr == nil, nativeErrorCategory(indexErr))
+			if indexErr != nil {
+				t.Logf("Disposable index probe result: %s", indexErr)
+			}
 			query := `SELECT payload_key,payload FROM lake.main.` + name + ` WHERE payload_key IN (?,?,?)`
 			args := []any{keys[0], keys[1], keys[2]}
 			for attempt := 0; attempt < 2; attempt++ {
+				profilePath := filepath.Join(t.TempDir(), "profile.json")
+				if _, err := conn.ExecContext(ctx, "SET enable_profiling='json'; SET profiling_output="+quote(profilePath)); err != nil {
+					t.Logf("Disposable profiling setup result: %s", err)
+					return err
+				}
 				started = time.Now()
 				rows, err := conn.QueryContext(ctx, query, args...)
 				if err != nil {
@@ -92,6 +108,21 @@ func TestPayloadLayoutPlanProbe(t *testing.T) {
 					return fmt.Errorf("unexpected probe row count: %d", count)
 				}
 				t.Logf("Layout %s. Read %d. Rows %d. Time %s.", layout, attempt+1, count, time.Since(started))
+				if _, err := conn.ExecContext(ctx, "PRAGMA disable_profiling"); err != nil {
+					return err
+				}
+				profileBytes, err := os.ReadFile(profilePath)
+				if err != nil {
+					return err
+				}
+				var profile struct {
+					BytesRead   uint64 `json:"total_bytes_read"`
+					RowsScanned uint64 `json:"cumulative_rows_scanned"`
+				}
+				if err := json.Unmarshal(profileBytes, &profile); err != nil {
+					return err
+				}
+				t.Logf("Layout %s. Read %d. Native bytes read %d. Native rows scanned %d.", layout, attempt+1, profile.BytesRead, profile.RowsScanned)
 			}
 			rows, err := conn.QueryContext(ctx, `EXPLAIN ANALYZE `+query, args...)
 			if err != nil {
@@ -120,6 +151,9 @@ func TestPayloadLayoutPlanProbe(t *testing.T) {
 		}
 		_, keyErr := conn.ExecContext(ctx, `CREATE TABLE lake.main.probe_primary_key(payload_key VARCHAR PRIMARY KEY,payload BLOB)`)
 		t.Logf("Primary key supported: %t. Error category: %s.", keyErr == nil, nativeErrorCategory(keyErr))
+		if keyErr != nil {
+			t.Logf("Disposable primary key probe result: %s", keyErr)
+		}
 		return nil
 	})
 	if err != nil {

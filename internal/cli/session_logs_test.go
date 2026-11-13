@@ -162,6 +162,16 @@ func (r *cliLogRepo) RunSessionLogs(context.Context, int64) ([]agent.SessionLog,
 	return []agent.SessionLog{}, nil
 }
 func (r *cliLogRepo) Task(context.Context, int64) (task.Task, error) { return task.Task{ID: 3}, nil }
+func (r *cliLogRepo) TaskMetadata(ctx context.Context, id int64) (task.Task, error) {
+	return r.Task(ctx, id)
+}
+func (*cliLogRepo) TasksMetadata(context.Context) ([]task.Task, error) { return nil, nil }
+func (*cliLogRepo) SessionsMetadata(context.Context, string) ([]agent.Session, error) {
+	return nil, nil
+}
+func (*cliLogRepo) TaskPayloadDetail(context.Context, int64, int64, int) (task.Task, []agent.Session, []agent.SessionRun, error) {
+	return task.Task{}, nil, nil, app.ErrSessionHistoryUnavailable
+}
 func (r *cliLogRepo) SessionRun(_ context.Context, id int64) (agent.SessionRun, error) {
 	if id != 9 {
 		return agent.SessionRun{}, app.ErrNotFound

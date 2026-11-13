@@ -84,6 +84,44 @@ The existing payload table creation uses `bucket(256, payload_key)`.
 Existing catalogs keep their current partition layout.
 The production SQL reader requests only `payload_key` and `payload`.
 It uses parameterized key predicates and chunks of at most 512 keys.
+The bounded reader also selects payload length. It does not return an oversized
+BLOB chunk to the Go application. A task payload response has an 8 MiB text
+budget, at most 200 sessions, and bounded run and log pages.
+The checksum check applies before the API returns payload text.
+
+`TestPayloadLayoutPlanProbe` uses the pinned engine and extension in a disposable
+catalog. It inserted 8,192 rows with 8 MiB of repeated payload text for each
+layout. It requested three SHA-256 keys with the production `IN` query shape.
+`CREATE INDEX` returned `DuckLake does not support indexes`.
+The primary-key probe returned that PRIMARY KEY/UNIQUE constraints are not
+supported. `SET SORTED BY (payload_key)` succeeded in this version.
+
+| Layout | Stored files | Stored file bytes | Files read in plan | Table scan rows | First native bytes read | Second native bytes read |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| No partition | 1 | 550,565 | 1 | 8,192 | 1,951 | 0 |
+| 256 key buckets | 256 | 994,012 | 256 | 8,192 | 494,080 | 0 |
+| Sorted by key | 1 | 507,243 | 1 | 8,192 | 1,951 | 0 |
+
+The bucket files were 3,000 to 4,768 bytes each.
+The plans did not prune the bucket files for this `IN` predicate.
+The cumulative native scan counter was 81,920 for each profiled query.
+That aggregate counter is not the table scan operator's 8,192-row count.
+The first and second profiled reads took 2.549/2.009 ms for the plain layout,
+8.036/5.793 ms for the bucket layout, and 2.313/1.883 ms for the sorted layout.
+These are local cached-process readings. They are not cold S3 IO measurements.
+The native byte counters are not total OS or network byte counters.
+The repeated payload text compresses well and does not represent all task logs.
+
+The probe shows a small-file cost in the existing 256-bucket layout.
+It does not justify an automatic production layout change.
+A safe follow-up must measure the production file distribution first.
+Use a disposable catalog copy with representative payload sizes and key counts.
+Compare equality, `IN`, sorting, and supported compaction on that copy.
+Check file pruning and byte counters for both new and existing files.
+Before any production rewrite, record the catalog snapshot and all key/checksum
+pairs. Keep payload keys and PostgreSQL references unchanged. Test old and new
+readers, concurrent writes, restart, and rollback on the copy. Obtain approval
+for a separate migration. This PR performs none of those production changes.
 
 Read-only `EXPLAIN (ANALYZE, BUFFERS)` probes for TSK-80 found these paths:
 
@@ -111,6 +149,51 @@ Race checks passed for blocked reads with concurrent commits and safe close,
 group commit, delayed writes, cancellation, and close behavior.
 The payload checksum and committed-write paths remain in use.
 
+The full project suite passed with a disposable PostgreSQL URL and `-count=1`.
+The Node suite passed 43 tests. The lazy web storage race tests passed.
+The default full project suite also passed without the database test variable.
+Tests with other opt-in settings can still be skipped by that default command.
+
+`TestTaskPayloadHTTPIntegration` passed with real PostgreSQL, the native
+DuckLake engine, and the loopback S3 fixture. It created its own database and
+removed that database after the test. It used 205 runs and 205 logs for one
+task, plus a different task with a different payload key.
+
+- Initial metadata reads used zero payload reader calls.
+- Metadata still returned while the payload reader failed or was held open.
+- The first task detail metadata response took 0.420 ms in the local fixture.
+- Full payload responses took 6.416 ms and 5.699 ms. Each returned 50 runs,
+  200 logs, and one session. Each response was 60,755 bytes.
+- Each full payload response used one bounded batch call with one deduplicated
+  key and zero single-key reads. The 302 reference fields shared that key.
+- The one-key native read fits in one SQL query chunk. No unrelated task key
+  reached the payload reader. The 600-key unit test crosses the 512-key chunk
+  boundary and checks the byte budget across chunks.
+- Independent run and log cursors excluded the prior records.
+- A native payload write and an agent session-log append completed while HTTP
+  reads continued. A separate process read both the original committed payload
+  and the new committed payload from the shared catalog and S3 fixture.
+- The S3 fixture observed GET: 8, PUT: 3, and ranged GET: 8.
+
+These timings separate HTTP metadata completion from full payload completion.
+They do not measure browser paint. The fixture has repeated short payload text.
+It is not a production latency or large-payload benchmark.
+
+## Requirement map
+
+The final route audit also changed attachment lookup, session-log task lookup,
+and comment creation checks to metadata reads. An HTTP test uses a repository
+that rejects full task reads. Attachment lookup reports the missing object store,
+and comment creation succeeds with zero payload calls.
+
+| Requirement | Observed result | Remaining limit |
+| --- | --- | --- |
+| 1. PostgreSQL-only initial metadata | Public HTTP checks pass with no payload reader, with a failed reader, and with a delayed reader. List and graph retain PostgreSQL signal identities. Namespace startup is lazy. | Browser first paint is not measured. |
+| 2. Separate section loading | The Node suite checks pending states, empty states, error/retry, retained content, task switching, cancellation, and reduced-motion CSS. | Actual animation, focus, and layout need the built-in browser. |
+| 3. Selective bounded reads | The real HTTP fixture returns bounded pages with one deduplicated batch and no unrelated key. Byte-limit, checksum, 600-key chunk, and history cursor tests pass. | Production payload completion time is not measured. |
+| 4. Supported layout and lookup options | Pinned runtime probes reject indexes and primary keys, accept sorting, and record file counts, sizes, plans, and native byte counters. PostgreSQL lookup plans are recorded above. | Production file distribution and cold S3 IO remain open. No production layout change was made. |
+| 5. Write and visibility safety | Immutable payload tests, committed writes, concurrent agent log writes and HTTP reads, a separate reader process, and close/cancellation race checks pass. | The S3 fixture does not establish real-cloud IAM/TLS behavior. |
+
 ## External validation limits
 
 Built-in browser automation could not start Brave.
@@ -118,7 +201,7 @@ The browser tool reported that Brave was not running.
 The normal open tool then reported that browser launch was suppressed by the harness.
 No browser bridge was installed, and no other browser driver was used.
 Browser paint time, actual animation, focus retention, and layout remain unverified.
-Full payload completion time and controlled cold-cache timings remain unverified.
+Production full payload completion time and controlled cold-cache timings remain unverified.
 Production S3 byte counts, production small-file distribution, and production
 query plans are not established by the local fixture.
 Do not treat the local tests as full acceptance of these checks.
