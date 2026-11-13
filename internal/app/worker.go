@@ -307,7 +307,7 @@ func (s *Service) process(ctx context.Context, c WorkerConfig, lease Lease) {
 					case <-watchCtx.Done():
 						return
 					case <-tick.C:
-						taskState, checkErr := s.Repo.Task(watchCtx, j.TaskID)
+						taskState, checkErr := s.taskControlState(watchCtx, j.TaskID)
 						if checkErr == nil && taskState.Status == task.Closed {
 							stopWatch(ErrTaskClosed)
 							return
@@ -347,7 +347,7 @@ func (s *Service) process(ctx context.Context, c WorkerConfig, lease Lease) {
 			return
 		}
 		if j.TaskID > 0 {
-			taskState, checkErr := s.Repo.Task(ctx, j.TaskID)
+			taskState, checkErr := s.taskControlState(ctx, j.TaskID)
 			if checkErr != nil {
 				err = checkErr
 				return
@@ -386,6 +386,22 @@ func (s *Service) process(ctx context.Context, c WorkerConfig, lease Lease) {
 	err = lease.Complete(ctx)
 	telemetry.operation(ctx, "complete", completeStart, err, true)
 }
+
+// taskControlState avoids hydrating payloads for ongoing cancellation and status
+// checks. Prompt preparation deliberately keeps the full Task read.
+func (s *Service) taskControlState(ctx context.Context, id int64) (task.Task, error) {
+	if repo, ok := s.Repo.(interface {
+		TaskMetadata(context.Context, int64) (task.Task, error)
+	}); ok {
+		state, err := repo.TaskMetadata(ctx, id)
+		if !errors.Is(err, ErrSessionHistoryUnavailable) {
+			return state, err
+		}
+		// Permission wrappers expose optional methods even for legacy stores.
+	}
+	return s.Repo.Task(ctx, id)
+}
+
 func (s *Service) prompt(ctx context.Context, name string, t task.Task) (string, error) {
 	expanded, e := ExpandTaskContext(ctx, s.Repo, t, name)
 	if e != nil {

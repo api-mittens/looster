@@ -14,13 +14,34 @@ const sessionRunColumns = `job_id,task_id,context_task_id,agent_name,session_id,
 // SessionHistory returns newest jobs first. Zero filters mean all tasks/agents;
 // beforeJobID is an exclusive cursor. Limits are bounded independently of callers.
 func (s *Store) SessionHistory(ctx context.Context, name string, taskID, beforeJobID int64, limit int) ([]agent.SessionRun, error) {
+	return s.sessionHistory(ctx, name, taskID, beforeJobID, limit, false)
+}
+
+// SessionHistoryMetadata returns run metadata without payload text or logs.
+func (s *Store) SessionHistoryMetadata(ctx context.Context, name string, taskID, beforeJobID int64, limit int) ([]agent.SessionRun, error) {
+	return s.sessionHistory(ctx, name, taskID, beforeJobID, limit, true)
+}
+
+func (s *Store) sessionHistory(ctx context.Context, name string, taskID, beforeJobID int64, limit int, metadataOnly bool) ([]agent.SessionRun, error) {
+	return s.sessionHistoryRead(ctx, name, taskID, beforeJobID, limit, metadataOnly, true)
+}
+
+func (s *Store) sessionHistoryRead(ctx context.Context, name string, taskID, beforeJobID int64, limit int, metadataOnly, hydrate bool) ([]agent.SessionRun, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	if limit > 200 {
-		limit = 200
+	maxLimit := 200
+	if !metadataOnly && !hydrate {
+		maxLimit = 201
 	}
-	rows, err := s.Pool.Query(ctx, `SELECT `+sessionRunColumns+` FROM agent_session_runs WHERE ($1='' OR agent_name=$1) AND ($2::bigint=0 OR task_id=$2 OR context_task_id=$2) AND ($3::bigint=0 OR job_id<$3) ORDER BY job_id DESC LIMIT $4`, name, taskID, beforeJobID, limit)
+	if limit > maxLimit {
+		limit = maxLimit
+	}
+	columns := sessionRunColumns
+	if metadataOnly {
+		columns = `job_id,task_id,context_task_id,agent_name,session_id,started_at,finished_at,outcome,''::text,summary_status,''::text`
+	}
+	rows, err := s.Pool.Query(ctx, `SELECT `+columns+` FROM agent_session_runs WHERE ($1='' OR agent_name=$1) AND ($2::bigint=0 OR task_id=$2 OR context_task_id=$2) AND ($3::bigint=0 OR job_id<$3) ORDER BY job_id DESC LIMIT $4`, name, taskID, beforeJobID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -37,11 +58,14 @@ func (s *Store) SessionHistory(ctx context.Context, name string, taskID, beforeJ
 		return nil, err
 	}
 	rows.Close()
+	if metadataOnly || !hydrate {
+		return out, nil
+	}
 	ids := make([]int64, len(out))
 	for i := range out {
 		ids[i] = out[i].JobID
 	}
-	logs, err := s.sessionLogsForIDs(ctx, "job_id", ids)
+	logs, err := s.sessionLogsForIDsRead(ctx, "job_id", ids, false)
 	if err != nil {
 		return nil, err
 	}
@@ -51,6 +75,9 @@ func (s *Store) SessionHistory(ctx context.Context, name string, taskID, beforeJ
 	values := []*string{}
 	for i := range out {
 		values = append(values, &out[i].Summary, &out[i].Error)
+		for j := range out[i].Logs {
+			values = append(values, &out[i].Logs[j].Body)
+		}
 	}
 	if err := s.hydrateStrings(ctx, values); err != nil {
 		return nil, err

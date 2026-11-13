@@ -20,6 +20,79 @@ type PayloadStore interface {
 
 const payloadPrefix = "looster-payload:v1:"
 
+// ErrTaskPayloadLimit identifies detail text that is too large for one response.
+var ErrTaskPayloadLimit = errors.New("task payload text exceeds byte limit")
+
+// TaskPayloadMaxBytes limits decoded text. Repeated text counts each time.
+const TaskPayloadMaxBytes int64 = 8 << 20
+
+func (s *Store) hydrateDetailStrings(ctx context.Context, values []*string) error {
+	keys := []string{}
+	seen := map[string]bool{}
+	var inline int64
+	for _, value := range values {
+		if !isPayloadReference(*value) {
+			inline += int64(len(*value))
+			continue
+		}
+		key := strings.TrimPrefix(*value, payloadPrefix)
+		if !seen[key] {
+			seen[key] = true
+			keys = append(keys, key)
+		}
+	}
+	if inline > TaskPayloadMaxBytes {
+		return ErrTaskPayloadLimit
+	}
+	data := map[string][]byte{}
+	if len(keys) > 0 {
+		if s.payloads == nil {
+			return errors.New("DuckLake payload reader is required")
+		}
+		var err error
+		if batch, ok := s.payloads.(interface {
+			GetManyBounded(context.Context, []string, int64) (map[string][]byte, error)
+		}); ok {
+			data, err = batch.GetManyBounded(ctx, keys, TaskPayloadMaxBytes-inline)
+		} else if batch, ok := s.payloads.(interface {
+			GetMany(context.Context, []string) (map[string][]byte, error)
+		}); ok {
+			data, err = batch.GetMany(ctx, keys)
+		} else {
+			for _, key := range keys {
+				data[key], err = s.payloads.Get(ctx, key)
+				if err != nil {
+					break
+				}
+			}
+		}
+		if err != nil {
+			return err
+		}
+	}
+	used := inline
+	for _, value := range values {
+		if !isPayloadReference(*value) {
+			continue
+		}
+		key := strings.TrimPrefix(*value, payloadPrefix)
+		body, ok := data[key]
+		if !ok || payloadKey(body) != key {
+			return errors.New("missing or corrupt DuckLake payload")
+		}
+		used += int64(len(body))
+		if used > TaskPayloadMaxBytes {
+			return ErrTaskPayloadLimit
+		}
+	}
+	for _, value := range values {
+		if isPayloadReference(*value) {
+			*value = string(data[strings.TrimPrefix(*value, payloadPrefix)])
+		}
+	}
+	return nil
+}
+
 func (s *Store) committedPayload(ctx context.Context, key string) ([]byte, error) {
 	if remote, ok := s.payloads.(interface {
 		GetCommitted(context.Context, string) ([]byte, error)
@@ -67,9 +140,14 @@ func (s *Store) hydrate(ctx context.Context, value string) (string, error) {
 }
 func (s *Store) hydrateStrings(ctx context.Context, values []*string) error {
 	keys := []string{}
+	seen := map[string]bool{}
 	for _, v := range values {
 		if isPayloadReference(*v) {
-			keys = append(keys, strings.TrimPrefix(*v, payloadPrefix))
+			key := strings.TrimPrefix(*v, payloadPrefix)
+			if !seen[key] {
+				keys = append(keys, key)
+				seen[key] = true
+			}
 		}
 	}
 	if len(keys) == 0 {

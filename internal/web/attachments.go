@@ -104,7 +104,7 @@ func registerAttachments(mux *http.ServeMux, repo Repository, objects app.Object
 			http.Error(w, "Invalid task ID", 400)
 			return
 		}
-		if _, err = repo.Task(r.Context(), id); err != nil {
+		if _, err = metadataTask(r.Context(), repo, id); err != nil {
 			attachmentError(w, err)
 			return
 		}

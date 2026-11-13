@@ -83,6 +83,64 @@ func (s lakePayloadSink) getMany(ctx context.Context, keys []string) (map[string
 	return result, err
 }
 
+// The window sum prevents oversized BLOB transfer to the Go driver.
+// Each query uses the bytes that remain after previous query chunks.
+func (s lakePayloadSink) getManyBounded(ctx context.Context, keys []string, maxBytes int64) (map[string][]byte, error) {
+	result := map[string][]byte{}
+	var readErr error
+	err := s.lake.withConn(ctx, "bounded payload query", func(ctx context.Context, conn *sql.Conn) error {
+		for start := 0; start < len(keys); start += 512 {
+			end := min(start+512, len(keys))
+			args := []any{maxBytes}
+			for _, key := range keys[start:end] {
+				args = append(args, key)
+			}
+			query := `SELECT payload_key,octet_length(payload),CASE WHEN sum(octet_length(payload)) OVER () <= ? THEN payload ELSE NULL END FROM lake.main.looster_payloads WHERE payload_key IN (` + strings.TrimSuffix(strings.Repeat("?,", end-start), ",") + `)`
+			rows, err := conn.QueryContext(ctx, query, args...)
+			if err != nil {
+				return err
+			}
+			for rows.Next() {
+				var key string
+				var size int64
+				var value []byte
+				if err = rows.Scan(&key, &size, &value); err != nil {
+					break
+				}
+				if size > maxBytes || (size > 0 && value == nil) {
+					err = ErrPayloadReadLimit
+					break
+				}
+				if old, ok := result[key]; ok && !bytes.Equal(old, value) {
+					err = ErrPayloadConflict
+					break
+				}
+				maxBytes -= size
+				result[key] = append([]byte{}, value...)
+			}
+			if err == nil {
+				err = rows.Err()
+			}
+			closeErr := rows.Close()
+			if err == nil {
+				err = closeErr
+			}
+			if err != nil {
+				readErr = err
+				return err
+			}
+		}
+		return nil
+	})
+	if errors.Is(readErr, ErrPayloadReadLimit) || errors.Is(readErr, ErrPayloadConflict) {
+		return nil, readErr
+	}
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // putBatch appends bounded input directly into the attached lake catalog. No
 // temporary table or SQL literal contains payload data. The session gate covers
 // validation, appender close (which flushes its last chunk), and commit together.

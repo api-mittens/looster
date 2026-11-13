@@ -149,6 +149,7 @@ func dashboardHandler(repo Repository, objects app.Objects, selected string) *ht
 	registerAgentRuns(mux, repo, write)
 	registerPerformance(mux, repo, write)
 	registerSessionLogs(mux, repo, write, decode)
+	registerTaskPayloads(mux, repo, write)
 	mux.HandleFunc("GET /api/manifests", func(w http.ResponseWriter, r *http.Request) {
 		manifests, ok := repo.(app.ManifestRepository)
 		if !ok {
@@ -190,7 +191,7 @@ func dashboardHandler(repo Repository, objects app.Objects, selected string) *ht
 			write(w, r, nil, err)
 			return
 		}
-		sessions, err := repo.Sessions(r.Context(), "")
+		sessions, err := metadataSessions(r.Context(), repo)
 		if err != nil {
 			write(w, r, nil, err)
 			return
@@ -257,7 +258,7 @@ func dashboardHandler(repo Repository, objects app.Objects, selected string) *ht
 	mux.HandleFunc("GET /api/board/list", listBoard(repo, write))
 	mux.HandleFunc("GET /api/palette/tasks", paletteTasks(repo, write))
 	mux.HandleFunc("GET /api/board", func(w http.ResponseWriter, r *http.Request) {
-		tasks, err := repo.Tasks(r.Context())
+		tasks, err := metadataTasks(r.Context(), repo)
 		if err != nil {
 			write(w, r, nil, err)
 			return
@@ -267,7 +268,7 @@ func dashboardHandler(repo Repository, objects app.Objects, selected string) *ht
 			write(w, r, nil, err)
 			return
 		}
-		sessions, err := repo.Sessions(r.Context(), "")
+		sessions, err := metadataSessions(r.Context(), repo)
 		if err != nil {
 			write(w, r, nil, err)
 			return
@@ -360,7 +361,7 @@ func dashboardHandler(repo Repository, objects app.Objects, selected string) *ht
 			http.Error(w, "Comment is required", 400)
 			return
 		}
-		if _, err := repo.Task(r.Context(), id); err != nil {
+		if _, err := metadataTask(r.Context(), repo, id); err != nil {
 			write(w, r, nil, err)
 			return
 		}
@@ -379,12 +380,12 @@ func dashboardHandler(repo Repository, objects app.Objects, selected string) *ht
 			http.Error(w, "Invalid task ID", 400)
 			return
 		}
-		t, err := repo.Task(r.Context(), id)
+		t, err := metadataTask(r.Context(), repo, id)
 		if err != nil {
 			write(w, r, nil, err)
 			return
 		}
-		sessions, err := repo.Sessions(r.Context(), "")
+		sessions, err := metadataSessions(r.Context(), repo)
 		if err != nil {
 			write(w, r, nil, err)
 			return
@@ -416,7 +417,7 @@ func dashboardHandler(repo Repository, objects app.Objects, selected string) *ht
 				return
 			}
 		}
-		if _, err = repo.Task(r.Context(), id); err != nil {
+		if _, err = metadataTask(r.Context(), repo, id); err != nil {
 			write(w, r, nil, err)
 			return
 		}

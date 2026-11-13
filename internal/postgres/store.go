@@ -52,6 +52,15 @@ func affected(tag pgconn.CommandTag, e error) error {
 	return nil
 }
 func (s *Store) Tasks(ctx context.Context) ([]task.Task, error) {
+	return s.tasks(ctx, false)
+}
+
+// TasksMetadata returns tasks and signal identities without log bodies.
+func (s *Store) TasksMetadata(ctx context.Context) ([]task.Task, error) {
+	return s.tasks(ctx, true)
+}
+
+func (s *Store) tasks(ctx context.Context, metadataOnly bool) ([]task.Task, error) {
 	rows, e := s.q.ListTasks(ctx)
 	if e != nil {
 		return nil, e
@@ -64,7 +73,12 @@ func (s *Store) Tasks(ctx context.Context) ([]task.Task, error) {
 	for i := range out {
 		ids[i] = out[i].ID
 	}
-	logs, e := s.sessionLogsForIDs(ctx, "task_id", ids)
+	var logs map[int64][]agent.SessionLog
+	if metadataOnly {
+		logs, e = s.taskSignalLogs(ctx, ids)
+	} else {
+		logs, e = s.sessionLogsForIDs(ctx, "task_id", ids)
+	}
 	if e != nil {
 		return nil, e
 	}
@@ -74,6 +88,16 @@ func (s *Store) Tasks(ctx context.Context) ([]task.Task, error) {
 	return out, nil
 }
 func (s *Store) Task(ctx context.Context, id int64) (task.Task, error) {
+	t, err := s.TaskMetadata(ctx, id)
+	if err != nil {
+		return t, err
+	}
+	t.SessionLogs, err = s.TaskSessionLogs(ctx, id)
+	return t, err
+}
+
+// TaskMetadata returns a task without session log bodies.
+func (s *Store) TaskMetadata(ctx context.Context, id int64) (task.Task, error) {
 	r, e := s.q.GetTask(ctx, id)
 	if e != nil {
 		return task.Task{}, repositoryError(e)
@@ -96,8 +120,7 @@ func (s *Store) Task(ctx context.Context, id int64) (task.Task, error) {
 		return t, e
 	}
 	rows.Close()
-	t.SessionLogs, e = s.TaskSessionLogs(ctx, id)
-	return t, e
+	return t, nil
 }
 func (s *Store) CreateTask(ctx context.Context, name, desc string, status task.Status, tags []string) (task.Task, error) {
 	if strings.TrimSpace(name) == "" {
@@ -350,12 +373,21 @@ func (s *Store) Sessions(ctx context.Context, name string) ([]agent.Session, err
 	return s.sessions(ctx, name, false)
 }
 
+// SessionsMetadata returns sessions without summaries or errors.
+func (s *Store) SessionsMetadata(ctx context.Context, name string) ([]agent.Session, error) {
+	return s.sessions(ctx, name, true)
+}
+
 // BoardSessions returns placement metadata without hydrating run summaries or errors.
 func (s *Store) BoardSessions(ctx context.Context) ([]agent.Session, error) {
 	return s.sessions(ctx, "", true)
 }
 
 func (s *Store) sessions(ctx context.Context, name string, metadataOnly bool) ([]agent.Session, error) {
+	return s.sessionsRead(ctx, name, metadataOnly, 0, true)
+}
+
+func (s *Store) sessionsRead(ctx context.Context, name string, metadataOnly bool, taskID int64, hydrate bool) ([]agent.Session, error) {
 	// Stored task sessions survive process crashes. Taskless runs instead use
 	// their durable job identity and disappear when processing finishes. Match
 	// Claim's lock identity, including notification jobs with a context task.
@@ -406,7 +438,18 @@ func (s *Store) sessions(ctx context.Context, name string, metadataOnly bool) ([
 		query += ` WHERE s.agent_name=$1`
 		args = append(args, name)
 	}
+	if taskID > 0 {
+		args = append(args, taskID)
+		if name != "" {
+			query += fmt.Sprintf(` AND s.task_id=$%d`, len(args))
+		} else {
+			query += ` WHERE s.task_id=$1`
+		}
+	}
 	query += ` ORDER BY s.task_id,s.agent_name,s.job_id`
+	if taskID > 0 {
+		query += ` LIMIT 200`
+	}
 	rows, e := s.Pool.Query(ctx, query, args...)
 	if e != nil {
 		return nil, e
@@ -424,6 +467,9 @@ func (s *Store) sessions(ctx context.Context, name string, metadataOnly bool) ([
 		return nil, err
 	}
 	rows.Close()
+	if !hydrate {
+		return out, nil
+	}
 	values := []*string{}
 	for i := range out {
 		values = append(values, &out[i].Summary, &out[i].Error)

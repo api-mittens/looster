@@ -39,7 +39,7 @@ func registerSessionLogs(mux *http.ServeMux, repo Repository, write func(http.Re
 		if unavailable(w) {
 			return
 		}
-		if _, err := repo.Task(r.Context(), id); err != nil {
+		if _, err := metadataTask(r.Context(), repo, id); err != nil {
 			write(w, r, nil, err)
 			return
 		}

@@ -8,6 +8,24 @@ const {taskSessionCardHTML} = await import('./board.mjs');
 const {renderMarkdown} = await import('./markdown.mjs');
 const card = source => taskSessionCardHTML({job_id:7,agent:'coder',summary:source});
 
+test('unloaded summaries show a loading state, not a missing summary',()=>{
+  const session={job_id:7,agent:'coder',status:'done',summary_status:'available'};
+  const pending=taskSessionCardHTML(session,{pending:true});
+  assert.match(pending,/Load summary\./);
+  assert.match(pending,/Load run error data\./);
+  assert.doesNotMatch(pending,/No run error recorded/);
+  assert.match(pending,/loading-placeholder/);
+  assert.doesNotMatch(pending,/No summary recorded|>missing</);
+  const error=taskSessionCardHTML(session,{unavailable:true});
+  assert.match(error,/Cannot load summary/);
+  assert.match(error,/Cannot load run error data/);
+  assert.match(error,/data-payload-retry/);
+  const loaded=taskSessionCardHTML({...session,error:'<script>bad</script>'});
+  assert.match(loaded,/&lt;script&gt;bad&lt;\/script&gt;/);
+  assert.doesNotMatch(loaded,/<script>/);
+  assert.doesNotMatch(error,/loading-placeholder|No summary recorded/);
+});
+
 test('run summary uses shared Markdown while errors remain escaped plain text', () => {
   const summary = '# Result\n\n**Done** with `code`\n\n- tested\n\n```js\n<tag>\n```\n\n| A | B |\n| --- | --- |\n| x | y |';
   const run = {job_id:7,summary,error:'**not bold**\n<script>bad</script>'};

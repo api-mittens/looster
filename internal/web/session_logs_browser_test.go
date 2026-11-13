@@ -135,7 +135,7 @@ func TestSessionLogArrivalBrowser(t *testing.T) {
 		t.Skip("set LOOSTER_BROWSER_TEST=1")
 	}
 	var arrived atomic.Bool
-	var detailRequests atomic.Int32
+	var payloadRequests atomic.Int32
 	// Each request owns its snapshot. Concurrent polling never races a shared map.
 	taskSnapshot := func() map[string]any {
 		logs := []any{map[string]any{"id": 1, "job_id": 9, "agent": "coder", "kind": "info", "body": "Existing log", "created_at": "2026-11-05T11:00:00Z"}}
@@ -158,8 +158,10 @@ func TestSessionLogArrivalBrowser(t *testing.T) {
 		case "/api/status", "/api/system", "/api/library":
 			data = map[string]any{}
 		case "/api/tasks/TSK-1":
-			detailRequests.Add(1)
-			data = map[string]any{"task": taskSnapshot(), "sessions": []any{}}
+			data = map[string]any{"task": map[string]any{"id": 1, "name": "Late log arrival", "status": "todo"}, "sessions": []any{}}
+		case "/api/tasks/TSK-1/payloads":
+			payloadRequests.Add(1)
+			data = map[string]any{"task": taskSnapshot(), "sessions": []any{}, "runs": []any{}}
 		case "/api/tasks/TSK-1/events":
 			if r.URL.Query().Get("after") == "0" {
 				data = []any{map[string]any{"id": 1, "body": "Before log", "created_at": "2026-11-05T10:00:00Z"}, map[string]any{"id": 2, "body": "After log", "created_at": "2026-11-05T12:00:00Z"}}
@@ -182,25 +184,25 @@ func TestSessionLogArrivalBrowser(t *testing.T) {
 			t.Fatal(message)
 		}
 	}
-	if err := chromedp.Run(tab, chromedp.Navigate(server.URL+"/#board"), chromedp.WaitVisible("#toggle-stages"), chromedp.Click("#toggle-stages"), chromedp.Click(`task-card[data-id="1"] button`), chromedp.WaitVisible(`#task-comments .session-log`), chromedp.Evaluate(`(()=>{const draft=document.querySelector('#comment-form textarea');draft.value='Unsaved draft remains';draft.focus();draft.setSelectionRange(3,8);window.savedDraft=draft;window.savedComment=document.querySelector('[data-comment-id="1"]');})()`, nil)); err != nil {
+	if err := chromedp.Run(tab, chromedp.Navigate(server.URL+"/#board"), chromedp.WaitVisible("#toggle-stages"), chromedp.Click("#toggle-stages"), chromedp.Click(`task-card[data-id="1"] button`), chromedp.WaitVisible(`#task-logs .session-log`), chromedp.Poll(`document.querySelectorAll('#task-comments > *').length===2`, nil), chromedp.Evaluate(`(()=>{const draft=document.querySelector('#comment-form textarea');draft.value='Unsaved draft remains';draft.focus();draft.setSelectionRange(3,8);window.savedDraft=draft;window.savedComment=document.querySelector('[data-comment-id="1"]');})()`, nil)); err != nil {
 		t.Fatal(err)
 	}
-	check(`document.querySelectorAll('#task-comments > *').length===3&&!document.querySelector('#task-comments').textContent.includes('Arrived')&&document.activeElement===window.savedDraft`, "fixture must open before the new log exists and focus the unsaved draft")
+	check(`document.querySelectorAll('#task-comments > *').length===2&&!document.querySelector('#task-logs').textContent.includes('Arrived')&&document.activeElement===window.savedDraft`, "fixture must open before the new log exists and focus the unsaved draft")
 	arrived.Store(true)
-	// Wait for the actual refresh promise before inspecting the preserved dialog.
-	if err := chromedp.Run(tab, chromedp.Evaluate(`document.querySelector('looster-board').dataset.arrivalRefreshDone='false';document.querySelector('looster-board').refresh().then(()=>document.querySelector('looster-board').dataset.arrivalRefreshDone='true')`, nil), chromedp.Poll(`document.querySelector('looster-board').dataset.arrivalRefreshDone==='true'&&document.querySelectorAll('#task-comments .session-log').length===2`, nil, chromedp.WithPollingInterval(20*time.Millisecond))); err != nil {
+	// Wait for the refresh and its separate detail requests.
+	if err := chromedp.Run(tab, chromedp.Evaluate(`document.querySelector('looster-board').dataset.arrivalRefreshDone='false';document.querySelector('looster-board').refresh().then(async()=>{const board=document.querySelector('looster-board');while(board.detailBusy||board.payloadBusy||board.commentsBusy)await new Promise(resolve=>setTimeout(resolve,20));board.dataset.arrivalRefreshDone='true';})`, nil), chromedp.Poll(`document.querySelector('looster-board').dataset.arrivalRefreshDone==='true'&&document.querySelectorAll('#task-logs .session-log').length===2`, nil, chromedp.WithPollingInterval(20*time.Millisecond))); err != nil {
 		var state string
-		_ = chromedp.Run(tab, chromedp.Evaluate(`JSON.stringify({done:document.querySelector('looster-board').dataset.arrivalRefreshDone==='true',notice:document.querySelector('#notice').textContent,detailID:document.querySelector('looster-board').detailID,dialogOpen:document.querySelector('looster-board').dialog.open,timeline:document.querySelector('#task-comments')?.innerHTML})`, &state))
-		t.Fatalf("late arrival refresh: %v, detail requests=%d, browser=%s", err, detailRequests.Load(), state)
+		_ = chromedp.Run(tab, chromedp.Evaluate(`JSON.stringify({done:document.querySelector('looster-board').dataset.arrivalRefreshDone==='true',notice:document.querySelector('#notice').textContent,detailID:document.querySelector('looster-board').detailID,dialogOpen:document.querySelector('looster-board').dialog.open,comments:document.querySelector('#task-comments')?.innerHTML,logs:document.querySelector('#task-logs')?.innerHTML})`, &state))
+		t.Fatalf("late arrival refresh: %v, payload requests=%d, browser=%s", err, payloadRequests.Load(), state)
 	}
-	const arrivalState = `(()=>{const box=document.querySelector('#task-comments'),children=[...box.children],draft=document.querySelector('#comment-form textarea');return children.length===4&&children[0].textContent.includes('Before log')&&children[1].textContent.includes('Arrived <img')&&children[1].textContent.includes('future<kind>')&&children[1].textContent.includes('future-agent')&&children[2].textContent.includes('Existing log')&&children[3].textContent.includes('After log')&&box.querySelectorAll('[data-log-id="2"]').length===1&&!box.querySelector('img,future,script,[data-resolve-log]')&&document.querySelector('[data-comment-id="1"]')===window.savedComment&&draft===window.savedDraft&&draft.value==='Unsaved draft remains'&&document.activeElement===draft&&draft.selectionStart===3&&draft.selectionEnd===8&&!document.querySelector('task-card .signal-badge,task-card .task-blocked');})()`
-	check(arrivalState, "late unknown-kind log must insert chronologically and safely without signals, duplicates, lost draft, or changed focus/selection")
-	before := detailRequests.Load()
-	if err := chromedp.Run(tab, chromedp.Evaluate(`document.querySelector('looster-board').dataset.arrivalRefreshDone='false';document.querySelector('looster-board').refresh().then(()=>document.querySelector('looster-board').dataset.arrivalRefreshDone='true')`, nil), chromedp.Poll(`document.querySelector('looster-board').dataset.arrivalRefreshDone==='true'`, nil, chromedp.WithPollingInterval(20*time.Millisecond))); err != nil {
+	const arrivalState = `(()=>{const comments=[...document.querySelector('#task-comments').children],box=document.querySelector('#task-logs'),children=[...box.children],draft=document.querySelector('#comment-form textarea');return comments.length===2&&comments[0].textContent.includes('Before log')&&comments[1].textContent.includes('After log')&&children.length===2&&children[0].textContent.includes('Arrived <img')&&children[0].textContent.includes('future<kind>')&&children[0].textContent.includes('future-agent')&&children[1].textContent.includes('Existing log')&&box.querySelectorAll('[data-refresh-key="log:2"]').length===1&&!box.querySelector('img,future,script,[data-resolve-log]')&&document.querySelector('[data-comment-id="1"]')===window.savedComment&&draft===window.savedDraft&&draft.value==='Unsaved draft remains'&&document.activeElement===draft&&draft.selectionStart===3&&draft.selectionEnd===8&&!document.querySelector('task-card .signal-badge,task-card .task-blocked');})()`
+	check(arrivalState, "late unknown-kind log must insert chronologically in the log pane and safely without signals, duplicates, lost draft, or changed focus/selection")
+	before := payloadRequests.Load()
+	if err := chromedp.Run(tab, chromedp.Evaluate(`document.querySelector('looster-board').dataset.arrivalRefreshDone='false';document.querySelector('looster-board').refresh().then(async()=>{const board=document.querySelector('looster-board');while(board.detailBusy||board.payloadBusy||board.commentsBusy)await new Promise(resolve=>setTimeout(resolve,20));board.dataset.arrivalRefreshDone='true';})`, nil), chromedp.Poll(`document.querySelector('looster-board').dataset.arrivalRefreshDone==='true'`, nil, chromedp.WithPollingInterval(20*time.Millisecond))); err != nil {
 		t.Fatal(err)
 	}
-	if detailRequests.Load() <= before {
-		t.Fatal("duplicate check must exercise another actual task detail request")
+	if payloadRequests.Load() <= before {
+		t.Fatal("duplicate check must send another task payload request")
 	}
 	check(arrivalState, "repeated refresh must retain one copy of the late log and preserve draft focus")
 	if err := chromedp.Run(tab, chromedp.Evaluate(`document.querySelector('looster-board').dialog.close();location.hash='#graph'`, nil), chromedp.WaitVisible(`task-agent-graph [data-key="task:1"]`)); err != nil {
@@ -230,7 +232,9 @@ func TestSessionLogsBrowser(t *testing.T) {
 		case "/api/status", "/api/system", "/api/library":
 			data = map[string]any{}
 		case "/api/tasks/TSK-1":
-			data = map[string]any{"task": task, "sessions": []any{}}
+			data = map[string]any{"task": map[string]any{"id": 1, "name": "Log timeline", "status": "todo"}, "sessions": []any{}}
+		case "/api/tasks/TSK-1/payloads":
+			data = map[string]any{"task": task, "sessions": []any{}, "runs": []any{}}
 		case "/api/tasks/TSK-1/events":
 			if r.URL.Query().Get("after") == "0" {
 				data = []any{map[string]any{"id": 1, "body": "Before log", "created_at": "2026-11-05T10:00:00Z"}, map[string]any{"id": 2, "body": "After log", "created_at": "2026-11-05T12:00:00Z"}}
@@ -244,18 +248,18 @@ func TestSessionLogsBrowser(t *testing.T) {
 	tab, shutdown := newTestBrowser(t, ctx)
 	defer shutdown()
 	var valid bool
-	if err := chromedp.Run(tab, chromedp.Navigate(server.URL+"/#board"), chromedp.WaitVisible("#toggle-stages"), chromedp.Click("#toggle-stages"), chromedp.WaitVisible(`task-card[data-id="1"] button`), chromedp.Click(`task-card[data-id="1"] button`), chromedp.WaitVisible(`#task-comments .session-log`), chromedp.Evaluate(`(()=>{const box=document.querySelector('#task-comments');const children=[...box.children];return children.length===3&&children[0].textContent.includes('Before log')&&children[1].textContent.includes('Historical <img')&&children[1].textContent.includes('coder')&&children[2].textContent.includes('After log')&&!box.querySelector('img')&&!box.querySelector('[data-resolve-log]');})()`, &valid)); err != nil {
+	if err := chromedp.Run(tab, chromedp.Navigate(server.URL+"/#board"), chromedp.WaitVisible("#toggle-stages"), chromedp.Click("#toggle-stages"), chromedp.WaitVisible(`task-card[data-id="1"] button`), chromedp.Click(`task-card[data-id="1"] button`), chromedp.WaitVisible(`#task-logs .session-log`), chromedp.Poll(`document.querySelectorAll('#task-comments > *').length===2`, nil), chromedp.Evaluate(`(()=>{const box=document.querySelector('#task-logs'),comments=[...document.querySelector('#task-comments').children];const children=[...box.children];return comments.length===2&&comments[0].textContent.includes('Before log')&&comments[1].textContent.includes('After log')&&children.length===1&&children[0].textContent.includes('Historical <img')&&children[0].textContent.includes('coder')&&!document.querySelector('#task-comments .session-log')&&!box.querySelector('img')&&!box.querySelector('[data-resolve-log]');})()`, &valid)); err != nil {
 		t.Fatal(err)
 	}
 	if !valid {
-		t.Fatal("logs must interleave chronologically, remain safe and read-only")
+		t.Fatal("logs must render separately from chronological comments, remain safe and read-only")
 	}
 	// Repeated polling must preserve unique log/comment identities and their ordering.
-	if err := chromedp.Run(tab, chromedp.Evaluate(`document.querySelector('looster-board').loadDetail(1)`, nil), chromedp.Evaluate(`document.querySelectorAll('#task-comments .session-log').length===1&&document.querySelectorAll('#task-comments > *').length===3`, &valid)); err != nil {
+	if err := chromedp.Run(tab, chromedp.Evaluate(`(async()=>{const board=document.querySelector('looster-board');await board.loadDetail(1);while(board.detailBusy||board.payloadBusy||board.commentsBusy)await new Promise(resolve=>setTimeout(resolve,20));})()`, nil, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }), chromedp.Evaluate(`document.querySelectorAll('#task-logs .session-log').length===1&&document.querySelectorAll('#task-comments > *').length===2`, &valid)); err != nil {
 		t.Fatal(err)
 	}
 	if !valid {
-		t.Fatal("refresh duplicated timeline entries")
+		t.Fatal("refresh duplicated separate log/comment entries")
 	}
 	if err := chromedp.Run(tab, chromedp.Evaluate(`document.querySelector('looster-board').dialog.close();location.hash='#graph'`, nil), chromedp.WaitVisible(`.tg-task-signal`), chromedp.Evaluate(`(()=>{const el=document.querySelector('task-agent-graph');el.settle();const m=el.querySelector('[data-key="task:1"] .tg-task-signal'),x=m.transform.baseVal.getItem(0).matrix.e,y=m.transform.baseVal.getItem(0).matrix.f;return el.graph.edges.length===0&&m.textContent.includes('⚠️')&&x>0&&y<0&&Math.abs(Math.hypot(x,y)-30)<.001;})()`, &valid)); err != nil {
 		t.Fatal(err)
@@ -270,10 +274,10 @@ func TestSessionLogsBrowser(t *testing.T) {
 	if err := chromedp.Run(tab, chromedp.Evaluate(`(()=>{const b=document.querySelector('.tg-task-signal-bg').getBoundingClientRect();return [b.x+b.width/2,b.y+b.height/2];})()`, &point)); err != nil {
 		t.Fatal(err)
 	}
-	if err := chromedp.Run(tab, chromedp.MouseClickXY(point[0], point[1]), chromedp.WaitVisible(`#task-comments .session-log`)); err != nil {
+	if err := chromedp.Run(tab, chromedp.MouseClickXY(point[0], point[1]), chromedp.WaitVisible(`#task-logs .session-log`)); err != nil {
 		t.Fatalf("clicking signal circle must open its task: %v", err)
 	}
-	if err := chromedp.Run(tab, chromedp.Evaluate(`document.querySelector('looster-board').dialog.close()`, nil), chromedp.Focus(`task-agent-graph [data-key="task:1"]`), chromedp.Evaluate(`document.querySelector('task-agent-graph [data-key="task:1"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))`, nil), chromedp.WaitVisible(`#task-comments .session-log`)); err != nil {
+	if err := chromedp.Run(tab, chromedp.Evaluate(`document.querySelector('looster-board').dialog.close()`, nil), chromedp.Focus(`task-agent-graph [data-key="task:1"]`), chromedp.Evaluate(`document.querySelector('task-agent-graph [data-key="task:1"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))`, nil), chromedp.WaitVisible(`#task-logs .session-log`)); err != nil {
 		t.Fatalf("task must remain keyboard actionable with signals: %v", err)
 	}
 }

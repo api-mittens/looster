@@ -20,8 +20,6 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       CGO_ENABLED: '1'
-      CC: '${{ github.workspace }}/scripts/static-cxx-cc.sh'
-      CGO_LDFLAGS: '-static-libgcc'
       LOOSTER_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/looster_test?sslmode=disable
     services:
       postgres:
@@ -50,11 +48,12 @@ jobs:
           bash scripts/check-release-archives_test.sh
           bash scripts/package-runtime-notices_test.sh
           go run ./scripts/licenses -check
-      - name: Build Cobra CLI and check native dependencies
+      - name: Build Cobra CLI
         run: |
           go build -trimpath -o bin/looster ./cmd/looster
-          bash scripts/check-native-deps.sh bin/looster linux
           bin/looster --help
+      - name: Test frontend state and pagination
+        run: node --test internal/web/static/*.test.mjs
       - name: Configure browser acceptance tests
         shell: bash
         run: |
@@ -109,10 +108,12 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-  # Build every supported platform on PRs, not just tags. CGO cannot be disabled
-  # or naively cross-compiled. Windows is not supported.
+  # Native packaging is release-only. Normal CI tests the application and builds
+  # one Linux CLI above, without waiting for four platform-specific runners.
   build:
-    name: Static DuckDB ${{ matrix.os }}/${{ matrix.arch }}
+    name: Release CLI ${{ matrix.os }}/${{ matrix.arch }}
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
     timeout-minutes: 120
     strategy:
       fail-fast: false

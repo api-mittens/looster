@@ -29,8 +29,8 @@ and publishes release assets and SHA-256 checksums.
 
 CI includes Go-driven Chromium browser acceptance tests and PostgreSQL integration
 tests before releasing. See [CI and browser integration](contributing.md#ci-and-browser-integration).
-A failed test run must not produce a release. No Node.js tests or frontend build
-are part of this workflow.
+A failed test run must not produce a release. The test job also runs the frontend
+Node.js state and pagination tests. No frontend build step is required.
 
 The release matrix is:
 
@@ -71,8 +71,10 @@ use the GNU/glibc environment, not musl or Alpine, and statically link the C++
 runtime. The resulting binary
 runs `--help`, and engine lifecycle and cold-cache signed extension tests run
 without a host DuckDB CLI. CI also runs an isolated PostgreSQL/S3 write/reopen
-harness, never production catalog cleanup. All four native jobs run on PRs as
-well as tags, and release publication requires exactly all four archives.
+harness, never production catalog cleanup. The four native packaging jobs run
+only for version tags, after the test job succeeds. Pull requests and ordinary
+branch builds run the complete test job with one normal Linux CLI build, not the
+release matrix. Release publication requires exactly all four archives.
 `scripts/check-release-archives.sh` rejects missing, empty or unexpected files
 before checksumming the exact four archive byte streams.
 
