@@ -9,7 +9,7 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-// Keep feature pushes from duplicating PR checks without disabling master or releases.
+// Branch pushes, including merges to master, must not duplicate PR checks.
 func TestCITriggerPolicy(t *testing.T) {
 	data, err := os.ReadFile("../../.github/workflows/ci.yml")
 	if err != nil {
@@ -28,8 +28,8 @@ func TestCITriggerPolicy(t *testing.T) {
 	if err := yaml.Unmarshal(data, &workflow); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(workflow.On["push"].Branches, []string{"master"}) {
-		t.Fatalf("push checks must only run on master: %v", workflow.On["push"].Branches)
+	if len(workflow.On["push"].Branches) != 0 {
+		t.Fatalf("branch pushes must not duplicate PR checks: %v", workflow.On["push"].Branches)
 	}
 	if !reflect.DeepEqual(workflow.On["push"].Tags, []string{"v*"}) {
 		t.Fatal("version tags must retain release CI")

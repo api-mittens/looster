@@ -62,7 +62,14 @@ existing application data. See [namespace tests](namespaces.md#integration-tests
 [CI](../.github/workflows/ci.yml) builds the real CLI, starts PostgreSQL, selects
 Chromium/Chrome, and runs `go test -count=1 -timeout=10m ./...` with both
 browser opt-ins enabled. It then runs `go vet ./...`. Tagged release builds depend
-on this test job succeeding.
+on this test job succeeding. Checks run for pull requests, version-tag pushes,
+and manual dispatch only. Branch pushes and merges to master do not rerun them.
+
+`TestTaskSessionLazyBrowser` was retired after intermittent refresh/DOM failures.
+Summary rendering, escaping, and progressive-loading state retain deterministic
+Node test coverage. Its browser-only mobile layout, focus, and multi-dialog
+interaction assertions are no longer a CI gate. Other browser integration tests
+remain enabled. Do not add fixed sleeps or automatic retries to hide failures.
 
 Two Go-driven browser workflows cover different boundaries:
 

@@ -72,9 +72,10 @@ runtime. The resulting binary
 runs `--help`, and engine lifecycle and cold-cache signed extension tests run
 without a host DuckDB CLI. CI also runs an isolated PostgreSQL/S3 write/reopen
 harness, never production catalog cleanup. The four native packaging jobs run
-only for version tags, after the test job succeeds. Pull requests and ordinary
-branch builds run the complete test job with one normal Linux CLI build, not the
-release matrix. Release publication requires exactly all four archives.
+only for version tags, after the test job succeeds. Pull requests and manual
+runs execute the complete test job with one normal Linux CLI build, not the
+release matrix. Branch pushes, including merges to master, do not trigger a
+second run. Release publication requires exactly all four archives.
 `scripts/check-release-archives.sh` rejects missing, empty or unexpected files
 before checksumming the exact four archive byte streams.
 
