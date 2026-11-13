@@ -1,4 +1,4 @@
-import {chronologicalEntries,sessionLogHTML} from './session-logs.mjs';
+import {chronologicalEntries,sessionLogHTML,sessionLogsHTML} from './session-logs.mjs';
 import {appendOutput} from './output.mjs';
 import {performanceHTML} from './performance.mjs';
 import {loadingHTML} from './loading.mjs';
@@ -77,7 +77,7 @@ class LoosterBoard extends HTMLElement {
       const active = document.activeElement;
       if(this.sessionReturnFocus?.isConnected && (!active || active === document.body || this.sessionDialog.contains(active))) this.sessionReturnFocus.focus({preventScroll:true});
     };
-    this.panel.onclick = e => { if(e.target.closest('[data-comments-retry]')) { this.loadComments(this.detailID,this.outputs); return; } if(e.target.closest('[data-detail-retry]')) { this.loadDetail(this.detailID); return; } if(e.target.closest('[data-payload-retry]')) { this.loadPayloads(this.detailID,this.outputs); return; } const card = e.target.closest('[data-task-session-job]'); if(card) this.openTaskSession(card.dataset.sessionAgent,card.dataset.taskSessionJob,card); };
+    this.panel.onclick = e => { if(e.target.closest('[data-task-logs-more],[data-task-logs-retry]')) { this.loadTaskLogs(this.detailID,this.outputs); return; } const runPage = e.target.closest('[data-task-runs-before]'); if(runPage) { this.loadPayloads(this.detailID,this.outputs,Number(runPage.dataset.taskRunsBefore)); return; } if(e.target.closest('[data-comments-retry]')) { this.loadComments(this.detailID,this.outputs); return; } if(e.target.closest('[data-detail-retry]')) { this.loadDetail(this.detailID); return; } if(e.target.closest('[data-payload-retry]')) { this.loadPayloads(this.detailID,this.outputs,this.payloadRetryBefore || 0); return; } const card = e.target.closest('[data-task-session-job]'); if(card) this.openTaskSession(card.dataset.sessionAgent,card.dataset.taskSessionJob,card); };
     this.panel.onchange = e => { if(e.target.id === 'task-status') this.changeStatus(e.target); };
     this.panel.onsubmit = async e => {
       if(e.target.id !== 'comment-form') return;
@@ -283,7 +283,7 @@ class LoosterBoard extends HTMLElement {
   focus() { const c = [...this.board.querySelectorAll('task-card')].find(c => c.dataset.key === this.selected); c?.querySelector('button').focus({preventScroll:true}); c?.scrollIntoView({block:'nearest',inline:'nearest'}); }
   highlight(id) { this.board.querySelectorAll('task-card').forEach(c => c.classList.toggle('linked',!!id && c.dataset.id === id)); }
   showHelp() { this.detailController?.abort(); this.agentInspection = null; this.detailID = null; this.lastG = 0; this.querySelector('#dialog-title').textContent = 'Keyboard shortcuts'; this.panel.innerHTML = '<p><kbd>h</kbd> / <kbd>l</kbd> or left / right: list columns</p><p><kbd>j</kbd> / <kbd>k</kbd> or down / up: tasks; scroll pages and dialogs</p><p><kbd>gg</kbd>: Graph · <kbd>gl</kbd>: List · <kbd>gs</kbd>: Servers · <kbd>gb</kbd>: Behaviours · <kbd>gp</kbd>: Performance</p><p><kbd>G</kbd>: last task / bottom of page; <kbd>gg</kbd> / <kbd>G</kbd> inside dialogs: top / bottom</p><p><kbd>Enter</kbd>: open task</p><p><kbd>n</kbd>: new task on List or Graph</p><p><kbd>:</kbd>: search everything · <kbd>/</kbd>: filter list or graph · <kbd>r</kbd>: refresh · <kbd>?</kbd>: help</p><p><kbd>Esc</kbd>: close details or clear search</p><p><kbd>Tab</kbd>: move through controls</p>'; this.dialog.showModal(); }
-  async open(id,agent = '') { this.detailController?.abort(); this.detailController = new AbortController(); this.detailQueued = false; this.commentsLoaded = false; this.commentsBusy = null; this.payloadBusy = null; this.payloadData = null; this.agentInspection = null; if(!this.dialog.open) this.returnFocus = document.activeElement; this.detailID = id; this.attachments = []; this.lastG = 0; this.cursor = 0; this.commentCursor = 0; this.comments = new Map(); this.outputs = new Map(); this.logAgent = agent; this.querySelector('#dialog-title').textContent = 'Loading…'; this.panel.innerHTML = '<div id="detail-notice" role="status">'+loadingHTML('Load task data.')+'</div>'; if(!this.dialog.open) this.dialog.showModal(); await this.loadDetail(id); }
+  async open(id,agent = '') { this.detailController?.abort(); this.detailController = new AbortController(); this.detailQueued = false; this.commentsLoaded = false; this.commentsBusy = null; this.payloadBusy = null; this.payloadData = null; this.payloadBefore = 0; this.payloadRetryBefore = 0; this.runCursors = [0]; this.payloadError = false; this.taskLogs = new Map(); this.logsLoaded = false; this.logsBusy = null; this.logsError = false; this.logCursor = 0; this.logsHasMore = false; this.agentInspection = null; if(!this.dialog.open) this.returnFocus = document.activeElement; this.detailID = id; this.attachments = []; this.lastG = 0; this.cursor = 0; this.commentCursor = 0; this.comments = new Map(); this.outputs = new Map(); this.logAgent = agent; this.querySelector('#dialog-title').textContent = 'Loading…'; this.panel.innerHTML = '<div id="detail-notice" role="status">'+loadingHTML('Load task data.')+'</div>'; if(!this.dialog.open) this.dialog.showModal(); await this.loadDetail(id); }
   async loadDetail(id) {
     const generation = this.outputs;
     if (this.detailBusy === generation) { this.detailQueued = true; return; }
@@ -293,7 +293,7 @@ class LoosterBoard extends HTMLElement {
       if (this.outputs !== generation || this.detailID !== id || !this.dialog.open) return;
       const title = `TSK-${id} · ${d.task.name}`;
       patchHTML(this.querySelector('#dialog-title'),esc(title));
-      if (!this.panel.querySelector('#task-status')) this.panel.innerHTML = '<div id="detail-notice" role="status"></div><div id="payload-notice" role="status"></div><div class="task-status-control"><label for="task-status">Status</label><select id="task-status" aria-label="Task status"><option value="planning">Planning</option><option value="todo">Todo</option><option value="validated">Validated</option><option value="closed">Closed</option></select><span id="status-error" class="form-error" role="alert"></span></div><div class="description markdown-body" id="task-description"></div><div id="description-attachments"></div><p id="attachment-notice" class="form-error" role="status"></p><div id="tag-context"></div><h3>Comments</h3><div id="comments-notice" role="status"></div><div id="task-comments"></div><form id="comment-form"><label>Add comment <textarea name="body" rows="3" required aria-describedby="comment-mention-hint"></textarea></label><p id="comment-mention-hint" class="muted">Mention @registered-agent to request a run on this task. Unknown agent names are ignored.</p>'+attachmentUploadHTML()+'<p class="form-error" role="alert"></p><button type="submit">Post comment</button></form><h3>Sessions</h3><div id="sessions"></div>';
+      if (!this.panel.querySelector('#task-status')) this.panel.innerHTML = '<div id="detail-notice" role="status"></div><div id="payload-notice" role="status"></div><div class="task-status-control"><label for="task-status">Status</label><select id="task-status" aria-label="Task status"><option value="planning">Planning</option><option value="todo">Todo</option><option value="validated">Validated</option><option value="closed">Closed</option></select><span id="status-error" class="form-error" role="alert"></span></div><div class="description markdown-body" id="task-description"></div><div id="description-attachments"></div><p id="attachment-notice" class="form-error" role="status"></p><div id="tag-context"></div><h3>Comments</h3><div id="comments-notice" role="status"></div><div id="task-comments"></div><form id="comment-form"><label>Add comment <textarea name="body" rows="3" required aria-describedby="comment-mention-hint"></textarea></label><p id="comment-mention-hint" class="muted">Mention @registered-agent to request a run on this task. Unknown agent names are ignored.</p>'+attachmentUploadHTML()+'<p class="form-error" role="alert"></p><button type="submit">Post comment</button></form><h3>Sessions</h3><div id="sessions"></div><h3>Run history</h3><div id="task-run-history"></div><div id="task-run-pagination" class="run-pagination"></div><h3>Session logs</h3><div id="task-logs-notice" role="status"></div><div id="task-logs"></div><div id="task-log-pagination" class="run-pagination"></div>';
       const statusSelect = this.panel.querySelector('#task-status');
       if(!statusSelect.disabled) { statusSelect.value = d.task.status; statusSelect.dataset.previous = d.task.status; }
       this.panel.querySelector('#detail-notice').textContent = '';
@@ -302,10 +302,7 @@ class LoosterBoard extends HTMLElement {
       const contextHTML = (d.context?.tags || []).map(t => `<details class="context-card" data-refresh-key="${esc(t.id ?? t.name)}"><summary>Tag: ${esc(t.name)} · ${(t.memories || []).length} memories</summary><pre>${esc(t.description)}</pre>${this.memoryHTML(t.memories)}</details>`).join('');
       patchHTML(this.panel.querySelector('#tag-context'),contextHTML);
       if(!this.commentsLoaded) patchHTML(this.panel.querySelector('#task-comments'),loadingHTML('Load comments.'));
-      patchHTML(this.panel.querySelector('#sessions'),(d.sessions || []).map(session => {
-        const saved = this.payloadData?.sessions?.find(item => item.job_id === session.job_id);
-        return taskSessionCardHTML(saved ? {...session,summary:saved.summary,short_summary:saved.short_summary,error:saved.error} : session);
-      }).join('') || '<p>No sessions yet.</p>');
+      this.renderTaskPayloadSections();
       if(!this.payloadData) patchHTML(this.panel.querySelector('#payload-notice'),loadingHTML('Load task content.'));
       void this.loadComments(id,generation);
       void this.loadPayloads(id,generation);
@@ -317,27 +314,85 @@ class LoosterBoard extends HTMLElement {
       }
     } finally { if(this.detailBusy === generation) { this.detailBusy = null; if(this.detailQueued) { this.detailQueued=false; queueMicrotask(() => this.loadDetail(id)); } } }
   }
-  async loadPayloads(id,generation) {
-    if(this.payloadBusy === generation) return;
-    this.payloadBusy = generation;
+  renderTaskPayloadSections() {
+    const data = this.payloadData, busy = !!this.payloadBusy || (!this.payloadData && !this.payloadError);
+    const stateHTML = label => this.payloadError && !busy ? '<p>Cannot load this section. <button type="button" data-payload-retry>Retry</button></p>' : loadingHTML(label);
+    const sessions = this.detailMetadata?.sessions || data?.sessions || [];
+    patchHTML(this.panel.querySelector('#sessions'),sessions.map(session => {
+      const saved = data?.sessions?.find(item => item.job_id === session.job_id);
+      const value = saved ? {...session,summary:saved.summary,short_summary:saved.short_summary,error:saved.error} : session;
+      return taskSessionCardHTML(value,{pending:!saved && busy,unavailable:!saved && !!this.payloadError && !busy});
+    }).join('') || '<p>No sessions yet.</p>');
+    patchHTML(this.panel.querySelector('#task-run-history'),data ? (data.runs || []).map(run => taskSessionCardHTML({...run,agent:run.agent || run.agent_name})).join('') || '<p>No runs recorded.</p>' : stateHTML('Load run history.'));
+    const cursors = this.runCursors || [0], previous = cursors.length > 1 ? cursors[cursors.length-2] : null;
+    const disabled = busy ? ' disabled' : '';
+    patchHTML(this.panel.querySelector('#task-run-pagination'),`${previous !== null ? `<button type="button" data-task-runs-before="${esc(previous)}"${disabled}>Previous runs</button>` : ''}${data?.has_more && Number(data.next_before_job_id) > 0 ? `<button type="button" data-task-runs-before="${esc(data.next_before_job_id)}"${disabled}>Next runs</button>` : ''}${busy && data ? '<span role="status">Load run history.</span>' : ''}`);
+    patchHTML(this.panel.querySelector('#task-logs'),this.logsLoaded || data ? sessionLogsHTML([...(this.taskLogs?.values() || [])]) || '<p>No logs recorded.</p>' : stateHTML('Load session logs.'));
+    patchHTML(this.panel.querySelector('#task-logs-notice'),this.logsError ? '<p>Cannot load session logs. <button type="button" data-task-logs-retry>Retry</button></p>' : this.logsBusy ? '<span role="status">Load session logs.</span>' : '');
+    patchHTML(this.panel.querySelector('#task-log-pagination'),this.logsHasMore && this.logCursor > 0 ? `<button type="button" data-task-logs-more${this.logsBusy ? ' disabled' : ''}>Load older logs</button>` : '');
+    this.panel.querySelector('#task-run-history').setAttribute?.('aria-busy',String(busy));
+    this.panel.querySelector('#sessions').setAttribute?.('aria-busy',String(busy));
+    this.panel.querySelector('#task-logs').setAttribute?.('aria-busy',String(!!this.logsBusy || (!this.logsLoaded && busy)));
+  }
+  async loadTaskLogs(id,generation) {
+    if(this.logsBusy === generation || !this.logCursor) return;
+    this.logsBusy = generation;
+    this.logsError = false;
+    this.renderTaskPayloadSections();
     const current = () => this.outputs === generation && this.detailID === id && this.dialog.open;
     try {
-      const payload = await this.api(`/api/tasks/TSK-${id}/payloads?limit=50`,undefined,false,this.detailController?.signal);
+      const before = this.logCursor, runBefore = this.payloadBefore || 0;
+      const data = await this.api(`/api/tasks/TSK-${id}/payloads?limit=50&log_limit=200&before_log_id=${encodeURIComponent(before)}${runBefore ? '&before_job_id='+encodeURIComponent(runBefore) : ''}`,undefined,false,this.detailController?.signal);
+      if(!current()) return;
+      this.taskLogs ||= new Map();
+      for(const log of data.task?.session_logs || data.session_logs || []) this.taskLogs.set(log.id,log);
+      this.logsLoaded = true;
+      this.logsHasMore = !!(data.logs_has_more ?? data.has_more_logs);
+      this.logCursor = Number(data.next_before_log_id) || 0;
+    } catch(error) {
+      if(current() && error.name !== 'AbortError') this.logsError = true;
+    } finally {
+      if(this.logsBusy === generation) { this.logsBusy = null; if(current()) this.renderTaskPayloadSections(); }
+    }
+  }
+  async loadPayloads(id,generation,before = this.payloadBefore || 0) {
+    if(this.payloadBusy === generation) return;
+    this.payloadBusy = generation;
+    this.payloadRetryBefore = before;
+    this.renderTaskPayloadSections();
+    const current = () => this.outputs === generation && this.detailID === id && this.dialog.open;
+    try {
+      const payload = await this.api(`/api/tasks/TSK-${id}/payloads?limit=50${before ? '&before_job_id='+encodeURIComponent(before) : ''}`,undefined,false,this.detailController?.signal);
       if(!current()) return;
       const d = payload;
       this.payloadData = payload;
+      this.payloadError = false;
+      this.payloadBefore = before;
+      this.runCursors ||= [0];
+      const index = this.runCursors.indexOf(before);
+      this.runCursors = index < 0 ? [...this.runCursors,before] : this.runCursors.slice(0,index+1);
+      this.taskLogs ||= new Map();
+      for(const log of d.task?.session_logs || d.session_logs || []) this.taskLogs.set(log.id,log);
+      if(!this.logsLoaded) {
+        this.logsHasMore = !!(d.logs_has_more ?? d.has_more_logs);
+        this.logCursor = Number(d.next_before_log_id) || 0;
+        this.logsLoaded = true;
+      }
       this.panel.querySelector('#payload-notice').textContent = '';
       if(d.task?.description !== undefined) patchHTML(this.panel.querySelector('#task-description'),renderMarkdown(d.task.description || 'No description.'));
       if(d.context) {
         const contextHTML = (d.context.tags || []).map(t => `<details class="context-card" data-refresh-key="${esc(t.id ?? t.name)}"><summary>Tag: ${esc(t.name)} · ${(t.memories || []).length} memories</summary><pre>${esc(t.description)}</pre>${this.memoryHTML(t.memories)}</details>`).join('');
         patchHTML(this.panel.querySelector('#tag-context'),contextHTML);
       }
-      if(d.sessions) patchHTML(this.panel.querySelector('#sessions'),d.sessions.map(taskSessionCardHTML).join('') || '<p>No sessions yet.</p>');
+      this.renderTaskPayloadSections();
       for(const comment of d.comments || []) this.comments.set(comment.id,comment);
       this.renderTaskComments(id);
     } catch(error) {
-      if(current() && error.name !== 'AbortError') patchHTML(this.panel.querySelector('#payload-notice'),'Cannot load task content. <button type="button" data-payload-retry>Retry</button>');
-    } finally { if(this.payloadBusy === generation) this.payloadBusy = null; }
+      if(current() && error.name !== 'AbortError') {
+        this.payloadError = true;
+        patchHTML(this.panel.querySelector('#payload-notice'),'Cannot load task content. <button type="button" data-payload-retry>Retry</button>');
+      }
+    } finally { if(this.payloadBusy === generation) { this.payloadBusy = null; if(current()) this.renderTaskPayloadSections(); } }
   }
   async loadComments(id,generation) {
     if(this.commentsBusy === generation) return;
@@ -365,7 +420,7 @@ class LoosterBoard extends HTMLElement {
       const d = this.payloadData || {};
       const commentBox = this.panel.querySelector('#task-comments');
       commentBox.querySelector('.loading-placeholder')?.remove();
-      const entries = chronologicalEntries([...this.comments.values()],d.session_logs || d.task?.session_logs || []);
+      const entries = chronologicalEntries([...this.comments.values()],[]);
       if(!entries.length && !this.commentsLoaded) { patchHTML(commentBox,loadingHTML('Load comments.')); return; }
       if(entries.length) commentBox.querySelector('.no-comments')?.remove();
       else if(!commentBox.firstChild) commentBox.innerHTML = '<p class="muted no-comments">No comments yet.</p>';

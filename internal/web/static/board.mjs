@@ -1,3 +1,4 @@
+import {loadingHTML} from './loading.mjs';
 import {renderMarkdown} from './markdown.mjs';
 
 const esc = v => String(v ?? '').replace(/[&<>"']/g,c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -9,11 +10,11 @@ export function boardAgentNames(agents, sessions) {
   const taskAgents = new Set(sessions.filter(s => !isTasklessSession(s)).map(s => s.agent));
   return [...new Set([...agents.map(a => a.name), ...sessions.map(s => s.agent)])].filter(n => n && (!standalone.has(n) || taskAgents.has(n))).sort();
 }
-export function taskSessionCardHTML(s) {
+export function taskSessionCardHTML(s, {pending = false, unavailable = false} = {}) {
   const outcome = s.status || s.outcome;
   const state = s.summary_status || (outcome === 'running' ? 'pending' : ['failed','interrupted'].includes(outcome) ? outcome : 'missing');
   const summary = String(s.short_summary || s.summary || '').slice(0,280) || ({pending:'Summary pending.',missing:'No summary recorded.',error:'Summary unavailable due to an error.',failed:'Run failed. No summary recorded.',interrupted:'Run interrupted. No summary recorded.'}[state]) || 'No summary recorded.';
-  return `<article class="session" data-refresh-key="job:${esc(s.job_id)}"><strong>${esc(s.agent)}</strong><span class="badge ${s.status === 'running' ? 'running' : ''}">${esc(s.status || s.outcome)}</span><code>Run ${esc(s.job_id)} · ${esc(s.session_id || 'Not started')}</code><span class="muted">${esc(state)}</span><button type="button" data-task-session-job="${esc(s.job_id)}" data-session-agent="${esc(s.agent)}" data-session-status="${esc(s.status || s.outcome)}"${!Number.isSafeInteger(Number(s.job_id)) || Number(s.job_id) < 1 ? ' disabled' : ''} aria-label="Inspect ${esc(s.agent)} run ${esc(s.job_id)}">Inspect run</button><div class="task-session-summary markdown-body">${renderMarkdown(summary)}</div></article>`;
+  return `<article class="session" data-refresh-key="job:${esc(s.job_id)}"><strong>${esc(s.agent)}</strong><span class="badge ${s.status === 'running' ? 'running' : ''}">${esc(s.status || s.outcome)}</span><code>Run ${esc(s.job_id)} · ${esc(s.session_id || 'Not started')}</code><span class="muted">${esc(pending ? 'Load summary.' : unavailable ? 'Cannot load summary.' : state)}</span><button type="button" data-task-session-job="${esc(s.job_id)}" data-session-agent="${esc(s.agent)}" data-session-status="${esc(s.status || s.outcome)}"${!Number.isSafeInteger(Number(s.job_id)) || Number(s.job_id) < 1 ? ' disabled' : ''} aria-label="Inspect ${esc(s.agent)} run ${esc(s.job_id)}">Inspect run</button><div class="task-session-summary markdown-body">${pending ? loadingHTML('Load summary.') : unavailable ? '<p>Cannot load summary. <button type="button" data-payload-retry>Retry</button></p>' : renderMarkdown(summary)}</div><h4>Run error</h4><div class="task-session-error">${pending ? loadingHTML('Load run error data.') : unavailable ? '<p>Cannot load run error data. <button type="button" data-payload-retry>Retry</button></p>' : s.error ? `<pre>${esc(s.error)}</pre>` : '<p class="muted">No run error recorded.</p>'}</div></article>`;
 }
 
 export function sessionCardHTML(s) {
