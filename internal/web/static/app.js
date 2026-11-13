@@ -283,7 +283,7 @@ class LoosterBoard extends HTMLElement {
   focus() { const c = [...this.board.querySelectorAll('task-card')].find(c => c.dataset.key === this.selected); c?.querySelector('button').focus({preventScroll:true}); c?.scrollIntoView({block:'nearest',inline:'nearest'}); }
   highlight(id) { this.board.querySelectorAll('task-card').forEach(c => c.classList.toggle('linked',!!id && c.dataset.id === id)); }
   showHelp() { this.detailController?.abort(); this.agentInspection = null; this.detailID = null; this.lastG = 0; this.querySelector('#dialog-title').textContent = 'Keyboard shortcuts'; this.panel.innerHTML = '<p><kbd>h</kbd> / <kbd>l</kbd> or left / right: list columns</p><p><kbd>j</kbd> / <kbd>k</kbd> or down / up: tasks; scroll pages and dialogs</p><p><kbd>gg</kbd>: Graph · <kbd>gl</kbd>: List · <kbd>gs</kbd>: Servers · <kbd>gb</kbd>: Behaviours · <kbd>gp</kbd>: Performance</p><p><kbd>G</kbd>: last task / bottom of page; <kbd>gg</kbd> / <kbd>G</kbd> inside dialogs: top / bottom</p><p><kbd>Enter</kbd>: open task</p><p><kbd>n</kbd>: new task on List or Graph</p><p><kbd>:</kbd>: search everything · <kbd>/</kbd>: filter list or graph · <kbd>r</kbd>: refresh · <kbd>?</kbd>: help</p><p><kbd>Esc</kbd>: close details or clear search</p><p><kbd>Tab</kbd>: move through controls</p>'; this.dialog.showModal(); }
-  async open(id,agent = '') { this.detailController?.abort(); this.detailController = new AbortController(); this.detailQueued = false; this.commentsLoaded = false; this.commentsBusy = null; this.payloadBusy = null; this.payloadData = null; this.payloadBefore = 0; this.payloadRetryBefore = 0; this.runCursors = [0]; this.payloadError = false; this.taskLogs = new Map(); this.logsLoaded = false; this.logsBusy = null; this.logsError = false; this.logCursor = 0; this.logsHasMore = false; this.agentInspection = null; if(!this.dialog.open) this.returnFocus = document.activeElement; this.detailID = id; this.attachments = []; this.lastG = 0; this.cursor = 0; this.commentCursor = 0; this.comments = new Map(); this.outputs = new Map(); this.logAgent = agent; this.querySelector('#dialog-title').textContent = 'Loading…'; this.panel.innerHTML = '<div id="detail-notice" role="status">'+loadingHTML('Load task data.')+'</div>'; if(!this.dialog.open) this.dialog.showModal(); await this.loadDetail(id); }
+  async open(id,agent = '') { this.detailController?.abort(); this.detailController = new AbortController(); this.detailQueued = false; this.commentsLoaded = false; this.commentsBusy = null; this.payloadBusy = null; this.payloadData = null; this.payloadBefore = 0; this.payloadRetryBefore = 0; this.runCursors = [0]; this.payloadError = false; this.taskLogs = new Map(); this.logPages = []; this.logsLoaded = false; this.logsBusy = null; this.logsError = false; this.logCursor = 0; this.logsHasMore = false; this.agentInspection = null; if(!this.dialog.open) this.returnFocus = document.activeElement; this.detailID = id; this.attachments = []; this.lastG = 0; this.cursor = 0; this.commentCursor = 0; this.comments = new Map(); this.outputs = new Map(); this.logAgent = agent; this.querySelector('#dialog-title').textContent = 'Loading…'; this.panel.innerHTML = '<div id="detail-notice" role="status">'+loadingHTML('Load task data.')+'</div>'; if(!this.dialog.open) this.dialog.showModal(); await this.loadDetail(id); }
   async loadDetail(id) {
     const generation = this.outputs;
     if (this.detailBusy === generation) { this.detailQueued = true; return; }
@@ -334,6 +334,32 @@ class LoosterBoard extends HTMLElement {
     this.panel.querySelector('#sessions').setAttribute?.('aria-busy',String(busy));
     this.panel.querySelector('#task-logs').setAttribute?.('aria-busy',String(!!this.logsBusy || (!this.logsLoaded && busy)));
   }
+  mergeTaskLogs(data,before = 0) {
+    const logs = data.task?.session_logs || data.session_logs || [];
+    this.taskLogs ||= new Map();
+    this.logPages ||= [];
+    const cursor = Number(data.next_before_log_id) || 0;
+    const hasMore = !!(data.logs_has_more ?? data.has_more_logs);
+    if(logs.length || before) {
+      const ids = logs.map(log => Number(log.id));
+      const page = {low:logs.length ? Math.min(...ids) : before,high:Math.max(before,...ids),cursor,hasMore};
+      // Preserve older progress on overlap, but expose disconnected newer ranges
+      // until paging bridges their gap to the previously loaded history.
+      this.logPages = this.logPages.filter(saved => {
+        if(page.low > saved.high || page.high < saved.low) return true;
+        if(saved.low < page.low || (saved.low === page.low && !before)) { page.cursor=saved.cursor; page.hasMore=saved.hasMore; }
+        page.low=Math.min(page.low,saved.low); page.high=Math.max(page.high,saved.high);
+        return false;
+      });
+      this.logPages.push(page);
+      this.logPages.sort((a,b) => b.high-a.high);
+    }
+    for(const log of logs) this.taskLogs.set(log.id,log);
+    const newest = this.logPages[0];
+    this.logCursor = newest?.cursor ?? cursor;
+    this.logsHasMore = newest?.hasMore ?? hasMore;
+    this.logsLoaded = true;
+  }
   async loadTaskLogs(id,generation) {
     if(this.logsBusy === generation || !this.logCursor) return;
     this.logsBusy = generation;
@@ -344,11 +370,7 @@ class LoosterBoard extends HTMLElement {
       const before = this.logCursor, runBefore = this.payloadBefore || 0;
       const data = await this.api(`/api/tasks/TSK-${id}/payloads?limit=50&log_limit=200&before_log_id=${encodeURIComponent(before)}${runBefore ? '&before_job_id='+encodeURIComponent(runBefore) : ''}`,undefined,false,this.detailController?.signal);
       if(!current()) return;
-      this.taskLogs ||= new Map();
-      for(const log of data.task?.session_logs || data.session_logs || []) this.taskLogs.set(log.id,log);
-      this.logsLoaded = true;
-      this.logsHasMore = !!(data.logs_has_more ?? data.has_more_logs);
-      this.logCursor = Number(data.next_before_log_id) || 0;
+      this.mergeTaskLogs(data,before);
     } catch(error) {
       if(current() && error.name !== 'AbortError') this.logsError = true;
     } finally {
@@ -371,19 +393,8 @@ class LoosterBoard extends HTMLElement {
       this.runCursors ||= [0];
       const index = this.runCursors.indexOf(before);
       this.runCursors = index < 0 ? [...this.runCursors,before] : this.runCursors.slice(0,index+1);
-      this.taskLogs ||= new Map();
-      for(const log of d.task?.session_logs || d.session_logs || []) this.taskLogs.set(log.id,log);
-      if(!this.logsLoaded) {
-        this.logsHasMore = !!(d.logs_has_more ?? d.has_more_logs);
-        this.logCursor = Number(d.next_before_log_id) || 0;
-        this.logsLoaded = true;
-      }
+      this.mergeTaskLogs(d);
       this.panel.querySelector('#payload-notice').textContent = '';
-      if(d.task?.description !== undefined) patchHTML(this.panel.querySelector('#task-description'),renderMarkdown(d.task.description || 'No description.'));
-      if(d.context) {
-        const contextHTML = (d.context.tags || []).map(t => `<details class="context-card" data-refresh-key="${esc(t.id ?? t.name)}"><summary>Tag: ${esc(t.name)} · ${(t.memories || []).length} memories</summary><pre>${esc(t.description)}</pre>${this.memoryHTML(t.memories)}</details>`).join('');
-        patchHTML(this.panel.querySelector('#tag-context'),contextHTML);
-      }
       this.renderTaskPayloadSections();
       for(const comment of d.comments || []) this.comments.set(comment.id,comment);
       this.renderTaskComments(id);

@@ -1,5 +1,5 @@
-// Review-only characterization checks for PR #36. No network or database access.
-// These assertions document the observed defects, not the desired behaviour.
+// Review regression checks for PR #36. No network or database access.
+// These assertions enforce the fixed paging and metadata ownership behaviour.
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
@@ -40,10 +40,10 @@ function harness() {
   board.api = async () => ({task: {session_logs: Array.from({length: 200}, (_, i) => ({id: 102 + i, body: 'log'}))}, sessions: [], runs: [], has_more_logs: true, next_before_log_id: 102});
   await board.loadPayloads(1, board.outputs);
   assert.equal(board.taskLogs.size, 200);
-  assert.equal(board.logCursor, 0);
-  assert.equal(board.logsHasMore, false);
-  assert.equal(node('#task-log-pagination').innerHTML, '');
-  console.log('CONFIRMED: refresh receives an older-log cursor but discards it, hiding older logs until the dialog is reopened.');
+  assert.equal(board.logCursor, 102);
+  assert.equal(board.logsHasMore, true);
+  assert.match(node('#task-log-pagination').innerHTML, /Load older logs/);
+  console.log('FIXED: refresh exposes the older-log cursor when new logs arrive.');
 }
 
 {
@@ -56,6 +56,6 @@ function harness() {
   node('#task-description').innerHTML = 'New description';
   resolve({task: {description: 'Old description', session_logs: []}, sessions: [], runs: []});
   await pending;
-  assert.equal(node('#task-description').innerHTML, 'Old description');
-  console.log('CONFIRMED: an older payload response overwrites a newer metadata description for the same task.');
+  assert.equal(node('#task-description').innerHTML, 'New description');
+  console.log('FIXED: an older payload response cannot overwrite the metadata-owned description.');
 }

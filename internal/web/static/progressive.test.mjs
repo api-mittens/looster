@@ -7,6 +7,7 @@ import {sessionLogsHTML} from './session-logs.mjs';
 
 const deferred = () => { let resolve, reject; const promise = new Promise((yes,no) => { resolve=yes; reject=no; }); return {promise,resolve,reject}; };
 const tick = () => new Promise(resolve => setImmediate(resolve));
+const logPage = (low,high,hasMore = true) => ({task:{session_logs:Array.from({length:high-low+1},(_,i)=>({id:low+i,body:'log'}))},logs_has_more:hasMore,next_before_log_id:hasMore ? low : 0});
 function harness() {
   const classes = new Map();
   const context = vm.createContext({HTMLElement:class {},customElements:{define:(name,type)=>classes.set(name,type)},AbortController,DOMException,queueMicrotask,loadingHTML,sessionLogsHTML,patchHTML:(node,html)=>{node.innerHTML=html;},renderMarkdown:value=>value,taskSessionCardHTML:(session,state={})=>JSON.stringify({...session,__pending:!!state.pending,__unavailable:!!state.unavailable}),attachmentUploadHTML:()=>'',chronologicalEntries:(comments,logs)=>[...comments,...logs],document:{activeElement:null}});
@@ -61,7 +62,7 @@ test('payload failures preserve completed content and allow retry',async()=>{
   assert.equal(board.payloadBusy,null);
   board.api=async()=>({task:{description:'New content'},comments:[],sessions:[]});
   await board.loadPayloads(1,board.outputs);
-  assert.equal(node('#task-description').innerHTML,'New content');
+  assert.equal(node('#task-description').innerHTML,'Saved content');
   assert.equal(node('#payload-notice').textContent,'');
 });
 
@@ -226,4 +227,54 @@ test('a late log page cannot change another task',async()=>{
   response.resolve({task:{session_logs:[{id:19,body:'Old task log'}]}}); await pending;
   assert.equal(board.taskLogs.size,0);
   assert.doesNotMatch(node('#task-logs').innerHTML,/Old task log/);
+});
+
+test('fresh payloads expose new older history after an initially empty response',async()=>{
+  const {board,node}=harness();
+  board.api=async()=>({task:{session_logs:[]},logs_has_more:false});
+  await board.loadPayloads(1,board.outputs);
+  board.api=async()=>logPage(102,301);
+  await board.loadPayloads(1,board.outputs);
+  assert.equal(board.logCursor,102);
+  assert.equal(board.logsHasMore,true);
+  assert.match(node('#task-log-pagination').innerHTML,/Load older logs/);
+});
+
+test('refresh preserves older progress and bridges new gaps without losing that progress',async()=>{
+  const {board,node}=harness();
+  const payload=async page=>{board.api=async()=>page;await board.loadPayloads(1,board.outputs);};
+  const older=async page=>{board.api=async()=>page;await board.loadTaskLogs(1,board.outputs);};
+  await payload(logPage(201,400));
+  await older(logPage(101,200));
+  await payload(logPage(251,450));
+  assert.equal(board.logCursor,101);
+  await payload(logPage(701,900));
+  assert.equal(board.logCursor,701);
+  assert.match(node('#task-log-pagination').innerHTML,/Load older logs/);
+  await older(logPage(501,700));
+  assert.equal(board.logCursor,501);
+  await older(logPage(301,500));
+  assert.equal(board.logCursor,101);
+  assert.equal(board.taskLogs.size,800);
+  await older(logPage(1,100,false));
+  await payload(logPage(751,950));
+  assert.equal(board.logCursor,0);
+  assert.equal(board.logsHasMore,false);
+  assert.equal(board.taskLogs.size,950);
+});
+
+test('slow payload metadata cannot overwrite newer detail descriptions or context',async()=>{
+  const {board,node}=harness(), slow=deferred();
+  board.api=()=>slow.promise;
+  const pending=board.loadPayloads(1,board.outputs);
+  board.api=path=>path==='/api/tasks/TSK-1'
+    ? Promise.resolve({task:{name:'Task',status:'todo',description:'New description'},context:{tags:[{name:'New tag',description:'New context',memories:[]}]},sessions:[]})
+    : new Promise(()=>{});
+  await board.loadDetail(1);
+  const context=node('#tag-context').innerHTML;
+  assert.match(context,/New context/);
+  slow.resolve({task:{description:'Old description',session_logs:[]},context:{tags:[]}});
+  await pending;
+  assert.equal(node('#task-description').innerHTML,'New description');
+  assert.equal(node('#tag-context').innerHTML,context);
 });
