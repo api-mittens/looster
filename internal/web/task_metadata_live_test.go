@@ -40,7 +40,4 @@ func TestLiveMetadataHTTP(t *testing.T) {
 			}
 		}
 	}
-	if os.Getenv("LOOSTER_METADATA_BROWSER_CHECK") == "1" {
-		time.Sleep(180 * time.Second)
-	}
 }

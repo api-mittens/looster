@@ -3,8 +3,10 @@ package web
 import (
 	"context"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/api-mittens/looster/internal/agent"
 	"github.com/api-mittens/looster/internal/task"
@@ -71,5 +73,57 @@ func TestTaskPayloadBoundsHTTP(t *testing.T) {
 	}
 	if repo.payloadCalls != 0 {
 		t.Fatalf("invalid requests read payloads: %d", repo.payloadCalls)
+	}
+}
+
+type delayedMetadataRepo struct {
+	metadataTestRepo
+	started chan struct{}
+	release chan struct{}
+}
+
+func (r *delayedMetadataRepo) TaskPayloadDetail(ctx context.Context, id, before int64, limit int) (task.Task, []agent.Session, []agent.SessionRun, error) {
+	close(r.started)
+	select {
+	case <-ctx.Done():
+		return task.Task{}, nil, nil, ctx.Err()
+	case <-r.release:
+		return task.Task{ID: id}, nil, nil, nil
+	}
+}
+
+func TestMetadataHTTPDuringDelayedPayload(t *testing.T) {
+	repo := &delayedMetadataRepo{started: make(chan struct{}), release: make(chan struct{})}
+	server := httptest.NewServer(Handler(repo))
+	defer server.Close()
+	defer close(repo.release)
+	done := make(chan error, 1)
+	go func() {
+		response, err := http.Get(server.URL + "/api/tasks/TSK-1/payloads")
+		if response != nil {
+			response.Body.Close()
+		}
+		done <- err
+	}()
+	select {
+	case <-repo.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("payload request did not start")
+	}
+	client := &http.Client{Timeout: time.Second}
+	for _, path := range []string{"/api/board", "/api/tasks/TSK-1", "/api/status"} {
+		response, err := client.Get(server.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != 200 {
+			t.Fatalf("%s: %d", path, response.StatusCode)
+		}
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("payload request was not delayed: %v", err)
+	default:
 	}
 }
