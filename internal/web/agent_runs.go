@@ -13,7 +13,7 @@ import (
 // the same run inspection capabilities as the underlying namespace store.
 type sessionHistoryRepository = app.SessionHistoryRepository
 
-func registerAgentRuns(mux *http.ServeMux, repo Repository, write func(http.ResponseWriter, any, error)) {
+func registerAgentRuns(mux *http.ServeMux, repo Repository, write func(http.ResponseWriter, *http.Request, any, error)) {
 	registerAgentRunOutput(mux, repo, write)
 	mux.HandleFunc("GET /api/agents/{name}/runs", func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
@@ -50,7 +50,7 @@ func registerAgentRuns(mux *http.ServeMux, repo Repository, write func(http.Resp
 			return
 		}
 		if err != nil {
-			write(w, nil, err)
+			write(w, r, nil, err)
 			return
 		}
 		if runs == nil {
@@ -64,7 +64,7 @@ func registerAgentRuns(mux *http.ServeMux, repo Repository, write func(http.Resp
 		if more {
 			next = runs[len(runs)-1].JobID
 		}
-		write(w, map[string]any{"runs": runs, "has_more": more, "next_before_job_id": next}, nil)
+		write(w, r, map[string]any{"runs": runs, "has_more": more, "next_before_job_id": next}, nil)
 	})
 	mux.HandleFunc("GET /api/agents/{name}/runs/{jobID}", func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
@@ -86,6 +86,6 @@ func registerAgentRuns(mux *http.ServeMux, repo Repository, write func(http.Resp
 		if err == nil && run.Agent != name {
 			err = app.ErrNotFound
 		}
-		write(w, run, err)
+		write(w, r, run, err)
 	})
 }

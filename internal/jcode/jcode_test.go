@@ -47,7 +47,7 @@ func TestHarnessProtocol(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			binary := filepath.Join(dir, "jcode")
-			script := "#!/bin/sh\n[ \"$LOOSTER_DATABASE_URL\" = 'postgres://shared' ] || exit 9\n[ -z \"$LOOSTER_AGENT_DATABASE_URLS_OTHER\" ] || exit 10\n[ \"$PGPASSWORD\" = 'shared-password' ] || exit 11\n[ \"$LOOSTER_ROLE\" = 'agent' ] && [ \"$LOOSTER_AGENT\" = 'coder' ] || exit 12\nprintf '%s' '" + tc.stream + "'\n"
+			script := "#!/bin/sh\n[ -z \"$TRACEPARENT$TRACESTATE$BAGGAGE\" ] || exit 13\n[ \"$LOOSTER_DATABASE_URL\" = 'postgres://shared' ] || exit 9\n[ -z \"$LOOSTER_AGENT_DATABASE_URLS_OTHER\" ] || exit 10\n[ \"$PGPASSWORD\" = 'shared-password' ] || exit 11\n[ \"$LOOSTER_ROLE\" = 'agent' ] && [ \"$LOOSTER_AGENT\" = 'coder' ] || exit 12\nprintf '%s' '" + tc.stream + "'\n"
 			if e := os.WriteFile(binary, []byte(script), 0700); e != nil {
 				t.Fatal(e)
 			}
@@ -59,9 +59,12 @@ func TestHarnessProtocol(t *testing.T) {
 			t.Setenv("LOOSTER_DATABASE_URL", "postgres://worker")
 			t.Setenv("LOOSTER_AGENT_DATABASE_URLS_OTHER", "postgres://other-agent")
 			t.Setenv("PGPASSWORD", "shared-password")
+			t.Setenv("TRACEPARENT", "parent")
+			t.Setenv("TRACESTATE", "state")
+			t.Setenv("BAGGAGE", "private")
 			t.Setenv("LOOSTER_ROLE", "human")
 			t.Setenv("LOOSTER_AGENT", "someone-else")
-			h := Harness{Binary: binary, SessionsDir: dir, DatabaseURL: "postgres://shared"}
+			h := Harness{Binary: binary, SessionsDir: dir, DatabaseURL: "postgres://shared", Environment: map[string]string{"TRACEPARENT": "override", "TRACESTATE": "override", "BAGGAGE": "override"}}
 			if tc.name == "restore" {
 				h.Objects = archiveStore{t: t}
 			}

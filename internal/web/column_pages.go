@@ -10,7 +10,7 @@ import (
 	"github.com/api-mittens/looster/internal/task"
 )
 
-func listBoard(repo Repository, write func(http.ResponseWriter, any, error)) http.HandlerFunc {
+func listBoard(repo Repository, write func(http.ResponseWriter, *http.Request, any, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		pager, ok := repo.(app.ColumnRepository)
 		if !ok {
@@ -37,12 +37,12 @@ func listBoard(repo Repository, write func(http.ResponseWriter, any, error)) htt
 		}
 		agents, err := repo.Agents(r.Context())
 		if err != nil {
-			write(w, nil, err)
+			write(w, r, nil, err)
 			return
 		}
 		sessions, err := pager.BoardSessions(r.Context())
 		if err != nil {
-			write(w, nil, err)
+			write(w, r, nil, err)
 			return
 		}
 		// Match boardAgentNames: taskless-only agents stay in Other sessions unless
@@ -87,11 +87,11 @@ func listBoard(repo Repository, write func(http.ResponseWriter, any, error)) htt
 			}
 			column, err := pager.ColumnTasks(r.Context(), task.ColumnQuery{Key: key, Search: search, Fuzzy: r.URL.Query().Get("fuzzy") == "true", Page: page, ActiveTaskIDs: active[strings.TrimPrefix(key, "agent:")]})
 			if err != nil {
-				write(w, nil, err)
+				write(w, r, nil, err)
 				return
 			}
 			columns = append(columns, column)
 		}
-		write(w, map[string]any{"tasks": []task.Task{}, "agents": agents, "sessions": sessions, "columns": columns}, nil)
+		write(w, r, map[string]any{"tasks": []task.Task{}, "agents": agents, "sessions": sessions, "columns": columns}, nil)
 	}
 }

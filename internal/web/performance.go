@@ -98,7 +98,7 @@ func buildPerformance(now time.Time, tasks []task.Task, logs []agent.SessionLog)
 	ratio(&result.Week)
 	return result
 }
-func registerPerformance(mux *http.ServeMux, repo Repository, write func(http.ResponseWriter, any, error)) {
+func registerPerformance(mux *http.ServeMux, repo Repository, write func(http.ResponseWriter, *http.Request, any, error)) {
 	mux.HandleFunc("GET /api/performance", func(w http.ResponseWriter, r *http.Request) {
 		source, ok := repo.(app.PerformanceRepository)
 		if !ok {
@@ -108,9 +108,9 @@ func registerPerformance(mux *http.ServeMux, repo Repository, write func(http.Re
 		now := time.Now().UTC()
 		tasks, logs, err := source.PerformanceData(r.Context(), performanceStart(now), now)
 		if err != nil {
-			write(w, nil, err)
+			write(w, r, nil, err)
 			return
 		}
-		write(w, buildPerformance(now, tasks, logs), nil)
+		write(w, r, buildPerformance(now, tasks, logs), nil)
 	})
 }

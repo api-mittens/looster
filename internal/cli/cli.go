@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -26,6 +25,7 @@ import (
 	"github.com/api-mittens/looster/internal/objectstore"
 	"github.com/api-mittens/looster/internal/postgres"
 	"github.com/api-mittens/looster/internal/task"
+	"github.com/api-mittens/looster/internal/telemetry"
 )
 
 // Version is set to the release tag by the release build.
@@ -153,7 +153,7 @@ func (a *application) command() *cobra.Command {
 		fmt.Fprintln(c.OutOrStdout(), "Database migrated")
 		return nil
 	}})
-	root.AddCommand(db, a.configureCommand(),a.storageMaintenanceCommand())
+	root.AddCommand(db, a.configureCommand(), a.storageMaintenanceCommand())
 	return root
 }
 func (a *application) load() error {
@@ -568,7 +568,16 @@ func (a *application) serveCommand() *cobra.Command {
 			return fmt.Errorf("PostgreSQL pool needs at least %d connections; add pool_max_conns=%d to database_url", concurrency+4, concurrency+4)
 		}
 		childEnv := a.workerEnvironment()
-		service := app.Service{Log: slog.New(slog.NewTextHandler(c.ErrOrStderr(), nil)), Repo: a.repo, Queue: a.store, Harness: &jcode.Harness{Binary: v.GetString("jcode.binary"), SessionsDir: v.GetString("jcode.sessions_dir"), DatabaseURL: v.GetString("database_url"), Objects: objects, Environment: childEnv}, Objects: objects}
+		logger, shutdown, err := telemetry.Setup(c.Context(), "looster-serve", Version, c.ErrOrStderr())
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if shutdown(context.Background()) != nil {
+				fmt.Fprintln(c.ErrOrStderr(), "Telemetry shutdown failed")
+			}
+		}()
+		service := app.Service{Log: logger, Repo: a.repo, Queue: a.store, Harness: &jcode.Harness{Binary: v.GetString("jcode.binary"), SessionsDir: v.GetString("jcode.sessions_dir"), DatabaseURL: v.GetString("database_url"), Objects: objects, Environment: childEnv}, Objects: objects}
 		// PersistentPreRun initialized the mandatory lake engine. Execute closes
 		// its payload store only after Serve has stopped every worker, so opening
 		// another unused core database here would duplicate native resources.

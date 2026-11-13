@@ -10,7 +10,7 @@ import (
 	"github.com/api-mittens/looster/internal/event"
 )
 
-func registerAgentRunOutput(mux *http.ServeMux, repo Repository, write func(http.ResponseWriter, any, error)) {
+func registerAgentRunOutput(mux *http.ServeMux, repo Repository, write func(http.ResponseWriter, *http.Request, any, error)) {
 	mux.HandleFunc("GET /api/agents/{name}/runs/{jobID}/output", func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
 		id, err := strconv.ParseInt(r.PathValue("jobID"), 10, 64)
@@ -51,7 +51,7 @@ func registerAgentRunOutput(mux *http.ServeMux, repo Repository, write func(http
 			err = app.ErrNotFound
 		}
 		if err != nil {
-			write(w, nil, err)
+			write(w, r, nil, err)
 			return
 		}
 		events, err := output.SessionRunOutput(r.Context(), id, after, limit+1)
@@ -60,7 +60,7 @@ func registerAgentRunOutput(mux *http.ServeMux, repo Repository, write func(http
 			return
 		}
 		if err != nil {
-			write(w, nil, err)
+			write(w, r, nil, err)
 			return
 		}
 		if events == nil {
@@ -74,6 +74,6 @@ func registerAgentRunOutput(mux *http.ServeMux, repo Repository, write func(http
 		if len(events) > 0 {
 			next = events[len(events)-1].ID
 		}
-		write(w, map[string]any{"events": events, "has_more": more, "next_after": next}, nil)
+		write(w, r, map[string]any{"events": events, "has_more": more, "next_after": next}, nil)
 	})
 }
