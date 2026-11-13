@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -64,7 +65,7 @@ func TestMetadataHTTPDoesNotReadPayloads(t *testing.T) {
 func TestTaskPayloadBoundsHTTP(t *testing.T) {
 	repo := &metadataTestRepo{}
 	handler := Handler(repo)
-	for _, suffix := range []string{"?limit=0", "?limit=201", "?limit=x", "?before_job_id=-1", "?before_job_id=x"} {
+	for _, suffix := range []string{"?limit=0", "?limit=201", "?limit=x", "?before_job_id=-1", "?before_job_id=x", "?before_log_id=-1", "?log_limit=201", "?log_limit=0"} {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest("GET", "/api/tasks/TSK-1/payloads"+suffix, nil))
 		if response.Code != 400 {
@@ -73,6 +74,37 @@ func TestTaskPayloadBoundsHTTP(t *testing.T) {
 	}
 	if repo.payloadCalls != 0 {
 		t.Fatalf("invalid requests read payloads: %d", repo.payloadCalls)
+	}
+}
+
+type pagedMetadataRepo struct {
+	metadataTestRepo
+	before, beforeLog int64
+}
+
+func (r *pagedMetadataRepo) TaskPayloadDetailPage(_ context.Context, id, before, beforeLog int64, limit, logLimit int) (task.Task, []agent.Session, []agent.SessionRun, error) {
+	r.before, r.beforeLog = before, beforeLog
+	return task.Task{ID: id, SessionLogs: []agent.SessionLog{{ID: 3, Body: "Log text"}}}, nil, []agent.SessionRun{{JobID: 7}}, nil
+}
+
+func TestTaskPayloadPageHTTP(t *testing.T) {
+	repo := &pagedMetadataRepo{}
+	response := httptest.NewRecorder()
+	Handler(repo).ServeHTTP(response, httptest.NewRequest("GET", "/api/tasks/TSK-1/payloads?before_job_id=8&before_log_id=4&limit=1&log_limit=1", nil))
+	if response.Code != 200 {
+		t.Fatalf("status %d: %s", response.Code, response.Body.String())
+	}
+	var page struct {
+		Next     int64 `json:"next_before_job_id"`
+		NextLog  int64 `json:"next_before_log_id"`
+		More     bool  `json:"has_more"`
+		MoreLogs bool  `json:"has_more_logs"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if repo.before != 8 || repo.beforeLog != 4 || page.Next != 7 || page.NextLog != 3 || !page.More || !page.MoreLogs {
+		t.Fatalf("page %+v cursors %d %d", page, repo.before, repo.beforeLog)
 	}
 }
 

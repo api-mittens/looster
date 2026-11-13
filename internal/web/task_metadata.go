@@ -52,12 +52,39 @@ func registerTaskPayloads(mux *http.ServeMux, repo Repository, write func(http.R
 				return
 			}
 		}
+		var beforeLog int64
+		if raw := r.URL.Query().Get("before_log_id"); raw != "" {
+			beforeLog, err = strconv.ParseInt(raw, 10, 64)
+			if err != nil || beforeLog < 1 {
+				http.Error(w, "Invalid log cursor", 400)
+				return
+			}
+		}
+		logLimit := 200
+		if raw := r.URL.Query().Get("log_limit"); raw != "" {
+			logLimit, err = strconv.Atoi(raw)
+			if err != nil || logLimit < 1 || logLimit > 200 {
+				http.Error(w, "Invalid log page limit", 400)
+				return
+			}
+		}
 		source, ok := repo.(app.TaskMetadataRepository)
 		if !ok {
 			http.Error(w, "Task payloads unavailable", 501)
 			return
 		}
-		t, sessions, runs, err := source.TaskPayloadDetail(r.Context(), id, before, limit)
+		var t task.Task
+		var sessions []agent.Session
+		var runs []agent.SessionRun
+		if pages, ok := repo.(app.TaskPayloadPageRepository); ok {
+			t, sessions, runs, err = pages.TaskPayloadDetailPage(r.Context(), id, before, beforeLog, limit, logLimit)
+		} else {
+			if beforeLog != 0 {
+				http.Error(w, "Task log pages unavailable", 501)
+				return
+			}
+			t, sessions, runs, err = source.TaskPayloadDetail(r.Context(), id, before, limit)
+		}
 		if err != nil {
 			write(w, nil, err)
 			return
@@ -72,6 +99,10 @@ func registerTaskPayloads(mux *http.ServeMux, repo Repository, write func(http.R
 		if len(runs) == limit {
 			next = runs[len(runs)-1].JobID
 		}
-		write(w, map[string]any{"task": t, "sessions": sessions, "runs": runs, "has_more": next != 0, "next_before_job_id": next}, nil)
+		var nextLog int64
+		if len(t.SessionLogs) == logLimit {
+			nextLog = t.SessionLogs[0].ID
+		}
+		write(w, map[string]any{"task": t, "sessions": sessions, "runs": runs, "has_more": next != 0, "next_before_job_id": next, "has_more_logs": nextLog != 0, "next_before_log_id": nextLog}, nil)
 	})
 }

@@ -14,6 +14,18 @@ type TaskMetadataRepository interface {
 	TaskPayloadDetail(context.Context, int64, int64, int) (task.Task, []agent.Session, []agent.SessionRun, error)
 }
 
+// TaskPayloadPageRepository adds an independent task log cursor.
+type TaskPayloadPageRepository interface {
+	TaskPayloadDetailPage(context.Context, int64, int64, int64, int, int) (task.Task, []agent.Session, []agent.SessionRun, error)
+}
+
+func (r *accessRepository) TaskPayloadDetailPage(ctx context.Context, id, before, beforeLog int64, limit, logLimit int) (task.Task, []agent.Session, []agent.SessionRun, error) {
+	if repo, ok := r.Repository.(TaskPayloadPageRepository); ok {
+		return repo.TaskPayloadDetailPage(ctx, id, before, beforeLog, limit, logLimit)
+	}
+	return task.Task{}, nil, nil, ErrSessionHistoryUnavailable
+}
+
 func (r *accessRepository) TasksMetadata(ctx context.Context) ([]task.Task, error) {
 	if repo, ok := r.Repository.(TaskMetadataRepository); ok {
 		return repo.TasksMetadata(ctx)
