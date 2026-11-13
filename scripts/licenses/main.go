@@ -409,7 +409,7 @@ func licenseDocument(name string) bool {
 	// Broad recursive discovery intentionally also retains source/CI files whose
 	// names match, but those are not standalone license documents.
 	switch strings.ToLower(filepath.Ext(name)) {
-	case ".go", ".yml", ".yaml", ".json", ".js", ".ts":
+	case ".go", ".yml", ".yaml", ".json", ".js", ".ts", ".prototext":
 		return false
 	}
 	if isLicense(name) || filepath.Base(name) == "D3-LICENSE.txt" || bundledLicenseCollection(name) || filepath.Base(name) == "MARKDOWN-IT-LICENSE.txt" {
