@@ -20,7 +20,6 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/api-mittens/looster/internal/app"
-	"github.com/api-mittens/looster/internal/ducklake"
 	"github.com/api-mittens/looster/internal/jcode"
 	"github.com/api-mittens/looster/internal/namespace"
 	"github.com/api-mittens/looster/internal/objectstore"
@@ -35,7 +34,7 @@ type application struct {
 	v        *viper.Viper
 	repo     app.Repository
 	store    *postgres.Store
-	payloads *ducklake.PayloadStore
+	payloads io.Closer
 	config   string
 }
 
@@ -112,9 +111,14 @@ func (a *application) command() *cobra.Command {
 			return e
 		}
 		a.store = s
-		payloads, e := a.openPayloadStore(cmd.Context(), v.GetString("namespace"))
-		if e != nil {
-			return fmt.Errorf("mandatory DuckLake startup: %w", e)
+		var payloads webPayloadStore
+		if cmd.Name() == "web" {
+			payloads = a.lazyWebPayloadStore(v.GetString("namespace"))
+		} else {
+			payloads, e = a.openPayloadStore(cmd.Context(), v.GetString("namespace"))
+			if e != nil {
+				return fmt.Errorf("mandatory DuckLake startup: %w", e)
+			}
 		}
 		a.payloads = payloads
 		s.SetPayloadStore(payloads)
@@ -153,7 +157,7 @@ func (a *application) command() *cobra.Command {
 		fmt.Fprintln(c.OutOrStdout(), "Database migrated")
 		return nil
 	}})
-	root.AddCommand(db, a.configureCommand(),a.storageMaintenanceCommand())
+	root.AddCommand(db, a.configureCommand(), a.storageMaintenanceCommand())
 	return root
 }
 func (a *application) load() error {

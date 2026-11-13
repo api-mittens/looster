@@ -35,7 +35,7 @@ type webNamespaces struct {
 	mu            sync.Mutex
 	stores        map[string]*postgres.Store
 	repos         map[string]app.Repository
-	payloads      map[string]*ducklake.PayloadStore
+	payloads      map[string]*lazyPayloadStore
 	openPayloads  func(context.Context, string) (*ducklake.PayloadStore, error)
 }
 
@@ -60,13 +60,11 @@ func (p *webNamespaces) Repository(ctx context.Context, name string) (app.Reposi
 	if err != nil {
 		return nil, err
 	}
-	var payloads *ducklake.PayloadStore
+	var payloads *lazyPayloadStore
 	if p.openPayloads != nil {
-		payloads, err = p.openPayloads(ctx, name)
-		if err != nil {
-			store.Close()
-			return nil, err
-		}
+		payloads = newLazyPayloadStore(func(ctx context.Context) (webPayloadStore, error) {
+			return p.openPayloads(ctx, name)
+		})
 		store.SetPayloadStore(payloads)
 		if err = store.EnablePayloadCutover(ctx); err != nil {
 			_ = payloads.Close()
@@ -84,7 +82,7 @@ func (p *webNamespaces) Repository(ctx context.Context, name string) (app.Reposi
 	}
 	if payloads != nil {
 		if p.payloads == nil {
-			p.payloads = map[string]*ducklake.PayloadStore{}
+			p.payloads = map[string]*lazyPayloadStore{}
 		}
 		p.payloads[name] = payloads
 	}
