@@ -194,7 +194,7 @@ test('late history pages cannot change the selected task',async()=>{
 
 test('older log pages use a separate cursor and do not replace the run page',async()=>{
   const {board,node}=harness(), older=deferred();
-  board.api=async()=>({runs:[{job_id:100,summary:'Current run page'}],sessions:[],task:{session_logs:[{id:200,body:'Recent log'}]},logs_has_more:true,next_before_log_id:200});
+  board.api=async()=>({runs:[{job_id:100,summary:'Current run page'}],sessions:[],task:{session_logs:[{id:200,body:'Recent log'}]},has_more_logs:true,next_before_log_id:200});
   await board.loadPayloads(1,board.outputs);
   const runs=node('#task-run-history').innerHTML;
   assert.match(node('#task-log-pagination').innerHTML,/Load older logs/);
