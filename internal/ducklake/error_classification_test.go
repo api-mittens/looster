@@ -69,7 +69,7 @@ func TestClassifiedOperationError(t *testing.T) {
 			if errors.As(got, &exposed) {
 				t.Fatal("native cause exposed")
 			}
-			busy := tt.category == "connection_limit" || tt.category == "transaction_conflict" || tt.category == "transaction_retry_exhausted"
+			busy := tt.category == "connection_limit" || tt.category == "transaction_conflict" || tt.category == "transaction_retry_exhausted" || tt.category == "catalog_disconnect"
 			if errors.Is(got, ErrCatalogBusy) != busy || errors.Is(fmt.Errorf("outer: %w", got), ErrCatalogBusy) != busy {
 				t.Fatal("incorrect safe retry identity")
 			}

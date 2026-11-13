@@ -524,8 +524,11 @@ func (s *PayloadStore) flushBatches(ctx context.Context, batchTimeout time.Durat
 			cancel()
 			return ctx.Err()
 		}
-		if batchTimeout > 0 && errors.Is(err, context.DeadlineExceeded) {
-			// Keep these waiters for retry. Later batches still get an attempt.
+		if batchTimeout > 0 && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrCatalogBusy)) {
+			// Deadlines and transient metadata failures do not reject durable
+			// writes. Retry on the next background pass without failing agents.
+			// A retry re-reads immutable keys, including an ambiguous COMMIT.
+			// Later batches still get an attempt during this pass.
 			cancel()
 			passErr = err
 			for _, r := range batch {

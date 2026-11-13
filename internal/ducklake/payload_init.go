@@ -41,8 +41,12 @@ func payloadInitTransient(err error) bool {
 	if errors.Is(err, errPayloadInitCreateRace) {
 		return true
 	}
-	var native *duckdb.Error
-	return errors.As(err, &native) && native != nil && native.Type == duckdb.ErrorTypeTransaction
+	switch nativeErrorCategory(err) {
+	case "connection_limit", "transaction_conflict", "transaction_retry_exhausted", "catalog_disconnect":
+		return true
+	default:
+		return false
+	}
 }
 
 func initializePayloadTableAttempt(ctx context.Context, conn *sql.Conn) error {

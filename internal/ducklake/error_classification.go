@@ -25,7 +25,7 @@ func classifiedOperationError(stage string, cause error) error {
 	}
 	safe := errors.New(operationError(stage).Error() + " [category: " + category + "]")
 	switch category {
-	case "connection_limit", "transaction_conflict", "transaction_retry_exhausted":
+	case "connection_limit", "transaction_conflict", "transaction_retry_exhausted", "catalog_disconnect":
 		return catalogBusyError{safe}
 	default:
 		return safe
