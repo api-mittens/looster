@@ -302,7 +302,10 @@ class LoosterBoard extends HTMLElement {
       const contextHTML = (d.context?.tags || []).map(t => `<details class="context-card" data-refresh-key="${esc(t.id ?? t.name)}"><summary>Tag: ${esc(t.name)} · ${(t.memories || []).length} memories</summary><pre>${esc(t.description)}</pre>${this.memoryHTML(t.memories)}</details>`).join('');
       patchHTML(this.panel.querySelector('#tag-context'),contextHTML);
       if(!this.commentsLoaded) patchHTML(this.panel.querySelector('#task-comments'),loadingHTML('Load comments.'));
-      patchHTML(this.panel.querySelector('#sessions'),(d.sessions || []).map(session => taskSessionCardHTML({...session,...this.payloadData?.sessions?.find(item => item.job_id === session.job_id)})).join('') || '<p>No sessions yet.</p>');
+      patchHTML(this.panel.querySelector('#sessions'),(d.sessions || []).map(session => {
+        const saved = this.payloadData?.sessions?.find(item => item.job_id === session.job_id);
+        return taskSessionCardHTML(saved ? {...session,summary:saved.summary,short_summary:saved.short_summary,error:saved.error} : session);
+      }).join('') || '<p>No sessions yet.</p>');
       if(!this.payloadData) patchHTML(this.panel.querySelector('#payload-notice'),loadingHTML('Load task content.'));
       void this.loadComments(id,generation);
       void this.loadPayloads(id,generation);

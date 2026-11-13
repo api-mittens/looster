@@ -8,7 +8,7 @@ const deferred = () => { let resolve, reject; const promise = new Promise((yes,n
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function harness() {
   const classes = new Map();
-  const context = vm.createContext({HTMLElement:class {},customElements:{define:(name,type)=>classes.set(name,type)},AbortController,DOMException,queueMicrotask,loadingHTML,patchHTML:(node,html)=>{node.innerHTML=html;},renderMarkdown:value=>value,taskSessionCardHTML:session=>session.summary || session.agent,attachmentUploadHTML:()=>'',chronologicalEntries:(comments,logs)=>[...comments,...logs],document:{activeElement:null}});
+  const context = vm.createContext({HTMLElement:class {},customElements:{define:(name,type)=>classes.set(name,type)},AbortController,DOMException,queueMicrotask,loadingHTML,patchHTML:(node,html)=>{node.innerHTML=html;},renderMarkdown:value=>value,taskSessionCardHTML:session=>JSON.stringify(session),attachmentUploadHTML:()=>'',chronologicalEntries:(comments,logs)=>[...comments,...logs],document:{activeElement:null}});
   vm.runInContext(readFileSync(new URL('./app.js',import.meta.url),'utf8').replace(/^import .*;\n/gm,''),context);
   const board = new (classes.get('looster-board'))();
   const nodes = new Map();
@@ -91,6 +91,16 @@ test('old auxiliary responses cannot change the new namespace',async()=>{
   board.library={agents:[{name:'new'}]};
   old.resolve({agents:[{name:'old'}]}); await tick();
   assert.equal(board.library.agents[0].name,'new');
+});
+
+test('session refresh keeps loaded text and uses current status',async()=>{
+  const {board,node}=harness();
+  board.payloadData={sessions:[{job_id:7,status:'running',summary:'Saved summary'}]};
+  board.api=path=>path==='/api/tasks/TSK-1'?Promise.resolve({task:{name:'Task',status:'todo'},sessions:[{job_id:7,status:'done',summary:''}]}):new Promise(()=>{});
+  await board.loadDetail(1);
+  const session=JSON.parse(node('#sessions').innerHTML);
+  assert.equal(session.summary,'Saved summary');
+  assert.equal(session.status,'done');
 });
 
 test('a metadata failure keeps completed board data and shows Retry',async()=>{
