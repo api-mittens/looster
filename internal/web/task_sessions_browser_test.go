@@ -1,3 +1,5 @@
+//go:build uitest
+
 package web
 
 import (
@@ -44,6 +46,11 @@ func TestTaskSessionLazyBrowser(t *testing.T) {
 			data = map[string]any{}
 		case "/api/tasks/TSK-1":
 			data = map[string]any{"task": task, "sessions": []any{
+				map[string]any{"agent": "coder", "job_id": 11, "status": "done", "summary_status": "available"},
+				map[string]any{"agent": "coder", "job_id": 12, "status": "running", "summary_status": "pending"},
+			}}
+		case "/api/tasks/TSK-1/payloads":
+			data = map[string]any{"sessions": []any{
 				map[string]any{"agent": "coder", "job_id": 11, "status": "done", "short_summary": preview, "summary_status": "available"},
 				map[string]any{"agent": "coder", "job_id": 12, "status": "running", "summary_status": "pending"},
 			}}
@@ -109,7 +116,9 @@ func TestTaskSessionLazyBrowser(t *testing.T) {
 			t.Fatal(expression)
 		}
 	}
-	if err := chromedp.Run(tab, emulation.SetDeviceMetricsOverride(1280, 1600, 1, false), chromedp.Navigate(server.URL+"/#board"), chromedp.WaitVisible("looster-board"), chromedp.Evaluate(`document.querySelector('looster-board').open(1)`, nil), chromedp.WaitVisible(`[data-task-session-job="12"]`), chromedp.Evaluate(`document.querySelector('looster-board').loadDetail(1)`, nil)); err != nil {
+	// Refresh through the public button handler, then wait for metadata and payloads.
+	waitForTaskContent := chromedp.Poll(`(() => {const board=document.querySelector('looster-board');return !board.loading && !board.refreshQueued && !board.detailBusy && !board.detailQueued && !board.payloadBusy && document.querySelector('#sessions')?.getAttribute('aria-busy')==='false';})()`, nil)
+	if err := chromedp.Run(tab, emulation.SetDeviceMetricsOverride(1280, 1600, 1, false), chromedp.Navigate(server.URL+"/#board"), chromedp.WaitVisible("#toggle-stages"), chromedp.Click("#toggle-stages"), chromedp.Click(`task-card[data-id="1"] button`), chromedp.WaitVisible(`[data-task-session-job="12"]`), waitForTaskContent, chromedp.Evaluate(`document.querySelector('#refresh').click()`, nil), waitForTaskContent); err != nil {
 		t.Fatal(err)
 	}
 	check(`document.querySelectorAll('#sessions button').length===2 && !document.querySelector('#sessions script') && document.querySelector('#sessions').textContent.includes('First safe <script>bad</script>') && !!document.querySelector('#sessions .task-session-summary strong') && !!document.querySelector('#sessions .task-session-summary a[href="https://example.com"]') && !document.querySelector('#sessions button a, #sessions button p, #sessions a[href^="javascript:"]') && !document.querySelector('#session-output')`)
@@ -143,14 +152,13 @@ func TestTaskSessionLazyBrowser(t *testing.T) {
 		t.Fatal(err)
 	}
 	check(`document.querySelector('looster-board').detailID===1 && document.querySelector('looster-board').dialog.open && document.querySelector('#comment-form textarea').value==='Unsaved draft' && document.activeElement.dataset.taskSessionJob==='11'`)
-	// A native close notification may arrive after the user has already focused
-	// the next run. It must not move focus back to the previously inspected card.
+	// A late native close must not steal focus from the next run.
 	if err := chromedp.Run(tab, chromedp.Focus(`[data-task-session-job="12"]`), chromedp.Evaluate(`document.querySelector('#session-dialog').dispatchEvent(new Event('close'))`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	check(`document.activeElement.dataset.taskSessionJob==='12'`)
 	if err := chromedp.Run(tab, chromedp.Focus(`[data-task-session-job="12"]`), chromedp.KeyEvent(kb.Enter), chromedp.Poll(`document.querySelector('#session-dialog #task-session-run').textContent.includes('/12')`, nil), chromedp.Poll(`document.querySelector('#task-session-output').textContent==='Different job 12' && document.querySelector('#task-session-run').textContent.includes('pending')`, nil),
-		chromedp.Evaluate(`window.sessionBeforeRefresh=document.querySelector('looster-board').sessionInspection;(async()=>{await fetch('/api/test/complete');await document.querySelector('looster-board').refresh();})()`, nil),
+		chromedp.Evaluate(`window.sessionBeforeRefresh=document.querySelector('looster-board').sessionInspection;(async()=>{await fetch('/api/test/complete');document.querySelector('#refresh').click();})()`, nil),
 		chromedp.Poll(`document.querySelector('#task-session-run').textContent.includes('available') && document.querySelector('#task-session-run').textContent.includes('Full summary for /api/agents/coder/runs/12') && document.querySelector('#session-dialog').open && document.querySelector('looster-board').sessionInspection===window.sessionBeforeRefresh`, nil),
 		chromedp.Click("#session-back"), chromedp.Poll(`!document.querySelector('#session-dialog').open`, nil)); err != nil {
 		var state string

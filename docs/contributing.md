@@ -59,12 +59,32 @@ existing application data. See [namespace tests](namespaces.md#integration-tests
 
 ## CI and browser integration
 
-[CI](../.github/workflows/ci.yml) builds the real CLI, starts PostgreSQL, selects
-Chromium/Chrome, and runs `go test -count=1 -timeout=10m ./...` with both
-browser opt-ins enabled. It then runs `go vet ./...`. Tagged release builds depend
-on this test job succeeding.
+[CI](../.github/workflows/ci.yml) builds one Linux CLI and runs the Go API,
+worker, PostgreSQL, and storage tests plus vet. It does not install, discover,
+or launch Chromium, and it does not run frontend Node tests or enable the
+`uitest` build tag. Tagged release builds depend on this test job succeeding.
+Checks run for pull requests, version-tag pushes, and manual dispatch only.
+Branch pushes and merges to master do not rerun them.
 
-Two Go-driven browser workflows cover different boundaries:
+### Local UI checks
+
+All Go browser, rendering, and JavaScript-probe tests are compiled only with
+`-tags=uitest`. This keeps UI dependencies out of the default test binary, even
+if browser opt-in environment variables happen to be set. UI coverage, including
+`TestTaskSessionLazyBrowser`, is retained locally rather than deleted. Frontend
+Node tests also run locally only:
+
+```sh
+go test -tags=uitest -count=1 ./internal/web
+LOOSTER_BROWSER_TEST=1 go test -tags=uitest -count=1 -timeout=5m ./internal/web
+node --test internal/web/static/*.test.mjs
+```
+
+The unflagged suite still exercises HTTP APIs, permissions, metadata, worker
+control, and storage behavior. A default or CI pass is not UI acceptance.
+The Web UI remains shipped for now, with a planned transition to native apps.
+
+Two local Go-driven browser workflows cover different boundaries:
 
 - `TestGraphBrowser` uses fixture API data with a real headless Chromium browser.
 - `TestGraphProduction` uses a compiled Looster executable, disposable PostgreSQL
@@ -76,17 +96,19 @@ database (upgrade tests also require `CREATEDB`), and build the CLI first:
 
 ```sh
 go build -buildvcs=false -o bin/looster ./cmd/looster
-LOOSTER_BROWSER_TEST=1 go test -count=1 ./internal/web -run '^TestGraphBrowser$'
+LOOSTER_BROWSER_TEST=1 go test -tags=uitest -count=1 ./internal/web -run '^TestGraphBrowser$'
 LOOSTER_PRODUCTION_TEST=1 \
   LOOSTER_TEST_BINARY="$PWD/bin/looster" \
   LOOSTER_TEST_DATABASE_URL='postgres://postgres:postgres@localhost:5432/looster_test?sslmode=disable' \
-  go test -count=1 -timeout=5m ./internal/web -run '^TestGraphProduction$'
+  go test -tags=uitest -count=1 -timeout=5m ./internal/web -run '^TestGraphProduction$'
 ```
 
 Set `CHROMIUM=/path/to/chromium` if automatic browser discovery is unsuitable.
-The production test creates and cleans up unique test namespaces. Both workflows
-run through Go, not Node.js. Without opt-in variables these browser tests skip;
-a passing default unit run alone does not demonstrate browser acceptance.
+The production test requires explicit disposable S3 settings via
+`LOOSTER_TEST_S3_ENDPOINT`, `LOOSTER_TEST_S3_BUCKET`, `LOOSTER_TEST_S3_ACCESS_KEY`,
+and `LOOSTER_TEST_S3_SECRET_KEY`, and creates/cleans unique test namespaces.
+Both workflows run through Go, not Node.js. The build tag includes their code;
+the opt-in variables enable execution. Never point these tests at production.
 
 ## Generated code and migrations
 

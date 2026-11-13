@@ -27,10 +27,10 @@ git push origin v0.1.0
 Pushing a `v` version tag triggers CI. CI runs the Go tests first, then builds
 and publishes release assets and SHA-256 checksums.
 
-CI includes Go-driven Chromium browser acceptance tests and PostgreSQL integration
-tests before releasing. See [CI and browser integration](contributing.md#ci-and-browser-integration).
-A failed test run must not produce a release. The test job also runs the frontend
-Node.js state and pagination tests. No frontend build step is required.
+CI runs API, worker, PostgreSQL, and storage tests before releasing. Browser,
+rendering, and frontend tests are local-only behind the `uitest` build tag (or
+local Node commands). See [local UI checks](contributing.md#local-ui-checks).
+A failed test run must not produce a release. No frontend build step is required.
 
 The release matrix is:
 
@@ -72,9 +72,10 @@ runtime. The resulting binary
 runs `--help`, and engine lifecycle and cold-cache signed extension tests run
 without a host DuckDB CLI. CI also runs an isolated PostgreSQL/S3 write/reopen
 harness, never production catalog cleanup. The four native packaging jobs run
-only for version tags, after the test job succeeds. Pull requests and ordinary
-branch builds run the complete test job with one normal Linux CLI build, not the
-release matrix. Release publication requires exactly all four archives.
+only for version tags, after the test job succeeds. Pull requests and manual
+runs execute the complete test job with one normal Linux CLI build, not the
+release matrix. Branch pushes, including merges to master, do not trigger a
+second run. Release publication requires exactly all four archives.
 `scripts/check-release-archives.sh` rejects missing, empty or unexpected files
 before checksumming the exact four archive byte streams.
 

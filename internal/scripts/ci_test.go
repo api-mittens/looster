@@ -9,7 +9,7 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-// Keep feature pushes from duplicating PR checks without disabling master or releases.
+// Branch pushes, including merges to master, must not duplicate PR checks.
 func TestCITriggerPolicy(t *testing.T) {
 	data, err := os.ReadFile("../../.github/workflows/ci.yml")
 	if err != nil {
@@ -28,8 +28,8 @@ func TestCITriggerPolicy(t *testing.T) {
 	if err := yaml.Unmarshal(data, &workflow); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(workflow.On["push"].Branches, []string{"master"}) {
-		t.Fatalf("push checks must only run on master: %v", workflow.On["push"].Branches)
+	if len(workflow.On["push"].Branches) != 0 {
+		t.Fatalf("branch pushes must not duplicate PR checks: %v", workflow.On["push"].Branches)
 	}
 	if !reflect.DeepEqual(workflow.On["push"].Tags, []string{"v*"}) {
 		t.Fatal("version tags must retain release CI")
@@ -101,5 +101,48 @@ func TestCIReleaseBuildPolicy(t *testing.T) {
 	}
 	if !reflect.DeepEqual(workflow.Jobs["release"].Needs, []any{"test", "build"}) {
 		t.Fatal("publication must require both tests and native packaging")
+	}
+}
+
+func TestCINoUITests(t *testing.T) {
+	data, err := os.ReadFile("../../.github/workflows/ci.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workflow struct {
+		Env  map[string]string `yaml:"env"`
+		Jobs map[string]struct {
+			Env   map[string]string `yaml:"env"`
+			Steps []struct {
+				Run string            `yaml:"run"`
+				Env map[string]string `yaml:"env"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &workflow); err != nil {
+		t.Fatal(err)
+	}
+	checkEnv := func(env map[string]string) {
+		t.Helper()
+		for _, name := range []string{"CHROMIUM", "LOOSTER_BROWSER_TEST", "LOOSTER_PRODUCTION_TEST"} {
+			if _, ok := env[name]; ok {
+				t.Errorf("UI-only environment %s must not be configured in Actions", name)
+			}
+		}
+		if strings.Contains(env["GOFLAGS"], "uitest") {
+			t.Error("Actions must not enable the uitest build tag")
+		}
+	}
+	checkEnv(workflow.Env)
+	for _, job := range workflow.Jobs {
+		checkEnv(job.Env)
+		for _, step := range job.Steps {
+			checkEnv(step.Env)
+			for _, forbidden := range []string{"chromium", "google-chrome", "node --test", "uitest", "LOOSTER_BROWSER_TEST", "LOOSTER_PRODUCTION_TEST"} {
+				if strings.Contains(strings.ToLower(step.Run), strings.ToLower(forbidden)) {
+					t.Errorf("Actions command contains local-only UI testing: %s", forbidden)
+				}
+			}
+		}
 	}
 }

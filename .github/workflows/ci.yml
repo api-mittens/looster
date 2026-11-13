@@ -2,7 +2,6 @@ name: Test and release
 
 on:
   push:
-    branches: [master]
     tags: ['v*']
   pull_request:
   workflow_dispatch:
@@ -52,15 +51,6 @@ jobs:
         run: |
           go build -trimpath -o bin/looster ./cmd/looster
           bin/looster --help
-      - name: Test frontend state and pagination
-        run: node --test internal/web/static/*.test.mjs
-      - name: Configure browser acceptance tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          browser=$(command -v google-chrome)
-          echo "CHROMIUM=$browser" >> "$GITHUB_ENV"
-          echo "LOOSTER_TEST_BINARY=$GITHUB_WORKSPACE/bin/looster" >> "$GITHUB_ENV"
       - name: Start disposable S3 storage
         shell: bash
         run: |
@@ -80,10 +70,8 @@ jobs:
           echo 'LOOSTER_S3_BUCKET=looster-test' >> "$GITHUB_ENV"
           echo 'LOOSTER_S3_ACCESS_KEY=looster-test' >> "$GITHUB_ENV"
           echo 'LOOSTER_S3_SECRET_KEY=looster-test-password' >> "$GITHUB_ENV"
-      - name: Run all Go tests, including PostgreSQL and browser integration tests
+      - name: Run Go unit and PostgreSQL/storage integration tests
         env:
-          LOOSTER_BROWSER_TEST: '1'
-          LOOSTER_PRODUCTION_TEST: '1'
           LOOSTER_STORAGE_ACCEPTANCE: 'yes'
           LOOSTER_TEST_S3_ENDPOINT: http://127.0.0.1:9000
           LOOSTER_TEST_S3_BUCKET: looster-test

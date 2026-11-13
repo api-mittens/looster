@@ -1,3 +1,5 @@
+//go:build uitest
+
 package web
 
 // Behavioral probes execute only through their Go test entrypoints.
