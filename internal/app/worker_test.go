@@ -89,7 +89,7 @@ func TestScheduledJobsStartFreshSessions(t *testing.T) {
 		if l.failed != nil {
 			t.Fatal(l.failed)
 		}
-		if h.run.SessionID != "" || h.run.Task.ID != 0 || h.run.Workdir != "" || h.run.Prompt != "Triage agent instructions.\n\n"+l.job.Prompt+sessionSummaryInstruction {
+		if h.run.SessionID != "" || h.run.Task.ID != 0 || h.run.Workdir != "" || h.run.Prompt != "Triage agent instructions.\n\n"+l.job.Prompt+sessionSummaryInstruction+agentOutputLanguageInstruction {
 			t.Fatalf("scheduled ping acquired unwanted context: %+v", h.run)
 		}
 		if h.run.ArchivePrefix == previousPrefix || !strings.Contains(objects.key, "/scheduled/") {

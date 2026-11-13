@@ -25,6 +25,14 @@ together. Declare handoffs once, then follow durable tasks and resumable session
 from the CLI or dashboard. Namespaces keep independent projects separate, while
 machines can run different agents or share the workload.
 
+Every agent run receives a required ASD-STE100 Simplified Technical English
+instruction. This includes scheduled runs, task runs, retries, and resumed
+sessions. The rule covers all text that agents write, including tasks, comments,
+logs, code comments, commits, PRs, release notes, and other artifacts. Agents must
+pass the rule to other agents. Code, exact technical values, quotations, and raw
+tool output stay unchanged. This is a prompt requirement, not an automatic
+language checker or a guarantee of formal ASD-STE100 compliance.
+
 ## Architecture
 
 ```mermaid

@@ -244,7 +244,7 @@ func (s *Service) process(ctx context.Context, c WorkerConfig, lease Lease) {
 			err = errors.New("job has no prompt")
 			return
 		}
-		prompt += sessionSummaryInstruction
+		prompt += sessionSummaryInstruction + agentOutputLanguageInstruction
 		if err = lease.Started(ctx); err != nil {
 			return
 		}
