@@ -19,6 +19,11 @@ var ErrPayloadNotFound = errors.New("DuckLake payload not found")
 var ErrPayloadConflict = errors.New("DuckLake payload key has different content")
 var ErrPayloadClosed = errors.New("DuckLake payload store closed")
 
+const (
+	payloadBackgroundBatchTimeout = 2 * time.Minute
+	payloadCloseFlushTimeout      = 30 * time.Second
+)
+
 // PayloadOptions controls durable retry storage and bounded lake writes.
 // Each client owns a private subdirectory of SpoolDir. BatchBytes bounds normal
 // batches, but a larger individual archive is supported as a singleton batch.
@@ -47,6 +52,7 @@ type payloadBatchReader interface {
 type PayloadStore struct {
 	mu        sync.Mutex
 	flushMu   sync.Mutex
+	reads     sync.WaitGroup
 	waiters   map[string][]chan error
 	wake      chan struct{}
 	closeDone chan struct{}
@@ -60,6 +66,9 @@ type PayloadStore struct {
 	closed    bool
 	closeErr  error
 	ownedLake *Lake
+
+	writerCtx    context.Context
+	writerCancel context.CancelFunc
 }
 
 // NewPayloadStore transfers ownership of lake on success. Close flushes durable
@@ -155,6 +164,7 @@ func newPayloadStoreContext(ctx context.Context, sink payloadSink, opts PayloadO
 		lock.Close()
 		return nil, err
 	}
+	s.writerCtx, s.writerCancel = context.WithCancel(context.Background())
 	go s.loop()
 	return s, nil
 }
@@ -315,8 +325,9 @@ func (s *PayloadStore) Put(ctx context.Context, key string, value []byte) error 
 	case s.wake <- struct{}{}:
 	default:
 	}
-	// Spooling is not acknowledgement. Every caller waits for its group commit
-	// attempt, while the unlocked queue can collect other concurrent Put calls.
+	// Spooling is not acknowledgement. Callers wait for remote commit or a
+	// permanent error. Background deadline errors retain waiters for retry.
+	// The unlocked queue can collect other concurrent Put calls.
 	select {
 	case err := <-waiter:
 		return err
@@ -340,13 +351,17 @@ func (s *PayloadStore) Get(ctx context.Context, key string) ([]byte, error) {
 // Missing keys are omitted from the result. Duplicate requested keys are folded.
 func (s *PayloadStore) GetMany(ctx context.Context, keys []string) (map[string][]byte, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
+		s.mu.Unlock()
 		return nil, ErrPayloadClosed
 	}
 	if err := ctx.Err(); err != nil {
+		s.mu.Unlock()
 		return nil, err
 	}
+	// Register reads under mu before Close can start its wait.
+	s.reads.Add(1)
+	defer s.reads.Done()
 	result := map[string][]byte{}
 	missing := []string{}
 	seen := map[string]bool{}
@@ -361,6 +376,7 @@ func (s *PayloadStore) GetMany(ctx context.Context, keys []string) (map[string][
 			missing = append(missing, k)
 		}
 	}
+	s.mu.Unlock()
 	if len(missing) == 0 {
 		return result, nil
 	}
@@ -405,13 +421,18 @@ func (s *PayloadStore) GetCommitted(ctx context.Context, key string) ([]byte, er
 // GetManyCommitted verifies remote state and never consults pending.
 func (s *PayloadStore) GetManyCommitted(ctx context.Context, keys []string) (map[string][]byte, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
+		s.mu.Unlock()
 		return nil, ErrPayloadClosed
 	}
 	if err := ctx.Err(); err != nil {
+		s.mu.Unlock()
 		return nil, err
 	}
+	// Register reads under mu before Close can start its wait.
+	s.reads.Add(1)
+	defer s.reads.Done()
+	s.mu.Unlock()
 	if batch, ok := s.sink.(payloadBatchReader); ok {
 		return batch.getMany(ctx, keys)
 	}
@@ -439,7 +460,7 @@ func (s *PayloadStore) Flush(ctx context.Context) error {
 }
 
 // notify requires mu. Buffered waiters allow canceled callers to leave without
-// blocking the writer, and every waiter is completed after one commit attempt.
+// blocking the writer. Background deadline errors keep waiters for retry.
 func (s *PayloadStore) notify(key string, err error) {
 	for _, ch := range s.waiters[key] {
 		ch <- err
@@ -447,13 +468,30 @@ func (s *PayloadStore) notify(key string, err error) {
 	delete(s.waiters, key)
 }
 func (s *PayloadStore) flush(ctx context.Context) error {
+	return s.flushBatches(ctx, 0)
+}
+
+// A positive batchTimeout gives each background batch its own time limit.
+// Explicit Flush and Close retain the caller's total time limit.
+func (s *PayloadStore) flushBatches(ctx context.Context, batchTimeout time.Duration) error {
 	s.flushMu.Lock()
 	defer s.flushMu.Unlock()
+	failed := map[string]bool{}
+	var passErr error
 	for {
+		if batchTimeout > 0 {
+			select {
+			case <-s.stop:
+				return nil
+			default:
+			}
+		}
 		s.mu.Lock()
 		keys := make([]string, 0, len(s.pending))
 		for k := range s.pending {
-			keys = append(keys, k)
+			if !failed[k] {
+				keys = append(keys, k)
+			}
 		}
 		sort.Strings(keys)
 		batch := []payloadRecord{}
@@ -468,18 +506,43 @@ func (s *PayloadStore) flush(ctx context.Context) error {
 		}
 		s.mu.Unlock()
 		if len(batch) == 0 {
-			return nil
+			return passErr
 		}
-		err := ctx.Err()
-		if err == nil {
-			err = s.sink.putBatch(ctx, batch)
+		batchCtx := ctx
+		cancel := func() {}
+		if batchTimeout > 0 {
+			batchCtx, cancel = context.WithTimeout(ctx, batchTimeout)
+		}
+		err := batchCtx.Err()
+		if err != nil {
+			cancel()
+			return err
+		}
+		err = s.sink.putBatch(batchCtx, batch)
+		if batchTimeout > 0 && err != nil && ctx.Err() != nil {
+			// Close canceled the writer. Keep waiters for the final flush.
+			cancel()
+			return ctx.Err()
+		}
+		if batchTimeout > 0 && errors.Is(err, context.DeadlineExceeded) {
+			// Keep these waiters for retry. Later batches still get an attempt.
+			cancel()
+			passErr = err
+			for _, r := range batch {
+				failed[r.Key] = true
+			}
+			continue
 		}
 		if err != nil {
 			// Only an error path reads remote state. Normal Put performs no per-record
 			// preflight process. Proven immutable-key conflicts must not poison retries.
 			conflicts := map[string]bool{}
 			if reader, ok := s.sink.(payloadBatchReader); ok {
-				if rows, e := reader.getMany(ctx, keys); e == nil {
+				batchKeys := make([]string, len(batch))
+				for i, r := range batch {
+					batchKeys[i] = r.Key
+				}
+				if rows, e := reader.getMany(batchCtx, batchKeys); e == nil {
 					for _, r := range batch {
 						if old, ok := rows[r.Key]; ok && string(old) != string(r.Value) {
 							conflicts[r.Key] = true
@@ -488,11 +551,12 @@ func (s *PayloadStore) flush(ctx context.Context) error {
 				}
 			} else {
 				for _, r := range batch {
-					if old, e := s.sink.get(ctx, r.Key); e == nil && string(old) != string(r.Value) {
+					if old, e := s.sink.get(batchCtx, r.Key); e == nil && string(old) != string(r.Value) {
 						conflicts[r.Key] = true
 					}
 				}
 			}
+			cancel()
 			s.mu.Lock()
 			for k := range conflicts {
 				if e := os.Remove(filepath.Join(s.dir, payloadName(k))); e == nil || os.IsNotExist(e) {
@@ -501,12 +565,21 @@ func (s *PayloadStore) flush(ctx context.Context) error {
 				s.notify(k, ErrPayloadConflict)
 			}
 			_ = s.syncDir()
-			for k := range s.waiters {
-				s.notify(k, err)
+			for _, r := range batch {
+				s.notify(r.Key, err)
 			}
 			s.mu.Unlock()
+			if batchTimeout > 0 {
+				// Give later batches an attempt before retrying failed records.
+				passErr = err
+				for _, r := range batch {
+					failed[r.Key] = true
+				}
+				continue
+			}
 			return err
 		}
+		cancel()
 		s.mu.Lock()
 		// The remote commit is authoritative. Cleanup failures remain retryable and
 		// must not acknowledge uncommitted entries outside this successful batch.
@@ -525,8 +598,8 @@ func (s *PayloadStore) flush(ctx context.Context) error {
 				s.notify(r.Key, nil)
 			}
 		} else {
-			for k := range s.waiters {
-				s.notify(k, err)
+			for _, r := range batch {
+				s.notify(r.Key, err)
 			}
 		}
 		s.mu.Unlock()
@@ -560,9 +633,7 @@ func (s *PayloadStore) loop() {
 			}
 		case <-ticker.C:
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		_ = s.Flush(ctx)
-		cancel()
+		_ = s.flushBatches(s.writerCtx, payloadBackgroundBatchTimeout)
 	}
 }
 func (s *PayloadStore) Close() error {
@@ -576,18 +647,28 @@ func (s *PayloadStore) Close() error {
 		return err
 	}
 	s.closed = true
+	if s.writerCancel != nil {
+		s.writerCancel()
+	}
 	close(s.stop)
 	s.mu.Unlock()
 	<-s.done
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), payloadCloseFlushTimeout)
 	err := s.flush(ctx)
 	cancel()
+	// No new reads can start after closed is set. Keep the engine open until
+	// all reads that were accepted have returned from the sink.
+	s.reads.Wait()
 	err = errors.Join(err, s.lock.Close())
 	if s.ownedLake != nil {
 		err = errors.Join(err, s.ownedLake.Close())
 	}
 	s.mu.Lock()
 	s.closeErr = err
+	// No further commit attempts can complete these waiters.
+	for k := range s.waiters {
+		s.notify(k, ErrPayloadClosed)
+	}
 	close(s.closeDone)
 	s.mu.Unlock()
 	return err

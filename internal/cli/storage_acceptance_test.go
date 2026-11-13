@@ -168,6 +168,17 @@ func TestStorageAcceptance(t *testing.T) {
 	if err = s.Pool.QueryRow(ctx, `SELECT body FROM events WHERE job_id=$1 AND kind='agent_output'`, job).Scan(&body); err != nil || !strings.HasPrefix(body, "looster-payload:v1:") {
 		t.Fatalf("PG payload not externalized: %q %v", body, err)
 	}
+	// Exercise concurrent serve leases before an independent reader checks each
+	// final summary and all output records. Neither reader uses a local overlay.
+	concurrentJobs := storageConcurrentAgentRuns(t, ctx, s)
+	a.v.Set("ducklake.spool_dir", t.TempDir())
+	fresh, err := a.openPayloadStore(ctx, ns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fresh.Close()
+	s.SetPayloadStore(fresh)
+	storageCheckConcurrentRuns(t, ctx, s, concurrentJobs)
 	before, err := s.VerifyPayloads(ctx, 0)
 	if err != nil || before.Legacy != 1 {
 		t.Fatalf("historical baseline: %+v %v", before, err)
