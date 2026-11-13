@@ -47,6 +47,7 @@ type payloadBatchReader interface {
 type PayloadStore struct {
 	mu        sync.Mutex
 	flushMu   sync.Mutex
+	reads     sync.WaitGroup
 	waiters   map[string][]chan error
 	wake      chan struct{}
 	closeDone chan struct{}
@@ -340,13 +341,17 @@ func (s *PayloadStore) Get(ctx context.Context, key string) ([]byte, error) {
 // Missing keys are omitted from the result. Duplicate requested keys are folded.
 func (s *PayloadStore) GetMany(ctx context.Context, keys []string) (map[string][]byte, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
+		s.mu.Unlock()
 		return nil, ErrPayloadClosed
 	}
 	if err := ctx.Err(); err != nil {
+		s.mu.Unlock()
 		return nil, err
 	}
+	// Register reads under mu before Close can start its wait.
+	s.reads.Add(1)
+	defer s.reads.Done()
 	result := map[string][]byte{}
 	missing := []string{}
 	seen := map[string]bool{}
@@ -361,6 +366,7 @@ func (s *PayloadStore) GetMany(ctx context.Context, keys []string) (map[string][
 			missing = append(missing, k)
 		}
 	}
+	s.mu.Unlock()
 	if len(missing) == 0 {
 		return result, nil
 	}
@@ -405,13 +411,18 @@ func (s *PayloadStore) GetCommitted(ctx context.Context, key string) ([]byte, er
 // GetManyCommitted verifies remote state and never consults pending.
 func (s *PayloadStore) GetManyCommitted(ctx context.Context, keys []string) (map[string][]byte, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
+		s.mu.Unlock()
 		return nil, ErrPayloadClosed
 	}
 	if err := ctx.Err(); err != nil {
+		s.mu.Unlock()
 		return nil, err
 	}
+	// Register reads under mu before Close can start its wait.
+	s.reads.Add(1)
+	defer s.reads.Done()
+	s.mu.Unlock()
 	if batch, ok := s.sink.(payloadBatchReader); ok {
 		return batch.getMany(ctx, keys)
 	}
@@ -582,6 +593,9 @@ func (s *PayloadStore) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	err := s.flush(ctx)
 	cancel()
+	// No new reads can start after closed is set. Keep the engine open until
+	// all reads that were accepted have returned from the sink.
+	s.reads.Wait()
 	err = errors.Join(err, s.lock.Close())
 	if s.ownedLake != nil {
 		err = errors.Join(err, s.ownedLake.Close())
