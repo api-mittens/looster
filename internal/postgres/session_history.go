@@ -30,8 +30,12 @@ func (s *Store) sessionHistoryRead(ctx context.Context, name string, taskID, bef
 	if limit <= 0 {
 		limit = 50
 	}
-	if limit > 200 {
-		limit = 200
+	maxLimit := 200
+	if !metadataOnly && !hydrate {
+		maxLimit = 201
+	}
+	if limit > maxLimit {
+		limit = maxLimit
 	}
 	columns := sessionRunColumns
 	if metadataOnly {

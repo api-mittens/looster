@@ -17,6 +17,7 @@ import (
 
 var ErrPayloadNotFound = errors.New("DuckLake payload not found")
 var ErrPayloadConflict = errors.New("DuckLake payload key has different content")
+var ErrPayloadReadLimit = errors.New("DuckLake payload read exceeds byte limit")
 var ErrPayloadClosed = errors.New("DuckLake payload store closed")
 
 const (
@@ -350,6 +351,18 @@ func (s *PayloadStore) Get(ctx context.Context, key string) ([]byte, error) {
 // GetMany reads missing keys with bounded parameterized queries, merging pending values.
 // Missing keys are omitted from the result. Duplicate requested keys are folded.
 func (s *PayloadStore) GetMany(ctx context.Context, keys []string) (map[string][]byte, error) {
+	return s.getMany(ctx, keys, 0)
+}
+
+// GetManyBounded reads at most maxBytes of payload data. Zero is not permitted.
+func (s *PayloadStore) GetManyBounded(ctx context.Context, keys []string, maxBytes int64) (map[string][]byte, error) {
+	if maxBytes <= 0 {
+		return nil, ErrPayloadReadLimit
+	}
+	return s.getMany(ctx, keys, maxBytes)
+}
+
+func (s *PayloadStore) getMany(ctx context.Context, keys []string, maxBytes int64) (map[string][]byte, error) {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -365,12 +378,18 @@ func (s *PayloadStore) GetMany(ctx context.Context, keys []string) (map[string][
 	result := map[string][]byte{}
 	missing := []string{}
 	seen := map[string]bool{}
+	var used int64
 	for _, k := range keys {
 		if seen[k] {
 			continue
 		}
 		seen[k] = true
 		if v, ok := s.pending[k]; ok {
+			used += int64(len(v))
+			if maxBytes > 0 && used > maxBytes {
+				s.mu.Unlock()
+				return nil, ErrPayloadReadLimit
+			}
 			result[k] = append([]byte{}, v...)
 		} else {
 			missing = append(missing, k)
@@ -380,12 +399,28 @@ func (s *PayloadStore) GetMany(ctx context.Context, keys []string) (map[string][
 	if len(missing) == 0 {
 		return result, nil
 	}
+	if bounded, ok := s.sink.(interface {
+		getManyBounded(context.Context, []string, int64) (map[string][]byte, error)
+	}); ok && maxBytes > 0 {
+		rows, err := bounded.getManyBounded(ctx, missing, maxBytes-used)
+		if err != nil {
+			return nil, err
+		}
+		for k, v := range rows {
+			result[k] = v
+		}
+		return result, nil
+	}
 	if batch, ok := s.sink.(payloadBatchReader); ok {
 		rows, err := batch.getMany(ctx, missing)
 		if err != nil {
 			return nil, err
 		}
 		for k, v := range rows {
+			used += int64(len(v))
+			if maxBytes > 0 && used > maxBytes {
+				return nil, ErrPayloadReadLimit
+			}
 			result[k] = v
 		}
 		return result, nil
@@ -399,6 +434,10 @@ func (s *PayloadStore) GetMany(ctx context.Context, keys []string) (map[string][
 		}
 		if err != nil {
 			return nil, err
+		}
+		used += int64(len(v))
+		if maxBytes > 0 && used > maxBytes {
+			return nil, ErrPayloadReadLimit
 		}
 		result[k] = v
 	}

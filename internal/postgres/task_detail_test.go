@@ -2,7 +2,9 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/api-mittens/looster/internal/task"
@@ -10,9 +12,92 @@ import (
 
 type detailPayloads struct {
 	backfillTestPayloads
-	batches int
-	gets    int
-	keys    []string
+	batches  int
+	gets     int
+	keys     []string
+	maxBytes int64
+}
+
+func (p *detailPayloads) GetManyBounded(ctx context.Context, keys []string, maxBytes int64) (map[string][]byte, error) {
+	p.maxBytes = maxBytes
+	rows, err := p.GetMany(ctx, keys)
+	if err != nil {
+		return nil, err
+	}
+	var used int64
+	for _, value := range rows {
+		used += int64(len(value))
+	}
+	if used > maxBytes {
+		return nil, ErrTaskPayloadLimit
+	}
+	return rows, nil
+}
+
+func TestTaskPayloadDetailPageCursorsAndSessionBound(t *testing.T) {
+	ctx, s := queuePerformanceStore(t)
+	item, err := s.CreateTask(ctx, "Page", "Task text", task.Todo, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Pool.Exec(ctx, `INSERT INTO agents(name,description) SELECT 'reader_'||i,'Read' FROM generate_series(1,205) i`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Pool.Exec(ctx, `INSERT INTO sessions(task_id,agent_name,session_id) SELECT $1,name,'run' FROM agents WHERE name LIKE 'reader_%'`, item.ID); err != nil {
+		t.Fatal(err)
+	}
+	ids := []int64{}
+	for i := 0; i < 205; i++ {
+		var id int64
+		if err := s.Pool.QueryRow(ctx, `INSERT INTO session_logs(job_id,task_id,agent_name,session_id,kind,body) VALUES(1,$1,'reader_1','run','note','Log text') RETURNING id`, item.ID).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	first, sessions, _, err := s.TaskPayloadDetailPage(ctx, item.ID, 0, 0, 1, 11)
+	if err != nil || len(first.SessionLogs) != 11 || len(sessions) != 200 {
+		t.Fatalf("first page: logs %d sessions %d error %v", len(first.SessionLogs), len(sessions), err)
+	}
+	cursor := first.SessionLogs[0].ID
+	second, _, _, err := s.TaskPayloadDetailPage(ctx, item.ID, 0, cursor, 1, 7)
+	if err != nil || len(second.SessionLogs) != 7 || second.SessionLogs[6].ID >= cursor {
+		t.Fatalf("second page: %+v %v", second.SessionLogs, err)
+	}
+	if second.SessionLogs[0].ID != ids[187] {
+		t.Fatal("log cursor skipped records")
+	}
+	max, _, _, err := s.TaskPayloadDetailPage(ctx, item.ID, 0, 0, 999, 999)
+	if err != nil || len(max.SessionLogs) != 201 {
+		t.Fatalf("maximum page: %d %v", len(max.SessionLogs), err)
+	}
+	if _, _, _, err := s.TaskPayloadDetailPage(ctx, item.ID, 0, -1, 1, 1); err == nil {
+		t.Fatal("negative log cursor was accepted")
+	}
+}
+
+func TestDetailPayloadByteBudget(t *testing.T) {
+	p := &detailPayloads{}
+	s := &Store{payloads: p}
+	ctx := context.Background()
+	large := strings.Repeat("x", int(TaskPayloadMaxBytes/2)+1)
+	ref, err := s.externalize(ctx, large)
+	if err != nil {
+		t.Fatal(err)
+	}
+	one, two := ref, ref
+	if err := s.hydrateDetailStrings(ctx, []*string{&one, &two}); !errors.Is(err, ErrTaskPayloadLimit) {
+		t.Fatalf("repeated payload byte limit: %v", err)
+	}
+	if one != ref || two != ref {
+		t.Fatal("failed bounded read changed values")
+	}
+	inline := strings.Repeat("x", int(TaskPayloadMaxBytes)+1)
+	if err := s.hydrateDetailStrings(ctx, []*string{&inline}); !errors.Is(err, ErrTaskPayloadLimit) {
+		t.Fatalf("inline byte limit: %v", err)
+	}
+	if err := s.hydrateDetailStrings(ctx, []*string{&one}); err != nil || one != large {
+		t.Fatalf("bounded payload read: %v", err)
+	}
 }
 
 func (p *detailPayloads) Get(ctx context.Context, key string) ([]byte, error) {
@@ -135,6 +220,9 @@ func TestTaskPayloadDetailBatchAndBounds(t *testing.T) {
 			if p.batches != 1 || p.gets != 0 || len(p.keys) != 1 {
 				t.Fatalf("reads: %d %d %v", p.batches, p.gets, p.keys)
 			}
+			if p.maxBytes != TaskPayloadMaxBytes {
+				t.Fatal("detail read did not set the byte limit")
+			}
 			for i, log := range detail.SessionLogs {
 				if log.Body != "Shared text" || (i > 0 && log.ID <= detail.SessionLogs[i-1].ID) {
 					t.Fatal("task log text or order is incorrect")
@@ -149,6 +237,9 @@ func TestTaskPayloadDetailBatchAndBounds(t *testing.T) {
 				}
 			}
 		})
+	}
+	if _, _, runs, err := s.TaskPayloadDetailPage(ctx, item.ID, 0, 0, 999, 1); err != nil || len(runs) != 201 {
+		t.Fatalf("run page maximum: %d %v", len(runs), err)
 	}
 	p.corrupt = true
 	if _, _, _, err := s.TaskPayloadDetail(ctx, item.ID, 0, 1); err == nil {

@@ -26,7 +26,7 @@ func (r *columnQueryTrace) TraceQueryStart(ctx context.Context, _ *pgx.Conn, dat
 }
 func (*columnQueryTrace) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
 
-func TestColumnTasksHydratesOnlySelectedIDs(t *testing.T) {
+func TestColumnTasksReadsOnlySelectedSignalMetadata(t *testing.T) {
 	ctx, s := manifestTestStore(t)
 	for i := 0; i < 31; i++ {
 		if _, err := s.CreateTask(ctx, fmt.Sprint("Task ", i), "", task.Todo, nil); err != nil {
@@ -53,8 +53,11 @@ func TestColumnTasksHydratesOnlySelectedIDs(t *testing.T) {
 	defer trace.mu.Unlock()
 	found := false
 	for _, query := range trace.queries {
-		if strings.Contains(query.SQL, "FROM session_logs WHERE task_id=ANY($1) ORDER BY id") {
+		if strings.Contains(query.SQL, "SELECT DISTINCT ON (task_id,kind)") {
 			found = true
+			if !strings.Contains(query.SQL, "kind,''::text,created_at") || !strings.Contains(query.SQL, "kind IN ('blocker','question')") {
+				t.Fatal("signal query reads log bodies or other log kinds")
+			}
 			ids, ok := query.Args[0].([]int64)
 			if !ok || len(ids) != 15 {
 				t.Fatalf("unbounded log hydration parameters: %+v", query.Args)
@@ -71,6 +74,33 @@ func TestColumnTasksHydratesOnlySelectedIDs(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("bounded log hydration query was not observed")
+	}
+}
+
+func TestColumnTasksNeedsNoPayloadReader(t *testing.T) {
+	ctx, s := manifestTestStore(t)
+	item, err := s.CreateTask(ctx, "Signals", "Task text", task.Todo, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := payloadPrefix + payloadKey([]byte("Remote text"))
+	for _, kind := range []string{"blocker", "blocker", "question", "note"} {
+		if _, err := s.Pool.Exec(ctx, `INSERT INTO session_logs(job_id,session_id,agent_name,task_id,kind,body) VALUES(1,'run','coder',$1,$2,$3)`, item.ID, kind, ref); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := s.ColumnTasks(ctx, task.ColumnQuery{Key: "todo"})
+	if err != nil || len(page.Tasks) != 1 {
+		t.Fatalf("metadata page: %+v %v", page, err)
+	}
+	logs := page.Tasks[0].SessionLogs
+	if len(logs) != 2 {
+		t.Fatalf("signal count: %d", len(logs))
+	}
+	for _, log := range logs {
+		if log.Body != "" || log.TaskID != item.ID || (log.Kind != "blocker" && log.Kind != "question") {
+			t.Fatalf("signal metadata: %+v", log)
+		}
 	}
 }
 
@@ -116,7 +146,7 @@ func TestColumnTasksBoundariesSearchAndClamp(t *testing.T) {
 					t.Fatalf("n=%d requested=%d got=%+v", n, page, got)
 				}
 				for i, row := range got.Tasks {
-					if row.ID != ids[start+i] || len(row.SessionLogs) != 1 || row.SessionLogs[0].TaskID != row.ID {
+					if row.ID != ids[start+i] || len(row.SessionLogs) != 0 {
 						t.Fatalf("bounded hydration/order: %+v", row)
 					}
 				}

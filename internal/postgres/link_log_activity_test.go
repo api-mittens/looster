@@ -51,8 +51,8 @@ func TestLinkLogsPreserveActivityAndColumnOrdering(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(page.Tasks) != 2 || page.Tasks[0].ID != newer.ID || page.Tasks[1].ID != older.ID || !page.Tasks[1].LastActivityAt.Equal(baseline.LastActivityAt) || len(page.Tasks[1].SessionLogs) != 1 {
-			t.Fatalf("link changed %s ordering or hydration: %+v", query.Key, page)
+		if len(page.Tasks) != 2 || page.Tasks[0].ID != newer.ID || page.Tasks[1].ID != older.ID || !page.Tasks[1].LastActivityAt.Equal(baseline.LastActivityAt) || len(page.Tasks[1].SessionLogs) != 0 {
+			t.Fatalf("link changed %s metadata or order: %+v", query.Key, page)
 		}
 	}
 }

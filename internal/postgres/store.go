@@ -445,6 +445,9 @@ func (s *Store) sessionsRead(ctx context.Context, name string, metadataOnly bool
 		}
 	}
 	query += ` ORDER BY s.task_id,s.agent_name,s.job_id`
+	if taskID > 0 {
+		query += ` LIMIT 200`
+	}
 	rows, e := s.Pool.Query(ctx, query, args...)
 	if e != nil {
 		return nil, e
