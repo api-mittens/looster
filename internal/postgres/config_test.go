@@ -12,7 +12,63 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestPostgresPoolLifecycle(t *testing.T) {
+	for _, tc := range []struct {
+		name, raw    string
+		idle, health time.Duration
+		bad          bool
+	}{
+		{name: "environment only", idle: 30 * time.Second, health: 10 * time.Second},
+		{name: "URL defaults", raw: "postgres://worker@localhost/test?sslmode=disable", idle: 30 * time.Second, health: 10 * time.Second},
+		{name: "keyword defaults", raw: "host=localhost user=worker", idle: 30 * time.Second, health: 10 * time.Second},
+		{name: "URL above defaults", raw: "postgres://worker@localhost/test?pool_max_conn_idle_time=30m&pool_health_check_period=1m&pool_max_conns=60", idle: 30 * time.Minute, health: time.Minute},
+		{name: "keyword above defaults", raw: "host=localhost pool_max_conn_idle_time='30m' pool_health_check_period=1m pool_max_conns=60", idle: 30 * time.Minute, health: time.Minute},
+		{name: "URL below defaults", raw: "postgres://worker@localhost/test?pool_max_conn_idle_time=5s&pool_health_check_period=2s", idle: 5 * time.Second, health: 2 * time.Second},
+		{name: "keyword below defaults", raw: "host=localhost pool_max_conn_idle_time=5s pool_health_check_period=2s", idle: 5 * time.Second, health: 2 * time.Second},
+		{name: "URL idle only", raw: "postgresql://worker@localhost/test?pool_max_conn_idle_time=2h", idle: 2 * time.Hour, health: 10 * time.Second},
+		{name: "keyword health only", raw: "host=localhost pool_health_check_period=2m", idle: 30 * time.Second, health: 2 * time.Minute},
+		{name: "parameter-looking password", raw: "host=localhost password='pool_max_conn_idle_time=2h pool_health_check_period=2m'", idle: 30 * time.Second, health: 10 * time.Second},
+		{name: "explicit zero idle", raw: "host=localhost pool_max_conn_idle_time=0", idle: 0, health: 10 * time.Second},
+		{name: "invalid URL idle", raw: "postgres://worker@localhost/test?pool_max_conn_idle_time=invalid", bad: true},
+		{name: "empty URL health", raw: "postgres://worker@localhost/test?pool_health_check_period=", bad: true},
+		{name: "invalid keyword health", raw: "host=localhost pool_health_check_period=invalid", bad: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clearPGEnvironment(t)
+			t.Setenv("PGUSER", "worker")
+			t.Setenv("PGSSLMODE", "disable")
+			// LOOSTER_DATABASE_URL supplies the same raw pool parameters as a
+			// directly provided connection string. No database is contacted.
+			t.Setenv("LOOSTER_DATABASE_URL", tc.raw)
+			cfg, err := parsePoolConfig(os.Getenv("LOOSTER_DATABASE_URL"))
+			if (err != nil) != tc.bad {
+				t.Fatalf("unexpected config error: %v", err)
+			}
+			if tc.bad {
+				return
+			}
+			if cfg.MaxConnIdleTime != tc.idle || cfg.HealthCheckPeriod != tc.health {
+				t.Fatalf("idle=%s health=%s, want idle=%s health=%s", cfg.MaxConnIdleTime, cfg.HealthCheckPeriod, tc.idle, tc.health)
+			}
+			baseline, err := pgxpool.ParseConfig(tc.raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.MaxConns != baseline.MaxConns || cfg.MinConns != baseline.MinConns || cfg.MinIdleConns != baseline.MinIdleConns || cfg.MaxConnLifetime != baseline.MaxConnLifetime || cfg.MaxConnLifetimeJitter != baseline.MaxConnLifetimeJitter {
+				t.Fatal("unrelated pool settings changed")
+			}
+			for _, key := range []string{"pool_max_conn_idle_time", "pool_health_check_period"} {
+				if _, ok := cfg.ConnConfig.RuntimeParams[key]; ok {
+					t.Fatalf("pool option %s leaked into server parameters", key)
+				}
+			}
+		})
+	}
+}
 
 func TestPostgresEnvironment(t *testing.T) {
 	for _, tc := range []struct {

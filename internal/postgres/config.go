@@ -46,6 +46,27 @@ func parsePoolConfig(raw string) (*pgxpool.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Supply application defaults as fallback connection parameters, not caps on
+	// the parsed config. Explicit URL/keyword parameters (including those in an
+	// environment-provided connection string) must retain their exact values.
+	// Keep pgx's connection capacity unchanged: worker leases hold connections.
+	if strings.HasPrefix(connString, "postgres://") || strings.HasPrefix(connString, "postgresql://") {
+		u, err := url.Parse(connString)
+		if err != nil {
+			return nil, errors.New("invalid PostgreSQL connection URL")
+		}
+		query := u.Query()
+		if !query.Has("pool_max_conn_idle_time") {
+			query.Set("pool_max_conn_idle_time", "30s")
+		}
+		if !query.Has("pool_health_check_period") {
+			query.Set("pool_health_check_period", "10s")
+		}
+		u.RawQuery = query.Encode()
+		connString = u.String()
+	} else {
+		connString = "pool_max_conn_idle_time=30s pool_health_check_period=10s " + connString
+	}
 	cfg, err := pgxpool.ParseConfig(connString)
 	if err != nil {
 		return nil, errors.New("invalid PostgreSQL connection settings (values omitted)")

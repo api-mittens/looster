@@ -28,6 +28,15 @@ Connection strings can include validated Go pool settings such as
 omits them from the native DuckLake connection without changing authentication,
 database selection, or TLS settings. Unknown connection options remain errors.
 
+The application pgx pool defaults to `pool_max_conn_idle_time=30s` and
+`pool_health_check_period=10s`, releasing unused session-pooler backend slots
+instead of retaining them for pgx's 30-minute idle default. These are fallbacks,
+not caps: explicit URL or keyword pool parameters, including parameters supplied
+through `LOOSTER_DATABASE_URL`, are preserved even when larger. Idle cleanup runs
+on health checks, not exactly at the idle deadline. Connection capacity and other
+pool settings are unchanged because worker leases hold long-lived connections.
+Acquired lease connections are not idle pool connections.
+
 Each namespace has a dedicated S3 prefix:
 
 ```text
