@@ -163,6 +163,29 @@ This is stronger acceptance evidence for the review, not evidence of a product s
 
 A real browser acceptance attempt was also made: the browser tool reports Firefox running but its live bridge unresponsive. Actual painting, focus, and visual pagination acceptance remain blocked by that bridge. The two frontend characterizations remain synthetic evidence and are not relabeled browser acceptance. Mutating production to test comments or dispatch was deliberately avoided, and the isolated native PostgreSQL/S3 fixture remains blocked by missing PostgreSQL server tools.
 
+## Discoverer review evaluation
+
+User-requested check completed against committed review head `1ec141f` and base `ac61cff`. Successful command, run from `/home/domdom/Code/discoverer`:
+
+```sh
+go run ./cmd/discoverer review /home/domdom/Code/looster --head review/pr-36-storage-behaviour --base origin/master --format json
+```
+
+JSON output is saved at `/home/domdom/Code/looster-review-36-discoverer.json` (about 1.2 MiB). It parses successfully and identifies the expected head/base/merge-base hashes. It covers 39 changed files, of which 35 are mapped, one is outside declarations, and three are unsupported-language. Both history and static analyses report 172 touched declarations. History has 10 advisory boundary conflicts and 231 total neighbor relationships; static has 19 advisory boundary conflicts and 126 total neighbors. Only the top 20 neighbor relationships per source are emitted with the default setting.
+
+**Usefulness: useful as an architectural review map, not a correctness verifier.** It directs attention to `store.go`, CLI startup, and the web handler, matching the boundaries that need care in this change. Historical neighbors include `PayloadStore.Put/loop/Close` and session-history recovery tests, useful prompts to retain cross-process durability and retry coverage. Static neighbors include `WithPermissions`, `OpenNamespace`, and `EnsureNamespace`, supporting the need to exercise the permission and startup boundaries rather than only repository fakes.
+
+It did not identify the response-writer compiler failure, the two reproduced UI bugs, the live one-hour timeout explanation, or the measured lake-independent list latency. The report explicitly describes its conflicts as advisory architectural feedback, not merge conflicts or required edits. Do not interpret the 29 boundary conflicts as 29 bugs. Some default top-neighbor slots are consumed by repeated links to the same declaration, and history promotes `TestProgressiveMetadataBrowser` from a file no longer present at head. That historical evidence is labeled, but it adds noise to an actionable review checklist.
+
+Invocation friction observed:
+
+1. The requested `go run ~/Code/discoverer ...` fails from the Looster module because the directory is outside that Go module. The Discoverer module root is also a library, not a main package. Its CLI entrypoint is `./cmd/discoverer`.
+2. Looster's actual default branch is `origin/master`, not `origin/main`.
+3. Running against the linked review worktree reports `origin/master` as missing even though `git rev-parse origin/master` succeeds there. Using the primary repository with an explicit review branch works without changing the primary checkout.
+4. The successful command exits zero but prints connection-refused OpenTelemetry exporter warnings for localhost port 4317. `--otel-endpoint ''` is available to disable that optional exporter when no collector is running.
+
+No Discoverer source was changed. No new correctness claim is based solely on its community/coupling graph.
+
 ## Validation and limits
 
 - PR head: `go test -count=1 -timeout=5m ./internal/app ./internal/postgres ./internal/cli ./internal/ducklake ./internal/web` passed.
