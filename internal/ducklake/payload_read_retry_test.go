@@ -9,11 +9,66 @@ import (
 )
 
 func TestCommittedPayloadReadRetry(t *testing.T) {
+	t.Run("first context unchanged", func(t *testing.T) {
+		deadlineCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		for _, caller := range []context.Context{context.Background(), deadlineCtx} {
+			for _, resultErr := range []error{nil, ErrPayloadConflict} {
+				calls := 0
+				_, err := retryCommittedPayloadRead(caller, time.Millisecond, time.Millisecond, func(first context.Context) (map[string][]byte, error) {
+					calls++
+					if first != caller {
+						t.Fatal("first read context replaced")
+					}
+					gotDeadline, gotOK := first.Deadline()
+					wantDeadline, wantOK := caller.Deadline()
+					if gotOK != wantOK || !gotDeadline.Equal(wantDeadline) {
+						t.Fatal("first read deadline changed")
+					}
+					return nil, resultErr
+				})
+				if err != resultErr || calls != 1 {
+					t.Fatalf("calls=%d err=%v", calls, err)
+				}
+			}
+		}
+	})
+	t.Run("healthy read may exceed recovery budget", func(t *testing.T) {
+		_, err := retryCommittedPayloadRead(context.Background(), time.Millisecond, time.Millisecond, func(ctx context.Context) (map[string][]byte, error) {
+			select {
+			case <-time.After(10 * time.Millisecond):
+				return map[string][]byte{"key": []byte("value")}, nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("recovery budget starts after first busy", func(t *testing.T) {
+		calls := 0
+		_, err := retryCommittedPayloadRead(context.Background(), 20*time.Millisecond, time.Millisecond, func(ctx context.Context) (map[string][]byte, error) {
+			calls++
+			if calls == 1 {
+				time.Sleep(25 * time.Millisecond)
+				return nil, ErrCatalogBusy
+			}
+			deadline, ok := ctx.Deadline()
+			if !ok || time.Until(deadline) <= 0 || time.Until(deadline) > 20*time.Millisecond {
+				t.Fatal("retry missing fresh bounded recovery deadline")
+			}
+			return nil, nil
+		})
+		if err != nil || calls != 2 {
+			t.Fatalf("calls=%d err=%v", calls, err)
+		}
+	})
 	t.Run("success discards partial", func(t *testing.T) {
 		calls := 0
 		rows, err := retryCommittedPayloadRead(context.Background(), time.Second, time.Millisecond, func(ctx context.Context) (map[string][]byte, error) {
 			calls++
-			if _, ok := ctx.Deadline(); !ok {
+			if _, ok := ctx.Deadline(); calls > 1 && !ok {
 				t.Fatal("missing bounded deadline")
 			}
 			if calls < 3 {
