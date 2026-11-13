@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -90,7 +91,9 @@ func (s lakePayloadSink) putBatch(ctx context.Context, records []payloadRecord) 
 		return ctx.Err()
 	}
 	conflict := false
+	stage := "session wait"
 	err := s.lake.withConn(ctx, "payload transaction", func(ctx context.Context, conn *sql.Conn) error {
+		stage = "begin"
 		if _, err := conn.ExecContext(ctx, "BEGIN TRANSACTION"); err != nil {
 			return err
 		}
@@ -116,6 +119,7 @@ func (s lakePayloadSink) putBatch(ctx context.Context, records []payloadRecord) 
 			unique[r.Key] = r.Value
 			keys = append(keys, r.Key)
 		}
+		stage = "existing payload query"
 		existing, err := getPayloadRows(ctx, conn, keys)
 		if err != nil {
 			conflict = errors.Is(err, ErrPayloadConflict)
@@ -127,11 +131,13 @@ func (s lakePayloadSink) putBatch(ctx context.Context, records []payloadRecord) 
 				return ErrPayloadConflict
 			}
 		}
+		stage = "appender creation"
 		err = conn.Raw(func(raw any) error {
 			appender, err := duckdb.NewAppender(raw.(driver.Conn), "lake", "main", "looster_payloads")
 			if err != nil {
 				return err
 			}
+			stage = "append"
 			for _, key := range keys {
 				if _, ok := existing[key]; ok {
 					continue
@@ -143,6 +149,9 @@ func (s lakePayloadSink) putBatch(ctx context.Context, records []payloadRecord) 
 					break
 				}
 			}
+			if err == nil {
+				stage = "appender flush"
+			}
 			closeErr := appender.CloseWithCancel(ctx)
 			if err != nil {
 				return err
@@ -152,6 +161,7 @@ func (s lakePayloadSink) putBatch(ctx context.Context, records []payloadRecord) 
 		if err != nil {
 			return err
 		}
+		stage = "catalog commit"
 		if _, err = conn.ExecContext(ctx, "COMMIT"); err != nil {
 			return err
 		}
@@ -161,5 +171,10 @@ func (s lakePayloadSink) putBatch(ctx context.Context, records []payloadRecord) 
 	if conflict {
 		return ErrPayloadConflict
 	}
-	return err
+	if err != nil {
+		// Only fixed stage names and the sanitized engine error can escape.
+		// Keep cancellation identity for durable retry decisions.
+		return fmt.Errorf("DuckLake payload %s: %w", stage, err)
+	}
+	return nil
 }
