@@ -93,8 +93,18 @@ separate catalog override must refer to an existing database at runtime.
 Pending payloads are durably spooled locally while bounded DuckLake batch
 writes execute. A successful Put acknowledges **remote commit**, not merely a
 local spool write, so another host can immediately resolve a PostgreSQL payload
-reference. Failed writes preserve pending spool records for retry. The default
-spool root is `$XDG_STATE_HOME/looster/ducklake-spool`, or
+reference. Failed writes preserve pending spool records for retry.
+
+Each background batch has its own 30-second transaction time limit. A background
+transaction deadline keeps its callers waiting for a later commit attempt, as
+long as their request contexts remain active. It does not stop an agent by
+itself. A canceled caller returns without deleting the durable retry record.
+Other write errors still reach the caller. Error messages name a fixed
+transaction stage, but do not expose native diagnostics or payload values.
+An upgrade does not change an already failed run to done or create a summary
+that the agent never produced. Retry that run only after storage is healthy.
+
+The default spool root is `$XDG_STATE_HOME/looster/ducklake-spool`, or
 `~/.local/state/looster/ducklake-spool`. Keep it on durable local storage. Spools
 are isolated by catalog, S3 path and namespace, independent of credentials so
 password rotation does not strand pending writes. Shutdown attempts a final
