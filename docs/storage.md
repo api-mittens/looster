@@ -129,10 +129,12 @@ an existing table never repartitions it. The explicit table-level inlining limit
 is only written when it is missing or nonzero. This avoids catalog conflicts
 between CLI clients and long-running worker commits.
 
-Each embedded engine limits its PostgreSQL metadata pool to two connections,
-disables thread-local connection retention, and reaps connections idle for five
-seconds. This budget is per engine, not a database-wide cap. Application pgx
-pools and other database users still need their own connection budgets.
+Each embedded engine disables PostgreSQL metadata connection caching and
+thread-local retention before catalog attachment. Returned connections close
+immediately rather than reserving session-pooler backend slots between payload
+operations. The native connector's pool size only bounds cached connections and
+can be exceeded by forced scans, so a small cache is not a hard connection cap.
+Application pgx pools and other database users still need their own budgets.
 
 Background payload writes retain their durable spool records and waiting callers
 through recognized transient catalog conflicts, connection exhaustion, and
