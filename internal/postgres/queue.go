@@ -257,12 +257,33 @@ func (l *lease) Archive(ctx context.Context, r app.Result) error {
 func (l *lease) Complete(ctx context.Context) error {
 	return l.transaction(ctx, func(tx pgx.Tx) error {
 		closed := false
+		taskExists := false
 		if l.job.TaskID > 0 {
 			var status task.Status
-			if e := tx.QueryRow(ctx, `SELECT status FROM tasks WHERE id=$1 FOR UPDATE`, l.job.TaskID).Scan(&status); e != nil {
+			e := tx.QueryRow(ctx, `SELECT status FROM tasks WHERE id=$1 FOR UPDATE`, l.job.TaskID).Scan(&status)
+			if e != nil && !errors.Is(e, pgx.ErrNoRows) {
 				return e
 			}
+			taskExists = e == nil
 			closed = status == task.Closed
+		}
+		// Lock the job before all completion writes. A retry must not add an event.
+		var state string
+		var notification, visibleWork bool
+		e := tx.QueryRow(ctx, `SELECT j.state,j.notification,EXISTS(
+ SELECT FROM events e WHERE j.notification AND e.task_id=j.task_id AND e.actor_agent=j.agent_name
+ AND e.created_at>j.started_at
+ AND e.kind IN ('comment','updated','status_changed','tags_changed',
+ 'attachment_added','attachment_removed','attachment_updated'))
+ FROM jobs j WHERE j.id=$1 FOR UPDATE OF j`, l.job.ID).Scan(&state, &notification, &visibleWork)
+		if errors.Is(e, pgx.ErrNoRows) {
+			return nil
+		}
+		if e != nil {
+			return e
+		}
+		if state == "done" || state == "failed" {
+			return nil
 		}
 		if err := l.recordSessionRun(ctx, tx, "done", ""); err != nil {
 			return err
@@ -276,12 +297,12 @@ func (l *lease) Complete(ctx context.Context) error {
 			}
 		}
 		kind := "agent_stopped"
-		if l.job.Notification {
+		if notification && (!visibleWork || closed || !taskExists) {
 			kind = "notification_handled"
-		} else if closed {
+		} else if closed || (l.job.TaskID > 0 && !taskExists) {
 			kind = "agent_archived"
 		}
-		_, e := tx.Exec(ctx, `INSERT INTO events(task_id,kind,agent_name,body) VALUES($1,$2,$3,$4)`, l.eventTask(), kind, l.job.Agent, l.job.SessionID)
+		_, e = tx.Exec(ctx, `INSERT INTO events(task_id,kind,agent_name,body) VALUES($1,$2,$3,$4)`, l.eventTask(), kind, l.job.Agent, l.job.SessionID)
 		return e
 	})
 }
