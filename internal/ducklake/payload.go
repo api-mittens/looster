@@ -78,7 +78,7 @@ func NewPayloadStore(ctx context.Context, lake *Lake, opts PayloadOptions) (*Pay
 	if lake == nil {
 		return nil, errors.New("DuckLake lake is required")
 	}
-	if err := lake.Exec(ctx, "CREATE TABLE IF NOT EXISTS lake.main.looster_payloads (payload_key VARCHAR, payload BLOB); CALL lake.set_option('data_inlining_row_limit', 0, table_name => 'looster_payloads'); ALTER TABLE lake.main.looster_payloads SET PARTITIONED BY (bucket(256, payload_key));"); err != nil {
+	if err := initializePayloadTable(ctx, lake); err != nil {
 		return nil, err
 	}
 	s, err := newPayloadStoreContext(ctx, lakePayloadSink{lake}, opts)
