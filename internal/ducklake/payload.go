@@ -433,6 +433,14 @@ func (s *PayloadStore) GetManyCommitted(ctx context.Context, keys []string) (map
 	s.reads.Add(1)
 	defer s.reads.Done()
 	s.mu.Unlock()
+	return retryCommittedPayloadRead(ctx, 10*time.Second, 50*time.Millisecond, func(attempt context.Context) (map[string][]byte, error) {
+		return s.getManyCommittedAttempt(attempt, keys)
+	})
+}
+
+// Each retry builds a fresh result. Failed/partial attempts must never be merged
+// into the next read or into the local pending overlay.
+func (s *PayloadStore) getManyCommittedAttempt(ctx context.Context, keys []string) (map[string][]byte, error) {
 	if batch, ok := s.sink.(payloadBatchReader); ok {
 		return batch.getMany(ctx, keys)
 	}

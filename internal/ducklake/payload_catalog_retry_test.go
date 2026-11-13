@@ -90,13 +90,14 @@ func requireSQLBefore(t *testing.T, sql, before, after string) {
 	}
 }
 
-func TestMetadataPoolIsBoundedBeforeAttachment(t *testing.T) {
+func TestMetadataPoolDoesNotRetainConnections(t *testing.T) {
 	prelude, err := prepare(config())
 	if err != nil {
 		t.Fatal(err)
 	}
-	requireSQLBefore(t, prelude, "LOAD postgres;", "SET pg_connection_limit=2;")
-	for _, setting := range []string{"SET pg_connection_limit=2;", "SET pg_pool_enable_thread_local_cache=false;", "SET pg_pool_idle_timeout_millis=5000;", "SET pg_pool_enable_reaper_thread=true;"} {
+	requireSQLBefore(t, prelude, "LOAD postgres;", "SET pg_pool_max_connections=0;")
+	for _, setting := range []string{"SET pg_pool_max_connections=0;", "SET pg_pool_enable_thread_local_cache=false;"} {
 		requireSQLBefore(t, prelude, setting, "ATTACH 'ducklake:looster_lake'")
 	}
+	requireSQLBefore(t, prelude, "ATTACH 'ducklake:looster_lake'", "FROM postgres_configure_pool(catalog_name='__ducklake_metadata_lake', max_connections=0, enable_thread_local_cache=false)")
 }

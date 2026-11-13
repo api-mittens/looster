@@ -28,6 +28,15 @@ Connection strings can include validated Go pool settings such as
 omits them from the native DuckLake connection without changing authentication,
 database selection, or TLS settings. Unknown connection options remain errors.
 
+The application pgx pool defaults to `pool_max_conn_idle_time=30s` and
+`pool_health_check_period=10s`, releasing unused session-pooler backend slots
+instead of retaining them for pgx's 30-minute idle default. These are fallbacks,
+not caps: explicit URL or keyword pool parameters, including parameters supplied
+through `LOOSTER_DATABASE_URL`, are preserved even when larger. Idle cleanup runs
+on health checks, not exactly at the idle deadline. Connection capacity and other
+pool settings are unchanged because worker leases hold long-lived connections.
+Acquired lease connections are not idle pool connections.
+
 Each namespace has a dedicated S3 prefix:
 
 ```text
@@ -120,10 +129,15 @@ an existing table never repartitions it. The explicit table-level inlining limit
 is only written when it is missing or nonzero. This avoids catalog conflicts
 between CLI clients and long-running worker commits.
 
-Each embedded engine limits its PostgreSQL metadata pool to two connections,
-disables thread-local connection retention, and reaps connections idle for five
-seconds. This budget is per engine, not a database-wide cap. Application pgx
-pools and other database users still need their own connection budgets.
+Each embedded engine disables PostgreSQL metadata connection caching and
+thread-local retention on the actual attached metadata catalog. DuckLake's
+internal context does not inherit session-local extension defaults, so Looster
+configures and verifies the pool after attachment as well as setting defaults.
+Returned connections close
+immediately rather than reserving session-pooler backend slots between payload
+operations. The native connector's pool size only bounds cached connections and
+can be exceeded by forced scans, so a small cache is not a hard connection cap.
+Application pgx pools and other database users still need their own budgets.
 
 Background payload writes retain their durable spool records and waiting callers
 through recognized transient catalog conflicts, connection exhaustion, and

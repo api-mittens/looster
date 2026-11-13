@@ -356,16 +356,20 @@ func prepare(c Config) (string, error) {
 	return "SELECT CASE WHEN version() = '" + EngineVersion + "' THEN true ELSE error('engine version mismatch') END;\n" +
 		"SET allow_unsigned_extensions=false; SET autoinstall_known_extensions=false; SET autoload_known_extensions=false;\n" +
 		"LOAD httpfs;\nINSTALL postgres FROM 'https://extensions.duckdb.org'; LOAD postgres;\n" +
-		// Every CLI and worker has its own engine. The native pool defaults to
-		// one connection per CPU and retains idle connections indefinitely.
-		// Disable thread-local leases and reap idle connections so concurrent
-		// agents do not exhaust a small hosted PostgreSQL connection budget.
-		"SET pg_connection_limit=2; SET pg_pool_enable_thread_local_cache=false; SET pg_pool_idle_timeout_millis=5000; SET pg_pool_enable_reaper_thread=true;\n" +
+		// Every CLI and worker has its own engine.
+		// Pool limits bound cached connections, not forced scan connections.
+		// Release metadata connections on return rather than retaining session
+		// pooler slots across the many independently opened CLI engines.
+		"SET pg_pool_max_connections=0; SET pg_pool_enable_thread_local_cache=false;\n" +
 		"INSTALL ducklake FROM 'https://extensions.duckdb.org'; LOAD ducklake;\n" +
 		"SELECT CASE WHEN (SELECT count(*) FROM duckdb_extensions() WHERE loaded AND ((extension_name='ducklake' AND extension_version='" + DuckLakeExtensionVersion + "') OR (extension_name='postgres_scanner' AND extension_version='" + PostgresExtensionVersion + "') OR (extension_name='httpfs' AND extension_version='" + HTTPFSExtensionVersion + "'))) = 3 THEN true ELSE error('extension version mismatch') END;\n" +
 		"CREATE TEMPORARY SECRET looster_s3 (TYPE s3, PROVIDER config, KEY_ID " + quote(s.AccessKey) + ", SECRET " + quote(s.SecretKey) + ", SESSION_TOKEN " + quote(s.SessionToken) + ", REGION " + quote(s.Region) + ", URL_STYLE 'path', SCOPE " + quote(c.DataPath) + endpoint + ");\n" +
 		"CREATE TEMPORARY SECRET looster_lake (TYPE ducklake, METADATA_PATH " + quote("postgres:"+c.CatalogConnection+" passfile="+libpqQuote(os.DevNull)) + ", DATA_PATH " + quote(c.DataPath) + ");\n" +
-		"ATTACH 'ducklake:looster_lake' AS lake (METADATA_SCHEMA " + quote(metadataSchema(c.Namespace)) + ", DATA_INLINING_ROW_LIMIT 0, OVERRIDE_DATA_PATH false);\n", nil
+		"ATTACH 'ducklake:looster_lake' AS lake (METADATA_SCHEMA " + quote(metadataSchema(c.Namespace)) + ", DATA_INLINING_ROW_LIMIT 0, OVERRIDE_DATA_PATH false);\n" +
+		// DuckLake creates its metadata catalog in an internal context, which
+		// does not inherit our session-local extension settings. Configure and
+		// verify the actual attached pool, not just the outer session defaults.
+		"SELECT CASE WHEN count(*) = 1 AND bool_and(max_connections = 0 AND NOT thread_local_cache_enabled) THEN true ELSE error('metadata connection pool unavailable') END FROM postgres_configure_pool(catalog_name='__ducklake_metadata_lake', max_connections=0, enable_thread_local_cache=false);\n", nil
 }
 
 // validConnection accepts only libpq keyword syntax and known parameters. It
