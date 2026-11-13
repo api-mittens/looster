@@ -216,10 +216,10 @@ func TestColumnPaginationPostgresBrowser(t *testing.T) {
 	check(`!document.querySelector('looster-board').loading && document.querySelector('looster-board').columnPages.todo===2 && document.querySelector('looster-board').columnPages['agent:coder']===2 && document.querySelector('[data-refresh-key="todo"] .column-page-summary').textContent==='16–30 of 30 tasks'`)
 	fail.Store(true)
 	run(chromedp.Click("#refresh"))
-	check(`!document.querySelector('looster-board').loading && document.querySelector('[data-refresh-key="todo"] [role="alert"]')?.textContent.includes('Could not load columns')`)
+	check(`!document.querySelector('looster-board').loading && document.querySelector('[data-refresh-key="todo"] [role="alert"]')?.textContent.trim()==='Cannot load tasks. Select Retry to try again. Retry' && document.querySelector('[data-refresh-key="todo"] [data-column-retry]')?.textContent==='Retry' && document.querySelector('[data-refresh-key="todo"] .column-page-summary').textContent==='16–30 of 30 tasks'`)
 	fail.Store(false)
 	run(chromedp.Click(`[data-refresh-key="todo"] [data-column-retry]`))
-	check(`!document.querySelector('looster-board').loading && !document.querySelector('[data-refresh-key="todo"] [role="alert"]')`)
+	check(`!document.querySelector('looster-board').loading && !document.querySelector('[data-refresh-key="todo"] [role="alert"]') && document.querySelector('[data-refresh-key="todo"] .column-page-summary').textContent==='16–30 of 30 tasks' && document.querySelector('[data-refresh-key="todo"] .cards').children.length===15`)
 	evaluate(fmt.Sprintf(`{const select=document.querySelector('#namespace');select.value=%q;select.dispatchEvent(new Event('change'));}`, second))
 	check(`!document.querySelector('looster-board').loading && document.querySelector('[data-refresh-key="todo"]').textContent.includes('Other namespace only') && !document.querySelector('.board').textContent.includes('Pagination acceptance') && Object.values(document.querySelector('looster-board').columnPages).every(p=>p===1)`)
 	if unbounded.Load() != 0 {
