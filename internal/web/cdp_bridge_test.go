@@ -1,3 +1,5 @@
+//go:build uitest
+
 package web
 
 import (

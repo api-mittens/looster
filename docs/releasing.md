@@ -27,10 +27,10 @@ git push origin v0.1.0
 Pushing a `v` version tag triggers CI. CI runs the Go tests first, then builds
 and publishes release assets and SHA-256 checksums.
 
-CI includes Go-driven Chromium browser acceptance tests and PostgreSQL integration
-tests before releasing. See [CI and browser integration](contributing.md#ci-and-browser-integration).
-A failed test run must not produce a release. The test job also runs the frontend
-Node.js state and pagination tests. No frontend build step is required.
+CI runs API, worker, PostgreSQL, and storage tests before releasing. Browser,
+rendering, and frontend tests are local-only behind the `uitest` build tag (or
+local Node commands). See [local UI checks](contributing.md#local-ui-checks).
+A failed test run must not produce a release. No frontend build step is required.
 
 The release matrix is:
 
