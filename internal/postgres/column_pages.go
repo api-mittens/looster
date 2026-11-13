@@ -100,7 +100,7 @@ func (s *Store) ColumnTasks(ctx context.Context, q task.ColumnQuery) (task.Colum
 	}
 	// Read only the latest blocker and question identities for each task.
 	if len(pageIDs) > 0 {
-		logs, err := tx.Query(ctx, `SELECT DISTINCT ON (task_id,kind) id,job_id,session_id,agent_name,kind,''::text,created_at,task_id FROM session_logs WHERE task_id=ANY($1) AND kind IN ('blocker','question') ORDER BY task_id,kind,id DESC`, pageIDs)
+		logs, err := tx.Query(ctx, taskSignalQuery, pageIDs)
 		if err != nil {
 			return out, err
 		}

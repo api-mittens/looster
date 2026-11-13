@@ -55,7 +55,7 @@ func (s *Store) Tasks(ctx context.Context) ([]task.Task, error) {
 	return s.tasks(ctx, false)
 }
 
-// TasksMetadata returns tasks without session log bodies.
+// TasksMetadata returns tasks and signal identities without log bodies.
 func (s *Store) TasksMetadata(ctx context.Context) ([]task.Task, error) {
 	return s.tasks(ctx, true)
 }
@@ -69,14 +69,16 @@ func (s *Store) tasks(ctx context.Context, metadataOnly bool) ([]task.Task, erro
 	for _, r := range rows {
 		out = append(out, task.Task{ID: r.ID, Name: r.Name, Description: r.Description, Status: task.Status(r.Status), Tags: r.Tags, CreatedAt: r.CreatedAt.Time, LastActivityAt: r.LastActivityAt.Time, StatusChanges: r.StatusChanges, CommentCount: r.CommentCount})
 	}
-	if metadataOnly {
-		return out, nil
-	}
 	ids := make([]int64, len(out))
 	for i := range out {
 		ids[i] = out[i].ID
 	}
-	logs, e := s.sessionLogsForIDs(ctx, "task_id", ids)
+	var logs map[int64][]agent.SessionLog
+	if metadataOnly {
+		logs, e = s.taskSignalLogs(ctx, ids)
+	} else {
+		logs, e = s.sessionLogsForIDs(ctx, "task_id", ids)
+	}
 	if e != nil {
 		return nil, e
 	}

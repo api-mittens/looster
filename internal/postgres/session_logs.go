@@ -12,6 +12,31 @@ import (
 
 const sessionLogColumns = `id,job_id,session_id,agent_name,kind,body,created_at,task_id`
 
+const taskSignalQuery = `SELECT DISTINCT ON (task_id,kind) id,job_id,session_id,agent_name,kind,''::text,created_at,task_id FROM session_logs WHERE task_id=ANY($1) AND kind IN ('blocker','question') ORDER BY task_id,kind,id DESC`
+
+func (s *Store) taskSignalLogs(ctx context.Context, ids []int64) (map[int64][]agent.SessionLog, error) {
+	out := make(map[int64][]agent.SessionLog, len(ids))
+	for _, id := range ids {
+		out[id] = []agent.SessionLog{}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := s.Pool.Query(ctx, taskSignalQuery, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		log, err := scanSessionLog(rows)
+		if err != nil {
+			return nil, err
+		}
+		out[log.TaskID] = append(out[log.TaskID], log)
+	}
+	return out, rows.Err()
+}
+
 func scanSessionLog(row pgx.Row) (agent.SessionLog, error) {
 	var l agent.SessionLog
 	err := row.Scan(&l.ID, &l.JobID, &l.SessionID, &l.Agent, &l.Kind, &l.Body, &l.CreatedAt, &l.TaskID)

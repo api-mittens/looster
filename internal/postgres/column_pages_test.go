@@ -102,6 +102,15 @@ func TestColumnTasksNeedsNoPayloadReader(t *testing.T) {
 			t.Fatalf("signal metadata: %+v", log)
 		}
 	}
+	graph, err := s.TasksMetadata(ctx)
+	if err != nil || len(graph) != 1 || len(graph[0].SessionLogs) != 2 {
+		t.Fatalf("graph signal metadata: %+v %v", graph, err)
+	}
+	for i, log := range graph[0].SessionLogs {
+		if log.ID != logs[i].ID || log.Body != "" || log.Kind != logs[i].Kind {
+			t.Fatalf("graph and column signals do not match: %+v", log)
+		}
+	}
 }
 
 func TestColumnTasksBoundariesSearchAndClamp(t *testing.T) {
