@@ -126,7 +126,9 @@ func openEngine(ctx context.Context) (*Lake, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("duckdb", "?memory_limit="+EngineMemoryLimit)
+	// Do not load credentials from the host's persistent DuckDB secret store.
+	// Configure this before the first use of the secret manager.
+	db, err := sql.Open("duckdb", "?memory_limit="+EngineMemoryLimit+"&allow_persistent_secrets=false")
 	if err != nil {
 		return nil, operationError("engine initialization")
 	}

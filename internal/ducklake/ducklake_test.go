@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -166,8 +167,43 @@ func TestOpenEngineMemoryLimitAndIsolation(t *testing.T) {
 		"SELECT CASE WHEN count(*)=0 THEN true ELSE error('unexpected catalog') END FROM duckdb_databases() WHERE database_name='lake'",
 	} {
 		if err := l.Exec(ctx, query); err != nil {
-			t.Fatal(err)
+			t.Fatalf("isolation query %q: %v", query, err)
 		}
+	}
+}
+
+func TestOpenEngineIgnoresPersistentSecrets(t *testing.T) {
+	l := engine(t)
+	ctx := context.Background()
+	var allowed bool
+	if err := l.conn.QueryRowContext(ctx, "SELECT current_setting('allow_persistent_secrets')").Scan(&allowed); err != nil {
+		t.Fatal(err)
+	}
+	if allowed {
+		t.Fatal("engine must not allow persistent secrets")
+	}
+	// A damaged host secret must not prevent the use of temporary credentials.
+	directory := t.TempDir()
+	path := filepath.Join(directory, "host.duckdb_secret")
+	const damaged = "invalid persistent secret"
+	if err := os.WriteFile(path, []byte(damaged), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Exec(ctx, "SET secret_directory="+quote(directory)); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Exec(ctx, "SELECT CASE WHEN count(*)=0 THEN true ELSE error('host secret loaded') END FROM duckdb_secrets()"); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Exec(ctx, "CREATE TEMPORARY SECRET local_test (TYPE HTTP, BEARER_TOKEN 'test-only'); DROP SECRET local_test"); err != nil {
+		t.Fatal("temporary credentials must remain available", err)
+	}
+	if err := l.Exec(ctx, "CREATE PERSISTENT SECRET blocked_test (TYPE HTTP, BEARER_TOKEN 'test-only')"); err == nil {
+		t.Fatal("persistent credential writes must be blocked")
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil || string(contents) != damaged {
+		t.Fatal("host secret file was changed")
 	}
 }
 
