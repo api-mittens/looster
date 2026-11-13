@@ -2,7 +2,21 @@
 
 Reviewed November 13, 2026. PR head: `7cb7c0c`. Current remote default: `master` at `ac61cff`, not `main`. PR merge base: `ec1fb19`.
 
-## Verdict
+## Implementation follow-up
+
+The review below records the original PR-head findings. Subsequent commits on this branch now resolve the request-writer integration blocker, both reproduced UI defects, and payload-heavy ongoing worker control checks. The original review verdict is historical, not the current branch verdict. Streaming capture, archive-dependent completion/failure writes, eager CLI startup, and list round-trip optimization remain outside this scoped follow-up.
+
+The master integration retains telemetry; the frontend assigns task description/context ownership exclusively to metadata and tracks connected log-page ranges so refreshed gaps stay reachable without resetting previously loaded progress. Worker status checks use a narrow metadata capability with legacy permission-wrapper fallback, leaving prompt preparation unchanged.
+
+### agent-browser CLI acceptance
+
+The requested `agent-browser --session looster-pr36` CLI successfully launched installed Chromium independently of the unresponsive browser bridge. It exercised the real embedded dashboard handler against existing PostgreSQL data with no payload reader. A loopback-only test wrapper rejects every non-GET/HEAD request, protecting production from accidental mutations.
+
+Observed: graph rendered five active tasks and online agents; opening TSK-80 rendered its description, seven comments, status selector and session identities while archival sections showed explicit Retry controls. An unsent draft and textarea focus both survived automatic refresh. The list rendered 10 column data sets; expanding stages and clicking Next on Validated advanced to page 2 containing 15 tasks. Browser error/console commands were empty. The recorded list response was 2,098 ms, so residual PostgreSQL/round-trip latency is not claimed fixed.
+
+Evidence: `/home/domdom/Code/looster-pr36-graph.png`, `looster-pr36-detail.png`, `looster-pr36-list.png`, and `looster-pr36-list-page2.png`. No comment was submitted and no task status was changed.
+
+## Verdict at initial review
 
 **Do not merge as-is.** The PR improves the web metadata boundary, but is incompatible with the current default branch and has two reproduced UI correctness defects. It does not remove the service's operational dependency on DuckLake. Overall rollout risk: **high** until integration and service-path checks pass.
 
