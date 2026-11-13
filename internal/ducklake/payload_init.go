@@ -21,7 +21,10 @@ func initializePayloadTable(ctx context.Context, lake *Lake) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			if attempt >= 4 || !payloadInitTransient(err) {
+			// Give competing clients time to finish and release catalog
+			// connections. The old 375ms window failed most concurrent
+			// openers before even one payload operation could complete.
+			if attempt >= 8 || !payloadInitTransient(err) {
 				return err
 			}
 			timer := time.NewTimer(time.Duration(25*(1<<attempt)) * time.Millisecond)
