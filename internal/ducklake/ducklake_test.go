@@ -173,37 +173,41 @@ func TestOpenEngineMemoryLimitAndIsolation(t *testing.T) {
 }
 
 func TestOpenEngineIgnoresPersistentSecrets(t *testing.T) {
-	l := engine(t)
 	ctx := context.Background()
-	var allowed bool
-	if err := l.conn.QueryRowContext(ctx, "SELECT current_setting('allow_persistent_secrets')").Scan(&allowed); err != nil {
+	first := engine(t)
+	second := engine(t)
+	var directory string
+	if err := first.conn.QueryRowContext(ctx, "SELECT current_setting('secret_directory')").Scan(&directory); err != nil {
 		t.Fatal(err)
 	}
-	if allowed {
-		t.Fatal("engine must not allow persistent secrets")
+	if directory != first.secretDirectory || directory == second.secretDirectory {
+		t.Fatal("engines must use separate private secret stores")
 	}
-	// A damaged host secret must not prevent the use of temporary credentials.
-	directory := t.TempDir()
+	info, err := os.Stat(directory)
+	if err != nil || info.Mode().Perm() != 0700 {
+		t.Fatal("secret store must be private", err)
+	}
+	// A damaged secret in one store must not affect a separate engine.
 	path := filepath.Join(directory, "host.duckdb_secret")
 	const damaged = "invalid persistent secret"
 	if err := os.WriteFile(path, []byte(damaged), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := l.Exec(ctx, "SET secret_directory="+quote(directory)); err != nil {
+	if err := second.Exec(ctx, "SELECT CASE WHEN count(*)=0 THEN true ELSE error('host secret loaded') END FROM duckdb_secrets()"); err != nil {
 		t.Fatal(err)
 	}
-	if err := l.Exec(ctx, "SELECT CASE WHEN count(*)=0 THEN true ELSE error('host secret loaded') END FROM duckdb_secrets()"); err != nil {
-		t.Fatal(err)
-	}
-	if err := l.Exec(ctx, "CREATE TEMPORARY SECRET local_test (TYPE HTTP, BEARER_TOKEN 'test-only'); DROP SECRET local_test"); err != nil {
+	if err := second.Exec(ctx, "CREATE TEMPORARY SECRET local_test (TYPE HTTP, BEARER_TOKEN 'test-only'); DROP SECRET local_test"); err != nil {
 		t.Fatal("temporary credentials must remain available", err)
-	}
-	if err := l.Exec(ctx, "CREATE PERSISTENT SECRET blocked_test (TYPE HTTP, BEARER_TOKEN 'test-only')"); err == nil {
-		t.Fatal("persistent credential writes must be blocked")
 	}
 	contents, err := os.ReadFile(path)
 	if err != nil || string(contents) != damaged {
-		t.Fatal("host secret file was changed")
+		t.Fatal("other secret file was changed")
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(directory); !os.IsNotExist(err) {
+		t.Fatal("close must remove the private secret store", err)
 	}
 }
 

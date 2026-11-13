@@ -58,12 +58,13 @@ func (c Config) GoString() string { return c.String() }
 // Lake owns one in-memory engine and one pinned SQL session. Call Close.
 // Transactions and session state survive Exec calls. Do not log supplied SQL.
 type Lake struct {
-	gate     chan struct{}
-	db       *sql.DB
-	conn     *sql.Conn
-	cancel   context.CancelFunc
-	lifetime context.Context
-	closed   bool
+	gate            chan struct{}
+	db              *sql.DB
+	conn            *sql.Conn
+	cancel          context.CancelFunc
+	lifetime        context.Context
+	closed          bool
+	secretDirectory string
 }
 
 func (l *Lake) String() string   { return "ducklake.Lake{values redacted}" }
@@ -126,9 +127,19 @@ func openEngine(ctx context.Context) (*Lake, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	// Do not load credentials from the host's persistent DuckDB secret store.
-	// Configure this before the first use of the secret manager.
-	db, err := sql.Open("duckdb", "?memory_limit="+EngineMemoryLimit+"&allow_persistent_secrets=false")
+	// PostgreSQL requires the local_file secret store to exist. Give each engine
+	// an empty private store instead of loading credentials from the host store.
+	directory, err := os.MkdirTemp("", "looster-duckdb-secrets-")
+	if err != nil {
+		return nil, operationError("private secret storage")
+	}
+	owned := false
+	defer func() {
+		if !owned {
+			_ = os.RemoveAll(directory)
+		}
+	}()
+	db, err := sql.Open("duckdb", "?memory_limit="+EngineMemoryLimit+"&secret_directory="+url.QueryEscape(directory))
 	if err != nil {
 		return nil, operationError("engine initialization")
 	}
@@ -142,7 +153,8 @@ func openEngine(ctx context.Context) (*Lake, error) {
 		return nil, operationError("session initialization")
 	}
 	lifetime, cancel := context.WithCancel(context.Background())
-	return &Lake{gate: make(chan struct{}, 1), db: db, conn: conn, lifetime: lifetime, cancel: cancel}, nil
+	owned = true
+	return &Lake{gate: make(chan struct{}, 1), db: db, conn: conn, lifetime: lifetime, cancel: cancel, secretDirectory: directory}, nil
 }
 
 var ErrClosed = errors.New("DuckLake is closed")
@@ -284,7 +296,11 @@ func (l *Lake) Close() error {
 	l.closed = true
 	e1 := l.conn.Close()
 	e2 := l.db.Close()
-	if e1 != nil || e2 != nil {
+	var e3 error
+	if l.secretDirectory != "" {
+		e3 = os.RemoveAll(l.secretDirectory)
+	}
+	if e1 != nil || e2 != nil || e3 != nil {
 		return operationError("close")
 	}
 	return nil
