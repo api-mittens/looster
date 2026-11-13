@@ -316,8 +316,9 @@ func (s *PayloadStore) Put(ctx context.Context, key string, value []byte) error 
 	case s.wake <- struct{}{}:
 	default:
 	}
-	// Spooling is not acknowledgement. Every caller waits for its group commit
-	// attempt, while the unlocked queue can collect other concurrent Put calls.
+	// Spooling is not acknowledgement. Callers wait for remote commit or a
+	// permanent error. Background deadline errors retain waiters for retry.
+	// The unlocked queue can collect other concurrent Put calls.
 	select {
 	case err := <-waiter:
 		return err
@@ -450,7 +451,7 @@ func (s *PayloadStore) Flush(ctx context.Context) error {
 }
 
 // notify requires mu. Buffered waiters allow canceled callers to leave without
-// blocking the writer, and every waiter is completed after one commit attempt.
+// blocking the writer. Background deadline errors keep waiters for retry.
 func (s *PayloadStore) notify(key string, err error) {
 	for _, ch := range s.waiters[key] {
 		ch <- err
@@ -458,13 +459,30 @@ func (s *PayloadStore) notify(key string, err error) {
 	delete(s.waiters, key)
 }
 func (s *PayloadStore) flush(ctx context.Context) error {
+	return s.flushBatches(ctx, 0)
+}
+
+// A positive batchTimeout gives each background batch its own time limit.
+// Explicit Flush and Close retain the caller's total time limit.
+func (s *PayloadStore) flushBatches(ctx context.Context, batchTimeout time.Duration) error {
 	s.flushMu.Lock()
 	defer s.flushMu.Unlock()
+	failed := map[string]bool{}
+	var passErr error
 	for {
+		if batchTimeout > 0 {
+			select {
+			case <-s.stop:
+				return nil
+			default:
+			}
+		}
 		s.mu.Lock()
 		keys := make([]string, 0, len(s.pending))
 		for k := range s.pending {
-			keys = append(keys, k)
+			if !failed[k] {
+				keys = append(keys, k)
+			}
 		}
 		sort.Strings(keys)
 		batch := []payloadRecord{}
@@ -479,18 +497,34 @@ func (s *PayloadStore) flush(ctx context.Context) error {
 		}
 		s.mu.Unlock()
 		if len(batch) == 0 {
-			return nil
+			return passErr
 		}
-		err := ctx.Err()
-		if err == nil {
-			err = s.sink.putBatch(ctx, batch)
+		batchCtx := ctx
+		cancel := func() {}
+		if batchTimeout > 0 {
+			batchCtx, cancel = context.WithTimeout(ctx, batchTimeout)
+		}
+		err := batchCtx.Err()
+		if err != nil {
+			cancel()
+			return err
+		}
+		err = s.sink.putBatch(batchCtx, batch)
+		if batchTimeout > 0 && errors.Is(err, context.DeadlineExceeded) {
+			// Keep these waiters for retry. Later batches still get an attempt.
+			cancel()
+			passErr = err
+			for _, r := range batch {
+				failed[r.Key] = true
+			}
+			continue
 		}
 		if err != nil {
 			// Only an error path reads remote state. Normal Put performs no per-record
 			// preflight process. Proven immutable-key conflicts must not poison retries.
 			conflicts := map[string]bool{}
 			if reader, ok := s.sink.(payloadBatchReader); ok {
-				if rows, e := reader.getMany(ctx, keys); e == nil {
+				if rows, e := reader.getMany(batchCtx, keys); e == nil {
 					for _, r := range batch {
 						if old, ok := rows[r.Key]; ok && string(old) != string(r.Value) {
 							conflicts[r.Key] = true
@@ -499,11 +533,12 @@ func (s *PayloadStore) flush(ctx context.Context) error {
 				}
 			} else {
 				for _, r := range batch {
-					if old, e := s.sink.get(ctx, r.Key); e == nil && string(old) != string(r.Value) {
+					if old, e := s.sink.get(batchCtx, r.Key); e == nil && string(old) != string(r.Value) {
 						conflicts[r.Key] = true
 					}
 				}
 			}
+			cancel()
 			s.mu.Lock()
 			for k := range conflicts {
 				if e := os.Remove(filepath.Join(s.dir, payloadName(k))); e == nil || os.IsNotExist(e) {
@@ -512,12 +547,21 @@ func (s *PayloadStore) flush(ctx context.Context) error {
 				s.notify(k, ErrPayloadConflict)
 			}
 			_ = s.syncDir()
-			for k := range s.waiters {
-				s.notify(k, err)
+			for _, r := range batch {
+				s.notify(r.Key, err)
 			}
 			s.mu.Unlock()
+			if batchTimeout > 0 {
+				// Give later batches an attempt before retrying failed records.
+				passErr = err
+				for _, r := range batch {
+					failed[r.Key] = true
+				}
+				continue
+			}
 			return err
 		}
+		cancel()
 		s.mu.Lock()
 		// The remote commit is authoritative. Cleanup failures remain retryable and
 		// must not acknowledge uncommitted entries outside this successful batch.
@@ -536,8 +580,8 @@ func (s *PayloadStore) flush(ctx context.Context) error {
 				s.notify(r.Key, nil)
 			}
 		} else {
-			for k := range s.waiters {
-				s.notify(k, err)
+			for _, r := range batch {
+				s.notify(r.Key, err)
 			}
 		}
 		s.mu.Unlock()
@@ -571,9 +615,7 @@ func (s *PayloadStore) loop() {
 			}
 		case <-ticker.C:
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		_ = s.Flush(ctx)
-		cancel()
+		_ = s.flushBatches(context.Background(), 30*time.Second)
 	}
 }
 func (s *PayloadStore) Close() error {
@@ -602,6 +644,10 @@ func (s *PayloadStore) Close() error {
 	}
 	s.mu.Lock()
 	s.closeErr = err
+	// No further commit attempts can complete these waiters.
+	for k := range s.waiters {
+		s.notify(k, ErrPayloadClosed)
+	}
 	close(s.closeDone)
 	s.mu.Unlock()
 	return err
