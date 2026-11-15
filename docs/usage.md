@@ -555,9 +555,16 @@ targeting the same agent for the same event dispatch only one job.
 Deletion sends a final stop-work message to other sessions with captured harness
 IDs before their task/session rows are removed. The queued message retains its
 session ID and original archive/workdir reference without recreating the task.
-Streamed output and lifecycle events do not fan out. Completing a notification
-records `notification_handled` and does not fire AFTER COMPLETED rules. Agents
-should act only on actionable changes, not post acknowledgement-only comments.
+Streamed output and lifecycle events do not send notifications to other agents.
+A successful notification run fires AFTER COMPLETED rules if the agent adds a
+comment or changes task content, status, tags, or files after the run starts.
+The event must belong to the same task and name the agent in `actor_agent`.
+Output alone does not meet this condition. Changes from a human, another agent,
+or an earlier run do not meet this condition.
+A notification run with no such change records `notification_handled` and does
+not fire AFTER COMPLETED rules. Failed runs and closed or deleted tasks do not
+start downstream agents. Agents must report completed work through a task change.
+Agents must not post comments that only acknowledge a notification.
 
 Run `looster db migrate` after upgrading to install standalone schedules and
 notification triggers. These forward migrations do not have a lossless rollback
