@@ -399,7 +399,7 @@ func (s *Store) sessionsRead(ctx context.Context, name string, metadataOnly bool
  coalesce(h.summary_status,CASE WHEN j.summary<>'' THEN 'available'
  WHEN j.state IN ('pending','running','archiving') THEN 'pending'
  WHEN j.state='failed' THEN 'failed' ELSE 'missing' END),
- coalesce(h.error,j.error,'')`
+ coalesce(h.error,nullif(j.error,''),j.stop_reason,'')`
 	joins := ` LEFT JOIN jobs j ON j.id=s.job_id LEFT JOIN agent_session_runs h ON h.job_id=s.job_id`
 	if metadataOnly {
 		preview = `''::text,''::text,''::text`
