@@ -47,7 +47,7 @@ func TestTasklessSessions(t *testing.T) {
  (104,NULL,NULL,'coder','done','done'),
  (105,NULL,NULL,'coder','failed','failed'),
  (106,42,NULL,'coder','task-session','running');
- ALTER TABLE jobs ADD COLUMN summary text DEFAULT '', ADD COLUMN error text DEFAULT '';
+ ALTER TABLE jobs ADD COLUMN summary text DEFAULT '', ADD COLUMN error text DEFAULT '', ADD COLUMN stop_reason text DEFAULT '';
  CREATE TEMP TABLE agent_session_runs(job_id bigint,task_id bigint,agent_name text,session_id text,summary text,summary_status text,error text);`)
 	owner, err := pgx.ConnectConfig(ctx, cfg.ConnConfig)
 	if err != nil {

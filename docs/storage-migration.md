@@ -41,6 +41,20 @@ for dispatch, pagination, authorization, deletion history and attachments.
    source bytes in PostgreSQL, while ambiguous committed uploads can be retried.
    Do not restore an old binary against a cut-over namespace.
 
+## Task status changes
+
+Migration 025 stores the fixed job stop cause in `jobs.stop_reason`.
+The column permits only an empty value or `ping stopped by behaviour`.
+The dispatch trigger uses this column when a rule stops a pending job.
+It does not write this control value to the payload field `jobs.error`.
+This lets task status changes complete after payload cutover.
+Session previews show the stop cause when the job has no error payload.
+The payload fence continues to reject external inline error text.
+The migration keeps the dispatch function's namespace search path.
+Rollback stops if stored stop causes exist or payload cutover is active.
+Apply the normal namespace migrations before you use the new binary.
+This change does not enable a production feature or disable the payload fence.
+
 ## Cleanup is intentionally not authorized
 
 `cleanup_ready` remains **false**. Neither command drops columns/tables, deletes

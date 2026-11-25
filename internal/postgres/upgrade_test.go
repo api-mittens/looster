@@ -106,8 +106,8 @@ func TestUpgradeExistingDatabasePreservesFactoryData(t *testing.T) {
 			var body string
 			projection := "to_jsonb(x)"
 			if table == "jobs" {
-				// Migration 018 adds nullable/default-only staging metadata.
-				projection = "(to_jsonb(x)-'started_at'-'summary')"
+				// Migrations 018 and 025 add fields with default values.
+				projection = "(to_jsonb(x)-'started_at'-'summary'-'stop_reason')"
 			}
 			if table == "events" {
 				// Migration 019 adds nullable run attribution, without changing old rows.
